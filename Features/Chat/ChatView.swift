@@ -5,6 +5,7 @@ import DFCore
 @MainActor
 struct ChatView: View {
     @StateObject private var viewModel: ChatViewModel
+    @FocusState private var isInputFocused: Bool
     private let onOpenSettings: () -> Void
 
     @MainActor
@@ -28,6 +29,13 @@ struct ChatView: View {
                         Text("正在输入…")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    }
+                }
+                // 键盘上方的收起按钮：iOS 上滑动手势不一定生效，需要一个明确出口
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("收起") {
+                        isInputFocused = false
                     }
                 }
             }
@@ -73,6 +81,7 @@ struct ChatView: View {
                 .padding(.vertical, 12)
             }
             .background(Color(uiColor: .systemGroupedBackground))
+            .scrollDismissesKeyboard(.interactively)
             .onChange(of: viewModel.messages.count) { _, _ in
                 guard let last = viewModel.messages.last else { return }
                 withAnimation(.easeOut(duration: 0.2)) {
@@ -106,6 +115,7 @@ struct ChatView: View {
         HStack(alignment: .bottom, spacing: 8) {
             TextField("说点什么…", text: $viewModel.draft, axis: .vertical)
                 .lineLimit(1...4)
+                .focused($isInputFocused)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(Color(uiColor: .secondarySystemGroupedBackground))
