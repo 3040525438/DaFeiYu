@@ -10,13 +10,14 @@ import DFCore
 /// - 不动 `v1_phase1` 的任何 DDL。
 enum V2Memory {
     /// FTS5 行数与 memories 行数必须相等
-    static func migrate(_ db: Database) throws {
+    /// - Parameter probe: FTS5 能力探测；默认在独立内存库中真实建表/插入/MATCH 验证
+    static func migrate(_ db: Database, probe: FTS5Probing = MemoryFTS5Probe()) throws {
         let startedAt = Date()
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let batch = "P1-v2_memory-\(now)"
 
-        // 0. 预检：FTS5 可用性
-        try preflight(db)
+        // 0. 预检：FTS5 可用性（行为探测，失败即中止，不写入任何结构）
+        try probe.verify()
 
         // 1. 结构断言：禁止重复迁移
         try assertNotApplied(db)
@@ -76,15 +77,6 @@ enum V2Memory {
         let elapsed = Date().timeIntervalSince(startedAt)
         guard elapsed <= 30 else {
             throw DFError.database(String(format: "v2_memory 迁移耗时 %.1fs，超过 30 秒上限", elapsed))
-        }
-    }
-
-    // MARK: - 0. 预检
-
-    private static func preflight(_ db: Database) throws {
-        let fts5 = try Int.fetchOne(db, sql: "SELECT sqlite_compileoption_used('ENABLE_FTS5')") ?? 0
-        guard fts5 == 1 else {
-            throw DFError.unsupported("当前 SQLite 未启用 FTS5，禁止执行 v2_memory")
         }
     }
 
