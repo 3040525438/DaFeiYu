@@ -27,3 +27,11 @@ Secrets/
 *.cer
 *.key
 .env
+.env.*
+
+# 个人数据与迁移源（公开仓库后尤其重要：真实人格设定、聊天记录、记忆条目都不能入库）
+_inspect/
+*.db
+*.db-wal
+*.db-shm
+her-*.zip
