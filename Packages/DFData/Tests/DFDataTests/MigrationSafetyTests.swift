@@ -232,7 +232,7 @@ final class MigrationSafetyTests: XCTestCase {
         try database.dbQueue.write { db in
             try db.execute(sql: "DROP INDEX ux_memories_dedupe")
         }
-        XCTAssertThrowsError(try database.dbQueue.read { db in try SchemaMeta.verifyRequiredObjects($0) }) { error in
+        XCTAssertThrowsError(try database.dbQueue.read { db in try SchemaMeta.verifyRequiredObjects(db) }) { error in
             guard case SchemaMetaError.missingObjects(let names) = error else {
                 XCTFail("应抛出 missingObjects，实际：\(error)")
                 return
