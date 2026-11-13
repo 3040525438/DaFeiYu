@@ -71,7 +71,9 @@ public struct SSEParser {
     public static func parse(_ text: String) -> [SSEEvent] {
         var parser = SSEParser()
         var events: [SSEEvent] = []
-        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+        // 用 isNewline 判断换行：Swift 的 Character 会把 "\r\n" 视为单个字素簇，
+        // 用 split(separator: "\n") 在 CRLF 文本上不会拆行。
+        for line in text.split(omittingEmptySubsequences: false, whereSeparator: { $0.isNewline }) {
             if let event = parser.consume(line: String(line)) {
                 events.append(event)
             }
