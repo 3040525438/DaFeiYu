@@ -62,7 +62,7 @@ public struct GRDBPersonaRepository: PersonaRepository, Sendable {
     /// 只在不存在核心人格时创建一次，重复调用是幂等的。
     public func ensureCorePersona(name: String, systemPrompt: String) async throws -> Persona {
         do {
-            return try await database.dbQueue.write { db in
+            return try await database.write { db in
                 if let existing = try Persona
                     .filter(Column("kind") == PersonaKind.core.rawValue)
                     .fetchOne(db) {

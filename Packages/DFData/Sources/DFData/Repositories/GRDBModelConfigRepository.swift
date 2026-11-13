@@ -46,7 +46,7 @@ public struct GRDBModelConfigRepository: ModelConfigRepository, Sendable {
 
     public func save(_ config: ModelConfig) async throws {
         do {
-            try await database.dbQueue.write { db in
+            try await database.write { db in
                 var record = config
                 record.updatedAt = Clock.nowMillis()
                 // is_default 只由 makeDefault 修改，避免"编辑配置"意外改变默认项
@@ -62,7 +62,7 @@ public struct GRDBModelConfigRepository: ModelConfigRepository, Sendable {
 
     public func delete(id: String) async throws {
         do {
-            try await database.dbQueue.write { db in
+            try await database.write { db in
                 _ = try ModelConfig.deleteOne(db, key: id)
             }
         } catch {
@@ -72,7 +72,7 @@ public struct GRDBModelConfigRepository: ModelConfigRepository, Sendable {
 
     public func makeDefault(id: String) async throws {
         do {
-            try await database.dbQueue.write { db in
+            try await database.write { db in
                 try db.execute(sql: "UPDATE model_configs SET is_default = 0")
                 try db.execute(
                     sql: "UPDATE model_configs SET is_default = 1, updated_at = ? WHERE id = ?",
@@ -104,7 +104,7 @@ public struct GRDBSettingsRepository: SettingsRepository, Sendable {
 
     public func set(_ value: String, for key: String) async throws {
         do {
-            try await database.dbQueue.write { db in
+            try await database.write { db in
                 try db.execute(
                     sql: """
                     INSERT INTO settings(key, value) VALUES(?, ?)

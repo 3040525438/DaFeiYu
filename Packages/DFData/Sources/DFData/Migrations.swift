@@ -1,13 +1,21 @@
 import Foundation
 import GRDB
+import DFCore
 
 /// 数据库迁移。
 /// 规则：
 /// 1. 每个迁移一旦发布就不可修改，只能新增下一个版本。
 /// 2. 迁移里不允许调用网络或模型。
 /// 3. 事务由 GRDB 的 DatabaseMigrator 保证。
+/// 4. 注册顺序必须与 `MigrationID` 的规范顺序一致，不允许提前注册未到阶段的迁移。
 public enum Migrations {
+    /// 生产入口：注册全部已发布迁移
     public static var migrator: DatabaseMigrator {
+        makeMigrator(upTo: .v7_meta_backup)
+    }
+
+    /// 按规范顺序注册，最多注册到 `last`（测试用：`upTo: .v1_phase1` 可构造 v1 库）
+    static func makeMigrator(upTo last: MigrationID) -> DatabaseMigrator {
         var migrator = DatabaseMigrator()
 
         migrator.registerMigration("v1_phase1") { db in
@@ -199,6 +207,21 @@ public enum Migrations {
             """)
         }
 
+        if includes(.v2_memory, upTo: last) {
+            migrator.registerMigration("v2_memory") { db in
+                try V2Memory.migrate(db)
+            }
+        }
+
         return migrator
+    }
+
+    /// 判断某个迁移是否应被注册（按规范顺序比较，不按名称排序）
+    private static func includes(_ id: MigrationID, upTo last: MigrationID) -> Bool {
+        let ids = MigrationID.allCases
+        guard let target = ids.firstIndex(of: id), let bound = ids.firstIndex(of: last) else {
+            return false
+        }
+        return target <= bound
     }
 }

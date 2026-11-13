@@ -21,7 +21,7 @@ public struct GRDBConversationRepository: ConversationRepository, Sendable {
 
     public func ensureMainConversation(title: String) async throws -> Conversation {
         do {
-            return try await database.dbQueue.write { db in
+            return try await database.write { db in
                 if let existing = try Conversation
                     .filter(Column("kind") == "main")
                     .fetchOne(db) {
@@ -48,7 +48,7 @@ public struct GRDBConversationRepository: ConversationRepository, Sendable {
 
     public func touch(id: String, at millis: Int64) async throws {
         do {
-            try await database.dbQueue.write { db in
+            try await database.write { db in
                 try db.execute(
                     sql: "UPDATE conversations SET updated_at = ? WHERE id = ?",
                     arguments: [millis, id]
@@ -69,7 +69,7 @@ public struct GRDBMessageRepository: MessageRepository, Sendable {
 
     public func insert(_ message: Message) async throws {
         do {
-            try await database.dbQueue.write { db in
+            try await database.write { db in
                 try message.insert(db)
             }
         } catch {
@@ -79,7 +79,7 @@ public struct GRDBMessageRepository: MessageRepository, Sendable {
 
     public func update(_ message: Message) async throws {
         do {
-            try await database.dbQueue.write { db in
+            try await database.write { db in
                 try message.update(db)
             }
         } catch {
