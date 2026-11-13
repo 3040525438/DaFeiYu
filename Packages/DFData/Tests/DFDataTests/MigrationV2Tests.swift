@@ -516,22 +516,22 @@ final class MigrationV2Tests: XCTestCase {
         // 1) 正常状态：仓储写入必须成功
         let healthy = try AppDatabase(paths: paths)
         XCTAssertFalse(healthy.isReadOnly)
-        let writer = GRDBModelConfigRepository(database: healthy)
+        let writer = GRDBSettingsRepository(database: healthy)
         try await writer.set("dark", for: "theme")
-        let stored = try healthy.dbQueue.read { db in
+        let stored = try await healthy.dbQueue.read { db in
             try String.fetchOne(db, sql: "SELECT value FROM settings WHERE key = 'theme'")
         }
         XCTAssertEqual(stored, "dark")
 
         // 2) 篡改 meta 后重开 → 只读
-        try healthy.dbQueue.write { db in
+        try await healthy.dbQueue.write { db in
             try SchemaMeta.write(db, key: SchemaMetaKey.schemaVersion, value: "v9_broken", at: 1)
         }
         let readOnly = try AppDatabase(paths: paths)
         XCTAssertTrue(readOnly.isReadOnly)
 
         // 3) 现有仓储写入入口必须被拦截
-        let blocked = GRDBModelConfigRepository(database: readOnly)
+        let blocked = GRDBSettingsRepository(database: readOnly)
         do {
             try await blocked.set("light", for: "theme")
             XCTFail("只读模式下仓储写入必须抛错")
@@ -550,11 +550,11 @@ final class MigrationV2Tests: XCTestCase {
         }
 
         // 5) 库内容未被任何被拒绝的写入改动
-        let valueAfter = try readOnly.dbQueue.read { db in
+        let valueAfter = try await readOnly.dbQueue.read { db in
             try String.fetchOne(db, sql: "SELECT value FROM settings WHERE key = 'theme'")
         }
         XCTAssertEqual(valueAfter, "dark")
-        let probe = try readOnly.dbQueue.read { db in
+        let probe = try await readOnly.dbQueue.read { db in
             try String.fetchOne(db, sql: "SELECT value FROM settings WHERE key = 'probe'")
         }
         XCTAssertNil(probe)
