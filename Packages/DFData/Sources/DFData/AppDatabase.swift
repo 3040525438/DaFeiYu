@@ -85,8 +85,8 @@ public final class AppDatabase: @unchecked Sendable {
 
     public var currentSchemaVersion: String {
         // 版本判断只认 schema_meta（不与 grdb_migrations 形成双事实源）
-        if let version = try? dbQueue.read({ db in try SchemaMeta.value(db, key: SchemaMetaKey.schemaVersion) }),
-           let value = version {
+        // 注意：`try?` 会把 `String?` 展平为 `String?`，此处只绑定一次
+        if let value = try? dbQueue.read({ db in try SchemaMeta.value(db, key: SchemaMetaKey.schemaVersion) }) {
             return value
         }
         // 回退：按规范顺序取最后一项（不使用 rowid）
