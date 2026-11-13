@@ -3,14 +3,29 @@ import GRDB
 import DFCore
 
 /// 数据库完整性模式。
-/// 当 `schema_meta` 与 `grdb_migrations` 不自洽时，进入只读模式：允许读取，禁止继续写入。
+/// - `healthy`：结构与台账自洽，可读可写；
+/// - `readOnly`：迁移已完成但自检不通过，允许读取、禁止写入；
+/// - `migrationFailed`：升级事务失败（已整体回滚），允许读取旧结构、禁止一切写入，
+///   等待用户在界面上明确触发重试。
 public enum DatabaseIntegrityMode: Equatable, Sendable {
     case healthy
     case readOnly(reason: String)
+    case migrationFailed(reason: String)
 
     public var isReadOnly: Bool {
-        if case .readOnly = self { return true }
-        return false
+        switch self {
+        case .healthy: return false
+        case .readOnly, .migrationFailed: return true
+        }
+    }
+
+    /// 禁止写入的原因；`nil` 表示可写
+    public var writeBlockReason: String? {
+        switch self {
+        case .healthy: return nil
+        case .readOnly(let reason): return "只读模式：\(reason)"
+        case .migrationFailed(let reason): return "升级未完成：\(reason)"
+        }
     }
 }
 
@@ -25,8 +40,22 @@ public final class AppDatabase: @unchecked Sendable {
 
     public var isReadOnly: Bool { integrityMode.isReadOnly }
 
+    /// 迁移失败的具体原因（仅 `migrationFailed` 状态非空）
+    public var migrationFailureReason: String? {
+        if case .migrationFailed(let reason) = integrityMode { return reason }
+        return nil
+    }
+
+    /// 迁移器工厂：允许测试注入"首次失败、重试成功"的场景，生产环境固定返回 `Migrations.migrator`
+    private let makeMigrator: @Sendable () -> DatabaseMigrator
+
     public init(paths: DatabasePaths) throws {
+        try self.init(paths: paths, makeMigrator: { Migrations.migrator })
+    }
+
+    init(paths: DatabasePaths, makeMigrator: @escaping @Sendable () -> DatabaseMigrator) throws {
         self.paths = paths
+        self.makeMigrator = makeMigrator
 
         let fileManager = FileManager.default
         try fileManager.createDirectory(at: paths.root, withIntermediateDirectories: true)
@@ -45,23 +74,57 @@ public final class AppDatabase: @unchecked Sendable {
 
         do {
             dbQueue = try DatabaseQueue(path: paths.databaseURL.path, configuration: configuration)
-            try Migrations.migrator.migrate(dbQueue)
         } catch {
             throw DFError.database("无法打开本地数据库：\(error.localizedDescription)")
         }
 
-        // 启动自检：台账与 meta 必须自洽；不一致时降级为只读，而不是崩溃
+        upgradeOnLaunch()
+    }
+
+    /// 启动升级：先迁移，再做台账自检。
+    /// 迁移失败**不抛错**：事务已整体回滚，库仍是升级前结构，
+    /// 这里降级为 `migrationFailed`（禁止一切写入），由界面提示恢复与重试。
+    private func upgradeOnLaunch() {
+        do {
+            try makeMigrator().migrate(dbQueue)
+        } catch {
+            integrityMode = .migrationFailed(reason: error.localizedDescription)
+            return
+        }
+
         do {
             _ = try dbQueue.read { db in try SchemaMeta.verify(db) }
+            try dbQueue.read { db in try SchemaMeta.verifyRequiredObjects(db) }
         } catch {
             integrityMode = .readOnly(reason: error.localizedDescription)
         }
     }
 
-    /// 写入前的守卫：只读模式下拒绝写入
+    /// 由用户明确触发的一次升级重试（不会自动循环重试）。
+    /// - 重试前先只读检查迁移台账可访问；
+    /// - 成功后必须再次通过台账/摘要自检，才恢复可写；
+    /// - 失败继续保持 `migrationFailed`，并把错误抛给界面展示。
+    public func retryMigration() async throws {
+        guard case .migrationFailed = integrityMode else { return }
+
+        // 重试前检查：台账必须可读（只读，不写入任何内容）
+        _ = try dbQueue.read { db in try SchemaMeta.appliedIdentifiers(db) }
+
+        do {
+            try makeMigrator().migrate(dbQueue)
+            _ = try dbQueue.read { db in try SchemaMeta.verify(db) }
+            try dbQueue.read { db in try SchemaMeta.verifyRequiredObjects(db) }
+            integrityMode = .healthy
+        } catch {
+            integrityMode = .migrationFailed(reason: error.localizedDescription)
+            throw DFError.database("数据库升级重试失败：\(error.localizedDescription)")
+        }
+    }
+
+    /// 写入前的守卫：只读 / 升级未完成时拒绝写入（错误信息区分两种状态）
     public func assertWritable() throws {
-        if case .readOnly(let reason) = integrityMode {
-            throw DFError.database("数据库处于只读模式，请先恢复备份：\(reason)")
+        if let reason = integrityMode.writeBlockReason {
+            throw DFError.database("数据库当前不可写入，已拒绝本次写入（\(reason)），请先恢复备份或重试升级")
         }
     }
 

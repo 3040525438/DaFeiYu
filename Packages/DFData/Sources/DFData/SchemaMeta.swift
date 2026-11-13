@@ -19,6 +19,7 @@ public enum SchemaMetaError: Error, Equatable, CustomStringConvertible {
     case digestMismatch(meta: String, computed: String)
     case countMismatch(meta: String, ledger: Int)
     case ledgerEmpty
+    case missingObjects([String])
 
     public var description: String {
         switch self {
@@ -34,6 +35,8 @@ public enum SchemaMetaError: Error, Equatable, CustomStringConvertible {
             return "迁移数量不一致：schema_meta=\(meta)，台账=\(ledger)"
         case .ledgerEmpty:
             return "迁移台账为空"
+        case .missingObjects(let names):
+            return "升级后缺少必需对象：\(names.joined(separator: ", "))"
         }
     }
 }
@@ -113,6 +116,33 @@ public enum SchemaMeta {
             throw SchemaMetaError.countMismatch(meta: metaCount ?? "nil", ledger: ordered.count)
         }
         return metaVersion
+    }
+
+    /// 升级后必须存在的对象（结构 + 必要索引）。
+    /// 只做存在性检查，不校验 DDL 细节；用于"迁移成功后能否恢复读写"的门禁。
+    public static func verifyRequiredObjects(_ db: Database) throws {
+        let required = [
+            "schema_meta",
+            "memory_scopes",
+            "memory_fts",
+            "v_memory_user",
+            "v_memory_shared",
+            "v_memory_self",
+            "v_memory_stats",
+            "ux_memories_dedupe",
+            "ix_memories_scope_time",
+            "ix_persona_items_tier"
+        ]
+        // 名字全部来自本文件常量，不拼接外部输入
+        let quoted = required.map { "'\($0)'" }.joined(separator: ",")
+        let found = try String.fetchAll(
+            db,
+            sql: "SELECT name FROM sqlite_master WHERE name IN (\(quoted))"
+        )
+        let missing = required.filter { !found.contains($0) }
+        guard missing.isEmpty else {
+            throw SchemaMetaError.missingObjects(missing)
+        }
     }
 
     /// 迁移体内计算"含本次"的摘要目标。
