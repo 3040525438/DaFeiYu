@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 import DFCore
 import DFData
 import DFAI
@@ -20,14 +21,18 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
+                profileSection
                 environmentSection
                 modelSection
                 personaSection
                 maintenanceSection
                 aboutSection
             }
+            .listStyle(.insetGrouped)
+            .listSectionSpacing(16)
             .scrollContentBackground(.hidden)
             .background(DFColor.canvas)
+            .tint(DFColor.primary)
             .navigationTitle("设置")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -60,8 +65,56 @@ struct SettingsView: View {
 
     // MARK: - Sections
 
+    private var profileSection: some View {
+        Section {
+            HStack(spacing: 12) {
+                DFCharacterMark(size: 42)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("大肥鱼")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(DFColor.ink)
+                    Text("只存在这台设备上 · \(container.environment.displayName)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(DFColor.inkMuted)
+                }
+                Spacer()
+                Text(appVersion)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(DFColor.primary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(DFColor.primarySoft, in: Capsule())
+            }
+            .padding(.vertical, 4)
+            .listRowBackground(
+                LinearGradient(
+                    colors: [DFColor.primary.opacity(0.16), DFColor.lilac.opacity(0.16)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+        }
+    }
+
+    private func sectionHeader(_ title: String, icon: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(DFColor.primary)
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(1.2)
+                .foregroundStyle(DFColor.inkMuted)
+        }
+    }
+
+    private var appVersion: String {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+        return "v\(version)"
+    }
+
     private var environmentSection: some View {
-        Section("运行环境") {
+        Section {
             LabeledContent("版本", value: container.environment.displayName)
             LabeledContent("Bundle ID", value: container.environment.bundleIdentifier)
             LabeledContent("数据库版本", value: container.schemaVersion)
@@ -72,6 +125,8 @@ struct SettingsView: View {
                     .foregroundStyle(.tertiary)
                     .textSelection(.enabled)
             }
+        } header: {
+            sectionHeader("运行环境", icon: "iphone")
         }
     }
 
@@ -87,35 +142,47 @@ struct SettingsView: View {
                 }
             }
         } header: {
-            Text("模型配置")
+            sectionHeader("模型配置", icon: "cpu")
         } footer: {
             Text("密钥保存在系统 Keychain，不写入数据库，也不会随备份导出。")
         }
     }
 
     private func modelRow(_ config: ModelConfig) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                Text(config.name)
-                if config.isDefault {
-                    Text("默认")
-                        .font(.caption2)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.accentColor.opacity(0.15))
-                        .clipShape(Capsule())
+        HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(DFColor.primarySoft)
+                .frame(width: 28, height: 28)
+                .overlay(
+                    Image(systemName: "cpu")
+                        .font(.system(size: 12))
+                        .foregroundStyle(DFColor.primary)
+                )
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(config.name)
+                    if config.isDefault {
+                        Text("默认")
+                            .font(.caption2)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(DFColor.primarySoft)
+                            .foregroundStyle(DFColor.primary)
+                            .clipShape(Capsule())
+                    }
+                    Spacer()
+                    if busyConfigID == config.id {
+                        ProgressView()
+                    }
                 }
-                Spacer()
-                if busyConfigID == config.id {
-                    ProgressView()
-                }
+                Text(config.baseURL)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(config.modelID)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
-            Text(config.baseURL)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(config.modelID)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
         }
         .contentShape(Rectangle())
         .onTapGesture {
@@ -149,7 +216,7 @@ struct SettingsView: View {
     }
 
     private var personaSection: some View {
-        Section("核心人格") {
+        Section {
             LabeledContent("名称", value: corePersonaName.isEmpty ? "（未初始化）" : corePersonaName)
             DisclosureGroup("查看人格提示词") {
                 Text(corePrompt.isEmpty ? "（暂无）" : corePrompt)
@@ -160,11 +227,13 @@ struct SettingsView: View {
             Text("第一阶段只是占位人格；阶段二会用 AstrBot 的真实设定建立新版本，不会覆盖历史。")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+        } header: {
+            sectionHeader("核心人格", icon: "person.text.rectangle")
         }
     }
 
     private var maintenanceSection: some View {
-        Section("数据自检") {
+        Section {
             Button("运行完整性检查") {
                 Task { await runIntegrityCheck() }
             }
@@ -173,17 +242,21 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        } header: {
+            sectionHeader("数据自检", icon: "checkmark.seal")
         }
     }
 
     private var aboutSection: some View {
-        Section("关于") {
+        Section {
             Text("大肥鱼 · 第一阶段（本地聊天与数据基础）")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             Text("本版本不包含主动行为、记忆检索与备份恢复，这些在后续阶段实现。")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+        } header: {
+            sectionHeader("关于", icon: "info.circle")
         }
     }
 
