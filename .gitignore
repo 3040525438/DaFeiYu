@@ -1,0 +1,29 @@
+# Xcode 工程由 XcodeGen 根据 project.yml 生成，不入库（避免 Windows 上无法编辑导致的冲突）
+*.xcodeproj
+*.xcworkspace
+!*.xcworkspace/contents.xcworkspacedata
+
+# 构建产物
+.build/
+build/
+build-lab/
+DerivedData/
+out/
+*.ipa
+*.dSYM
+*.xcarchive
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# 本地敏感信息（绝不入库）
+Secrets/
+*.p12
+*.mobileprovision
+*.cer
+*.key
+.env

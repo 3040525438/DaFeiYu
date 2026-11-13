@@ -1,0 +1,90 @@
+name: build-ipa
+
+# 只保留手动触发与打 tag 触发：GitHub Free 私有仓库每月仅 $12 计算额度，
+# macOS Runner 为 $0.062/分钟，约合 193 分钟/月。日常改动请用 core-tests。
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: build-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 记录构建环境（用于验收留档）
+        run: |
+          echo "=== Xcode ==="
+          xcodebuild -version
+          echo "=== macOS ==="
+          sw_vers
+          echo "=== 部署目标 ==="
+          grep -n "IPHONEOS_DEPLOYMENT_TARGET" project.yml || true
+
+      - name: 安装 XcodeGen
+        run: brew install xcodegen
+
+      - name: 生成 Xcode 工程
+        run: xcodegen generate
+
+      - name: 编译正式版（不签名）
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project DaFeiYu.xcodeproj \
+            -scheme DaFeiYu \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: 编译实验版（不签名）
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project DaFeiYu.xcodeproj \
+            -scheme DaFeiYuLab \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build-lab \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: 打包未签名 IPA
+        run: |
+          set -euo pipefail
+          rm -rf out && mkdir -p out/prod/Payload out/lab/Payload
+          cp -R build/Build/Products/Release-iphoneos/DaFeiYu.app out/prod/Payload/
+          cp -R build-lab/Build/Products/Release-iphoneos/DaFeiYuLab.app out/lab/Payload/
+          (cd out/prod && zip -qry ../DaFeiYu-unsigned.ipa Payload)
+          (cd out/lab && zip -qry ../DaFeiYuLab-unsigned.ipa Payload)
+          ls -lh out/*.ipa
+
+      - name: 上传正式版 IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: DaFeiYu-unsigned-ipa
+          path: out/DaFeiYu-unsigned.ipa
+          retention-days: 30
+
+      - name: 上传实验版 IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: DaFeiYuLab-unsigned-ipa
+          path: out/DaFeiYuLab-unsigned.ipa
+          retention-days: 30

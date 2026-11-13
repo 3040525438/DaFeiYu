@@ -1,0 +1,35 @@
+name: core-tests
+
+# Linux Runner 按 1x 计费（$0.006/分钟），用于日常纯逻辑单测，
+# 避免消耗昂贵的 macOS 构建额度。
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: swift:6.2
+    timeout-minutes: 20
+    steps:
+      - name: 安装系统依赖
+        run: |
+          apt-get update
+          apt-get install -y libsqlite3-dev
+
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 记录 Swift 版本
+        run: swift --version
+
+      - name: DFCore 单元测试
+        run: swift test --package-path Packages/DFCore
+
+      - name: DFAI 单元测试
+        run: swift test --package-path Packages/DFAI
+
+      - name: DFData 单元测试
+        run: swift test --package-path Packages/DFData
