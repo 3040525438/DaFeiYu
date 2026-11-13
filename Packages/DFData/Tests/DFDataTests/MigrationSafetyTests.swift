@@ -132,7 +132,7 @@ final class MigrationSafetyTests: XCTestCase {
         XCTAssertEqual(counter.value, 1, "启动时只尝试一次，不得静默反复重试")
 
         // 台账与结构保持 v1，无半迁移产物
-        try database.dbQueue.read { db in
+        try await database.dbQueue.read { db in
             XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM grdb_migrations"), 1)
             XCTAssertEqual(
                 try Int.fetchOne(db, sql: "SELECT count(*) FROM sqlite_master WHERE name = 'schema_meta'"),
@@ -162,7 +162,7 @@ final class MigrationSafetyTests: XCTestCase {
         }
 
         // 被拒绝的写入没有落地
-        let stored = try database.dbQueue.read { db in
+        let stored = try await database.dbQueue.read { db in
             try String.fetchOne(db, sql: "SELECT value FROM settings WHERE key = 'probe'")
         }
         XCTAssertNil(stored)
@@ -193,7 +193,7 @@ final class MigrationSafetyTests: XCTestCase {
         try await database.write { db in
             try db.execute(sql: "INSERT INTO settings(key, value) VALUES('probe', 'ok')")
         }
-        try database.dbQueue.read { db in
+        try await database.dbQueue.read { db in
             XCTAssertEqual(try String.fetchOne(db, sql: "SELECT value FROM settings WHERE key = 'probe'"), "ok")
             XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM grdb_migrations"), 2)
             XCTAssertEqual(

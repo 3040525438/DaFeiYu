@@ -49,7 +49,7 @@ public final class AppDatabase: @unchecked Sendable {
     /// 迁移器工厂：允许测试注入"首次失败、重试成功"的场景，生产环境固定返回 `Migrations.migrator`
     private let makeMigrator: @Sendable () -> DatabaseMigrator
 
-    public init(paths: DatabasePaths) throws {
+    public convenience init(paths: DatabasePaths) throws {
         try self.init(paths: paths, makeMigrator: { Migrations.migrator })
     }
 
@@ -108,12 +108,12 @@ public final class AppDatabase: @unchecked Sendable {
         guard case .migrationFailed = integrityMode else { return }
 
         // 重试前检查：台账必须可读（只读，不写入任何内容）
-        _ = try dbQueue.read { db in try SchemaMeta.appliedIdentifiers(db) }
+        _ = try await dbQueue.read { db in try SchemaMeta.appliedIdentifiers(db) }
 
         do {
             try makeMigrator().migrate(dbQueue)
-            _ = try dbQueue.read { db in try SchemaMeta.verify(db) }
-            try dbQueue.read { db in try SchemaMeta.verifyRequiredObjects(db) }
+            _ = try await dbQueue.read { db in try SchemaMeta.verify(db) }
+            try await dbQueue.read { db in try SchemaMeta.verifyRequiredObjects(db) }
             integrityMode = .healthy
         } catch {
             integrityMode = .migrationFailed(reason: error.localizedDescription)
