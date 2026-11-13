@@ -63,18 +63,26 @@ public struct OpenAICompatibleProvider: ChatModelProvider, Pingable, Sendable {
                         throw DFError.http(status: http.statusCode, message: Self.sanitize(body))
                     }
 
-                    var parser = SSEParser()
+                    // OpenAI 兼容的 SSE 每个 data 行就是一个完整 JSON，
+                    // 这里按行直接解析，不依赖空行来划分事件边界。
+                    var sawText = false
+                    var firstPayload: String?
+
                     for try await line in bytes.lines {
                         try Task.checkCancellation()
-                        guard let event = parser.consume(line: line) else { continue }
+                        guard let payload = Self.dataPayload(from: line) else { continue }
+                        if firstPayload == nil {
+                            firstPayload = payload
+                        }
 
-                        if event.data == "[DONE]" {
+                        if payload == "[DONE]" {
                             continuation.yield(.finished(.stop))
                             continuation.finish()
                             return
                         }
-                        guard let decoded = Self.decodeChunk(event.data) else { continue }
+                        guard let decoded = Self.decodeChunk(payload) else { continue }
                         if let text = decoded.text, !text.isEmpty {
+                            sawText = true
                             continuation.yield(.text(text))
                         }
                         if let usage = decoded.usage {
@@ -85,10 +93,9 @@ public struct OpenAICompatibleProvider: ChatModelProvider, Pingable, Sendable {
                         }
                     }
 
-                    if let event = parser.flush(), let decoded = Self.decodeChunk(event.data) {
-                        if let text = decoded.text, !text.isEmpty {
-                            continuation.yield(.text(text))
-                        }
+                    guard sawText else {
+                        let preview = Self.sanitize(firstPayload ?? "（无 data 行）")
+                        throw DFError.decoding("上游没有返回可识别的流式文本，首段内容：\(preview)")
                     }
                     continuation.finish()
                 } catch is CancellationError {
@@ -171,6 +178,21 @@ public struct OpenAICompatibleProvider: ChatModelProvider, Pingable, Sendable {
         }
         let choices: [Choice]?
         let usage: UsagePayload?
+    }
+
+    /// 取一行 SSE 文本中的 data 字段；空行、注释行、event/id 等其他字段返回 nil
+    private static func dataPayload(from rawLine: String) -> String? {
+        var line = rawLine
+        if line.hasSuffix("\r") {
+            line.removeLast()
+        }
+        guard line.hasPrefix("data:") else { return nil }
+
+        var payload = String(line.dropFirst("data:".count))
+        if payload.hasPrefix(" ") {
+            payload.removeFirst()
+        }
+        return payload
     }
 
     private static func decodeChunk(_ data: String) -> (text: String?, usage: Usage?, finish: FinishReason?)? {
