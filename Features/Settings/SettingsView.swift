@@ -26,6 +26,8 @@ struct SettingsView: View {
                 maintenanceSection
                 aboutSection
             }
+            .scrollContentBackground(.hidden)
+            .background(DFColor.canvas)
             .navigationTitle("设置")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
