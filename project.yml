@@ -48,6 +48,8 @@ targets:
         product: DFCore
       - package: DFData
         product: DFData
+      - package: DFData
+        product: DFOrchestration
       - package: DFAI
         product: DFAI
 
@@ -72,6 +74,8 @@ targets:
         product: DFCore
       - package: DFData
         product: DFData
+      - package: DFData
+        product: DFOrchestration
       - package: DFAI
         product: DFAI
 
