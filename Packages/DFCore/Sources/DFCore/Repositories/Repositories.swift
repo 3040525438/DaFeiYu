@@ -143,6 +143,31 @@ public protocol MessageGroupRepository: Sendable {
     func repairStaleSending(in conversationID: String) async throws -> Int
 }
 
+/// 一次陈旧轮次修复的真实结果。
+public struct StaleTurnRepairResult: Sendable, Equatable {
+    public var repairedMessages: Int
+    public var closedGroups: Int
+
+    public init(repairedMessages: Int = 0, closedGroups: Int = 0) {
+        self.repairedMessages = repairedMessages
+        self.closedGroups = closedGroups
+    }
+}
+
+/// 带"排除活跃组"能力的陈旧轮次修复（S4-A）。
+///
+/// 与 `MessageGroupRepository.repairStaleSending` 的差别只有一处：
+/// 支持排除指定组，避免把**正在生成**的轮次误判为陈旧。
+/// 单独成协议是为了不破坏既有实现与测试替身（它们只需实现旧的 `repairStaleSending`）。
+public protocol StaleTurnRecoveryRepository: Sendable {
+    /// 单事务内：`sending` 消息 → `failed`，其所属 `open` 组 → `failed` 并补 `closed_at`。
+    /// `excludingGroupID` 非空时，该组的消息与组本身都不被修改。幂等。
+    func repairStaleTurns(
+        in conversationID: String,
+        excludingGroupID: String?
+    ) async throws -> StaleTurnRepairResult
+}
+
 /// 定稿事务仓储：事务 B（四类写入原子完成）与补偿事务 C 的唯一拥有者。
 public protocol MessageTurnRepository: Sendable {
     /// 事务 B：assistant 定稿 + `reply_to_id` + 引用批量写 + 组状态 + `closed_at`。

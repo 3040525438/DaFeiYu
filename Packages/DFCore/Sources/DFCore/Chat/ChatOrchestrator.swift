@@ -67,6 +67,39 @@ public protocol ChatOrchestrator: Sendable {
     /// - 幂等：无活跃轮次、或轮次已进入收尾阶段时调用不产生任何状态转换。
     /// - 永不抛错：终态一律通过 `turnCancelled` 事件表达。
     func cancelActiveTurn(owner: UUID) async
+
+    /// 启动恢复：修复进程被杀后遗留的 `sending` 消息与 `open` 组（S4-A）。
+    ///
+    /// 契约：
+    /// - 执行期间持**恢复屏障**：发起新轮次必须在 `openTurn` 之前等待恢复完成；
+    /// - 当前活跃轮次的组通过 `excludingGroupID` 排除，绝不被误伤；
+    /// - 并发调用不重复写库：第二次调用等待首次结束并返回**首次的真实报告**；
+    /// - 失败如实反映在 `RecoveryReport.failures` 并抛错，屏障无论成败都会释放。
+    func recoverStaleTurns(conversationID: String) async throws -> RecoveryReport
+}
+
+/// 一次启动恢复的真实执行结果（不得由预期值填充）。
+public struct RecoveryReport: Sendable, Equatable {
+    /// 被从 `sending` 修正为 `failed` 的消息条数
+    public var repairedMessages: Int
+    /// 被从 `open` 关闭的组数
+    public var closedGroups: Int
+    /// 因属于当前活跃轮次而被跳过的组（nil 表示没有活跃轮次）
+    public var skippedActiveGroup: String?
+    /// 恢复过程中的诊断（`recovery:` 前缀表示系统恢复，不是模型失败）
+    public var failures: [String]
+
+    public init(
+        repairedMessages: Int = 0,
+        closedGroups: Int = 0,
+        skippedActiveGroup: String? = nil,
+        failures: [String] = []
+    ) {
+        self.repairedMessages = repairedMessages
+        self.closedGroups = closedGroups
+        self.skippedActiveGroup = skippedActiveGroup
+        self.failures = failures
+    }
 }
 
 public enum ChatOrchestrationError: Error, Equatable, Sendable {

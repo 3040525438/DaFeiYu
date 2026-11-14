@@ -2,6 +2,26 @@ import Foundation
 import DFCore
 import DFData
 
+/// 恢复屏障探针事件（S4A-4 回归证明用）。
+///
+/// 语义严格对应 `waitForRecoveryBarrier()` 的三个真实执行点，不改变任何行为：
+/// - `reached`：进入屏障检查（无论当时是否需要等待）；
+/// - `waiting`：确认 `recoveryState == .running`、等待者已登记，即将挂起；
+/// - `resumed`：等待真正返回（被释放或被取消），即将越过屏障。
+package enum RecoveryBarrierEvent: Sendable, Equatable {
+    case reached
+    case waiting
+    case resumed
+}
+
+/// 恢复屏障探针。默认 `nil`，此时生产行为与未引入探针时完全一致。
+///
+/// 约束：实现必须是**同步**且非阻塞的（只允许做内存记录），
+/// 不得在其中执行持久化、不得挂起、不得回调编排器。
+package protocol RecoveryBarrierProbing: Sendable {
+    func record(_ event: RecoveryBarrierEvent)
+}
+
 /// 编排器依赖集合。全部以协议注入，`DFOrchestration` 因此不需要依赖 `DFAI`。
 public struct ChatOrchestratorDependencies: Sendable {
     public var groups: any MessageGroupRepository
@@ -9,6 +29,8 @@ public struct ChatOrchestratorDependencies: Sendable {
     public var messages: any MessageRepository
     public var references: any MessageReferenceRepository
     public var units: any ContextUnitProviding
+    /// 带"排除活跃组"能力的陈旧轮次修复（S4-A）。为 nil 时退化为旧的 `repairStaleSending`。
+    public var recovery: (any StaleTurnRecoveryRepository)?
     /// 每次开新轮次时构造 Provider（由 App 层按当前设置决定，闭包注入）
     public var makeProvider: @Sendable () async throws -> any ChatModelProvider
     /// 用 system prompt 与历史构造请求（模型 id / 温度等参数由 App 层提供）
@@ -18,6 +40,9 @@ public struct ChatOrchestratorDependencies: Sendable {
     public var rules: String
     public var limitGroups: Int
     public var budget: PromptBudget
+    /// 恢复屏障探针（S4A-4）。**有意不进入 `public init`**：仅同包测试可写，
+    /// 默认 `nil`，此时 `waitForRecoveryBarrier` 只有一次可选链判断，行为与无探针时完全一致。
+    package var barrierProbe: (any RecoveryBarrierProbing)?
 
     public init(
         groups: any MessageGroupRepository,
@@ -25,6 +50,7 @@ public struct ChatOrchestratorDependencies: Sendable {
         messages: any MessageRepository,
         references: any MessageReferenceRepository,
         units: any ContextUnitProviding,
+        recovery: (any StaleTurnRecoveryRepository)? = nil,
         makeProvider: @escaping @Sendable () async throws -> any ChatModelProvider,
         makeRequest: @escaping @Sendable (String, [ChatTurn]) async throws -> ChatRequest,
         corePersona: @escaping @Sendable () async throws -> String = { "" },
@@ -37,6 +63,7 @@ public struct ChatOrchestratorDependencies: Sendable {
         self.messages = messages
         self.references = references
         self.units = units
+        self.recovery = recovery
         self.makeProvider = makeProvider
         self.makeRequest = makeRequest
         self.corePersona = corePersona
@@ -79,6 +106,15 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
     /// 当前轮次 Task（用于取消；由 `makeStream` 同步写入，避免 actor 重入竞态）
     private let taskBox = TaskBox()
 
+    /// 恢复屏障状态（S4-A）。只在内存，进程退出即消失，不存在"永久卡住"风险。
+    private enum RecoveryState: Sendable, Equatable { case idle, running }
+    private var recoveryState: RecoveryState = .idle
+    private var recoveryWaiters: [RecoveryWaiter] = []
+    /// 最近一次恢复的真实结果，供并发调用方复用（不得由预期值填充）
+    private var lastRecoveryReport: RecoveryReport?
+    /// 最近一次恢复的错误，并发调用方需同样失败而非"静默成功"
+    private var lastRecoveryError: ChatOrchestrationError?
+
     public init(dependencies: ChatOrchestratorDependencies, pageToken: UUID = UUID()) {
         self.deps = dependencies
         self.pageToken = pageToken
@@ -117,6 +153,102 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
             cancelRequested = true
             taskBox.value?.cancel()
         }
+    }
+
+    // MARK: - 启动恢复（S4-A）
+
+    /// 启动恢复：修复遗留的 `sending` 消息与 `open` 组。
+    ///
+    /// 屏障语义：
+    /// - 本方法执行期间 `recoveryState == .running`，新轮次在 `openTurn` 之前必须等待（见 `run`）；
+    /// - 并发调用不重复写库：等待首次结束，返回**首次的真实报告**（失败则同样抛出首次的错误）；
+    /// - 无论成功、抛错还是被取消，`defer` 都会释放屏障并唤醒全部等待者。
+    public func recoverStaleTurns(conversationID: String) async throws -> RecoveryReport {
+        if recoveryState == .running {
+            await waitForRecoveryBarrier()
+            if let error = lastRecoveryError { throw error }
+            if let report = lastRecoveryReport { return report }
+            return RecoveryReport(failures: ["recovery: 并发调用未取得结果"])
+        }
+
+        recoveryState = .running
+        lastRecoveryReport = nil
+        lastRecoveryError = nil
+        defer { releaseRecoveryBarrier() }
+
+        var report = RecoveryReport()
+        let activeGroupID = currentGroupID()
+        report.skippedActiveGroup = activeGroupID
+
+        do {
+            if let recoveryRepo = deps.recovery {
+                let outcome = try await detachPersistence {
+                    try await recoveryRepo.repairStaleTurns(
+                        in: conversationID,
+                        excludingGroupID: activeGroupID
+                    )
+                }
+                report.repairedMessages = outcome.repairedMessages
+                report.closedGroups = outcome.closedGroups
+            } else if activeGroupID == nil {
+                let repaired = try await detachPersistence {
+                    try await deps.groups.repairStaleSending(in: conversationID)
+                }
+                report.repairedMessages = repaired
+                // 旧接口不返回关闭组数：如实标注，不按预期值填写
+                report.failures.append("recovery: 旧修复接口不返回关闭组数（closedGroups 未统计）")
+            } else {
+                report.failures.append("recovery: 缺少排除活跃组的能力，已跳过修复以免误伤活跃轮次")
+            }
+        } catch {
+            let reason = describe(error)
+            report.failures.append("recovery: \(reason)")
+            lastDiagnostic = "recovery_failed: \(reason)"
+            lastRecoveryReport = report
+            let mapped = ChatOrchestrationError.persistenceFailed(reason: reason)
+            lastRecoveryError = mapped
+            throw mapped
+        }
+
+        lastRecoveryReport = report
+        return report
+    }
+
+    /// 当前活跃轮次所属组（无活跃轮次时 nil）
+    private func currentGroupID() -> String? {
+        switch phase {
+        case .opening(let id, _): return id
+        case .streaming(let id, _): return id
+        case .closing(let id, _): return id
+        case .idle: return nil
+        }
+    }
+
+    /// 等待恢复结束。被取消时立即退出等待（不创建组、不影响其他等待者）。
+    private func waitForRecoveryBarrier() async {
+        deps.barrierProbe?.record(.reached)
+        guard recoveryState == .running else { return }
+        let waiter = RecoveryWaiter()
+        // 先登记再挂起：即使释放动作发生在挂起之前，`install` 也会立即 resume（幂等）
+        recoveryWaiters.append(waiter)
+        // 登记已完成、确定将进入等待分支：此刻才是"被屏障挡住"的可观测时点
+        deps.barrierProbe?.record(.waiting)
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                waiter.install(continuation)
+            }
+        } onCancel: {
+            // 取消 → 立刻唤醒自己；waiter 的幂等 resume 保证不会二次唤醒
+            waiter.resume()
+        }
+        deps.barrierProbe?.record(.resumed)
+    }
+
+    private func releaseRecoveryBarrier() {
+        recoveryState = .idle
+        let waiters = recoveryWaiters
+        recoveryWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
     }
 
     // MARK: - 只读状态（测试与 UI 用）
@@ -197,6 +329,14 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         }
         guard !trimmed.isEmpty else {
             continuation.finish(throwing: ChatOrchestrationError.emptyInput)
+            return
+        }
+
+        // 恢复屏障（S4-A）：恢复进行中不得越过它执行 openTurn，
+        // 否则可能把"刚开出来的组"当成陈旧组修掉。
+        await waitForRecoveryBarrier()
+        if shouldStop() {
+            continuation.finish()
             return
         }
 
@@ -663,5 +803,39 @@ private final class TaskBox: @unchecked Sendable {
         lock.lock()
         storage = task
         lock.unlock()
+    }
+}
+
+/// 恢复屏障的等待者（S4-A）。
+///
+/// `@unchecked Sendable` 的依据：全部可变状态由 `NSLock` 保护，`resume()` 幂等，
+/// 因此"屏障释放"与"等待方被取消"两条唤醒路径竞态时也不会二次 resume continuation。
+private final class RecoveryWaiter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var done = false
+
+    func install(_ continuation: CheckedContinuation<Void, Never>) {
+        lock.lock()
+        if done {
+            lock.unlock()
+            continuation.resume()
+            return
+        }
+        self.continuation = continuation
+        lock.unlock()
+    }
+
+    func resume() {
+        lock.lock()
+        guard !done else {
+            lock.unlock()
+            return
+        }
+        done = true
+        let pending = continuation
+        continuation = nil
+        lock.unlock()
+        pending?.resume()
     }
 }

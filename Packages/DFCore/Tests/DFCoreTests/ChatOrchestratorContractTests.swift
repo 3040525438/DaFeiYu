@@ -118,6 +118,10 @@ private struct FakeOrchestrator: ChatOrchestrator {
         box.value = owner
     }
 
+    func recoverStaleTurns(conversationID: String) async throws -> RecoveryReport {
+        RecoveryReport()
+    }
+
     private func makeStream() -> AsyncThrowingStream<OrchestratorEvent, Error> {
         AsyncThrowingStream { continuation in
             continuation.yield(

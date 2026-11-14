@@ -9,7 +9,7 @@ import DFCore
 /// - `turn_index` 的原子性由本方法的写事务 + `ux_message_groups_turn` 唯一索引共同保证；
 /// - 组内序号的**规则**来自 `GroupPlanner.nextSeq(afterMaxExisting:)`，**取值**来自真实 SQL；
 /// - 陈旧 `sending` 修复必须在同一事务内同时更新消息与组，且重复执行安全。
-public struct GRDBMessageGroupRepository: MessageGroupRepository, Sendable {
+public struct GRDBMessageGroupRepository: MessageGroupRepository, StaleTurnRecoveryRepository, Sendable {
     private let database: AppDatabase
 
     public init(database: AppDatabase) {
@@ -223,6 +223,106 @@ public struct GRDBMessageGroupRepository: MessageGroupRepository, Sendable {
                     repaired += 1
                 }
                 return repaired
+            }
+        } catch {
+            throw GRDBErrorMapper.map(error)
+        }
+    }
+
+    /// 带排除能力的陈旧轮次修复（S4-A）。语义与 `repairStaleSending` 一致，
+    /// 仅多一个 `excludingGroupID`：该组的消息与组本身都不被修改，避免误伤正在生成的轮次。
+    public func repairStaleTurns(
+        in conversationID: String,
+        excludingGroupID: String?
+    ) async throws -> StaleTurnRepairResult {
+        let now = Clock.nowMillis()
+        do {
+            return try await database.write { db in
+                let rows = try Row.fetchAll(
+                    db,
+                    sql: """
+                    SELECT id, group_id FROM messages
+                    WHERE conversation_id = ? AND status = 'sending' AND deleted_at IS NULL
+                      AND (? IS NULL OR group_id IS NULL OR group_id <> ?)
+                    ORDER BY created_at ASC
+                    """,
+                    arguments: [conversationID, excludingGroupID, excludingGroupID]
+                )
+                var repaired = 0
+                var closed = 0
+                for row in rows {
+                    let messageID = try row.decode(String.self, forColumn: "id")
+                    let groupID = String.fromDatabaseValue(row["group_id"])
+
+                    try db.execute(
+                        sql: "UPDATE messages SET status = 'failed' WHERE id = ? AND status = 'sending'",
+                        arguments: [messageID]
+                    )
+                    guard db.changesCount == 1 else { continue }
+                    repaired += 1
+
+                    // 仅 open 组跟随转为 failed；终态组一律不动；活跃组已在上面的 SELECT 中排除
+                    if let groupID {
+                        try db.execute(
+                            sql: """
+                            UPDATE message_groups SET status = 'failed', closed_at = ?
+                            WHERE id = ? AND status = 'open'
+                            """,
+                            arguments: [now, groupID]
+                        )
+                        if db.changesCount == 1 { closed += 1 }
+                    }
+                }
+                // ---- S4-B：组级残留兜底 ----
+                // 只处理仍然 open 的组，且目标状态由"消息真实状态"决定，
+                // 不做"所有 open 一律 failed"的粗暴降级。
+                let orphans = try Row.fetchAll(
+                    db,
+                    sql: """
+                    SELECT g.id AS gid,
+                           (SELECT m.status FROM messages m
+                             WHERE m.group_id = g.id AND m.role = 'assistant'
+                               AND m.deleted_at IS NULL
+                             ORDER BY m.seq_in_group ASC LIMIT 1) AS ast
+                    FROM message_groups g
+                    WHERE g.conversation_id = ? AND g.status = 'open'
+                      AND (? IS NULL OR g.id <> ?)
+                    """,
+                    arguments: [conversationID, excludingGroupID, excludingGroupID]
+                )
+                for row in orphans {
+                    let groupID = try row.decode(String.self, forColumn: "gid")
+                    let assistantStatus = String.fromDatabaseValue(row["ast"])
+                    let target: String
+                    switch assistantStatus {
+                    case "canceled":
+                        target = "aborted"   // B2：取消已在消息上落地，组未收尾
+                    case "sent":
+                        target = "complete"  // B3：assistant 已定稿，组缺收尾
+                    case "sending", nil:
+                        continue             // 已在上面按消息处理（或并发生成中）
+                    default:
+                        target = "failed"    // B4/B5：failed / draft / 无 assistant
+                    }
+                    try db.execute(
+                        sql: "UPDATE message_groups SET status = ?, closed_at = ? WHERE id = ? AND status = 'open'",
+                        arguments: [target, now, groupID]
+                    )
+                    guard db.changesCount == 1 else { continue }
+                    closed += 1
+                    // B5：没有 assistant 时，残留的 user sending 一并转 failed，保证组合合法
+                    if assistantStatus == nil {
+                        try db.execute(
+                            sql: """
+                            UPDATE messages SET status = 'failed'
+                            WHERE group_id = ? AND status = 'sending'
+                            """,
+                            arguments: [groupID]
+                        )
+                    }
+                }
+
+                return StaleTurnRepairResult(repairedMessages: repaired, closedGroups: closed)
             }
         } catch {
             throw GRDBErrorMapper.map(error)
