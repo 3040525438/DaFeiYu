@@ -1,6 +1,6 @@
 name: diag-b1-05
 
-# 临时诊断：B1-05 / DFData 挂起的一次性完整根因诊断矩阵。
+# 临时诊断：无探针时序竞态二次取证（矩阵对照 + 无缓冲输出 + 超时线程栈）。
 # 仅手动触发；不配置 push / pull_request 等自动触发器。
 on:
   workflow_dispatch:
@@ -14,12 +14,12 @@ jobs:
       - name: 安装系统依赖
         run: |
           apt-get update
-          apt-get install -y libsqlite3-dev python3
+          apt-get install -y libsqlite3-dev python3 coreutils gdb || true
 
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 记录实际 checkout 的 SHA 与工具链
+      - name: 记录 SHA 与工具链
         run: |
           echo "GITHUB_SHA=$GITHUB_SHA"
           echo "GITHUB_REF=$GITHUB_REF"
@@ -27,65 +27,107 @@ jobs:
           git rev-parse HEAD || true
           swift --version
           python3 --version
+          echo "--- 是否存在生产探针（应为 0）---"
+          grep -c "\[orch " Packages/DFData/Sources/DFOrchestration/ChatOrchestratorImpl.swift || true
 
       - name: 构建测试目标
         run: swift build --package-path Packages/DFData --build-tests
 
-      - name: 确认测试发现（套件与数量）
-        run: |
-          swift test --package-path Packages/DFData --list-tests 2>&1 | tee /tmp/list_tests.txt | tail -5
-          echo "--- 各套件用例数 ---"
-          for s in FailurePath Lifecycle Recovery Reference S4Extra; do
-            n=$(grep -c "ChatOrchestrator${s}Tests/" /tmp/list_tests.txt || true)
-            echo "ChatOrchestrator${s}Tests: $n"
-          done
-          echo "ChatOrchestrator 全部: $(grep -c 'DFOrchestrationTests.ChatOrchestrator' /tmp/list_tests.txt || true)"
-          echo "DFData 全部: $(grep -c 'DFOrchestrationTests\.\|DFDataTests\.' /tmp/list_tests.txt || true)"
-
-      - name: 诊断矩阵（每组独立进程 + 子进程级超时）
+      - name: 第一部分 验证 S4Extra 修复（独立进程）
         shell: bash
         run: |
           set -uo pipefail
-          python3 - <<'PY' 2>&1 | tee /tmp/matrix.txt
-          import os, re, signal, subprocess, sys, time
+          run_one () {
+            name="$1"; filt="$2"; cap="$3"
+            echo "===== PART1 $name START $(date -u +%H:%M:%S) ====="
+            stdbuf -o0 -e0 timeout "$cap" swift test --package-path Packages/DFData \
+              --filter "$filt" 2>&1 | tail -40
+            echo "===== PART1 $name END exit=${PIPESTATUS[0]} ====="
+          }
+          run_one s4d1 'ChatOrchestratorS4ExtraTests/testS4D_1_CancelDuringRetry' 60
+          run_one s4d2 'ChatOrchestratorS4ExtraTests/testS4D_2_DoubleRetryRejected' 60
+          run_one s4b5 'ChatOrchestratorS4ExtraTests/testS4B_5_OpenGroupWithAllMessagesDeletedBecomesFailed' 60
+          run_one s4extra_all 'ChatOrchestratorS4ExtraTests' 120
+
+      - name: 第二部分 无探针组合矩阵（无缓冲 + 超时取栈）
+        shell: bash
+        run: |
+          set -uo pipefail
+          python3 - <<'PY' 2>&1
+          import os, re, signal, subprocess, time
 
           PKG = "Packages/DFData"
-          JOB_BUDGET = 900  # 构建之后留给矩阵的总预算（秒），确保 < 20 分钟 job 上限
-          GROUP_TIMEOUT = 120
-          FULL_TIMEOUT = 240
+          BUDGET = 780          # 矩阵总预算（秒）
           started_all = time.time()
 
           groups = [
-              ("D_full_dfdata",        None,                                                       FULL_TIMEOUT, "完整 DFData（复现基准）"),
-              ("A_all_orchestrator",   "ChatOrchestrator",                                          GROUP_TIMEOUT, "全部编排套件组合"),
-              ("C1_recovery+reference","ChatOrchestratorRecoveryTests|ChatOrchestratorReferenceTests", GROUP_TIMEOUT, "Recovery + Reference"),
-              ("C2_lifecycle+reference","ChatOrchestratorLifecycleTests|ChatOrchestratorReferenceTests", GROUP_TIMEOUT, "Lifecycle + Reference"),
-              ("C3_failure+recovery",  "ChatOrchestratorFailurePathTests|ChatOrchestratorRecoveryTests", GROUP_TIMEOUT, "FailurePath + Recovery"),
-              ("C4_recovery+s4extra",  "ChatOrchestratorRecoveryTests|ChatOrchestratorS4ExtraTests",   GROUP_TIMEOUT, "Recovery + S4Extra"),
-              ("B3_recovery",          "ChatOrchestratorRecoveryTests",                              GROUP_TIMEOUT, "Recovery 单独"),
-              ("B4_reference",         "ChatOrchestratorReferenceTests",                             GROUP_TIMEOUT, "Reference 单独"),
-              ("B5_s4extra",           "ChatOrchestratorS4ExtraTests",                               GROUP_TIMEOUT, "S4Extra 单独"),
-              ("B1_failurepath",       "ChatOrchestratorFailurePathTests",                           GROUP_TIMEOUT, "FailurePath 单独"),
-              ("B2_lifecycle",         "ChatOrchestratorLifecycleTests",                             GROUP_TIMEOUT, "Lifecycle 单独"),
+              ("1_reference_only",   "ChatOrchestratorReferenceTests", 60),
+              ("2_recovery_only",    "ChatOrchestratorRecoveryTests", 60),
+              ("3_recovery_ref",     "ChatOrchestratorRecoveryTests|ChatOrchestratorReferenceTests", 120),
+              ("4_lifecycle_ref",    "ChatOrchestratorLifecycleTests|ChatOrchestratorReferenceTests", 120),
+              ("5_failure_ref",      "ChatOrchestratorFailurePathTests|ChatOrchestratorReferenceTests", 60),
+              ("6_recovery_s4extra", "ChatOrchestratorRecoveryTests|ChatOrchestratorS4ExtraTests", 60),
+              ("7_all_orch",         "ChatOrchestrator", 120),
+              ("8_full_dfdata",      None, 180),
           ]
 
-          def run_group(name, filt, cap):
-              remaining = JOB_BUDGET - (time.time() - started_all)
-              limit = int(max(5, min(cap, remaining)))
-              cmd = ["swift", "test", "--package-path", PKG]
+          def descendants(pid):
+              out = subprocess.run(["pgrep", "-P", str(pid)], capture_output=True, text=True).stdout.split()
+              allp = list(out)
+              for c in out:
+                  allp += descendants(c)
+              return allp
+
+          def dump_stacks(name, pid):
+              for p in [pid] + descendants(pid):
+                  try:
+                      print(f"--- ps -L for pid={p} ---")
+                      print(subprocess.run(["ps", "-o", "pid,tid,stat,wchan:24,comm", "-L", "-p", str(p)],
+                                           capture_output=True, text=True).stdout)
+                  except Exception as e:
+                      print("ps failed", e)
+                  try:
+                      bt = subprocess.run(["gdb", "-p", str(p), "-batch", "-ex", "thread apply all bt"],
+                                          capture_output=True, text=True, timeout=45)
+                      print(f"--- gdb bt pid={p} ---")
+                      print(bt.stdout[-6000:])
+                      print(bt.stderr[-1500:])
+                  except Exception as e:
+                      print(f"gdb attach pid={p} failed: {e}")
+              try:
+                  print("--- /proc stacks ---")
+                  for p in [pid] + descendants(pid):
+                      for t in os.listdir(f"/proc/{p}/task"):
+                          try:
+                              with open(f"/proc/{p}/task/{t}/stack") as f:
+                                  print(p, t, f.read().replace("\n", " | ")[:300])
+                          except Exception:
+                              pass
+              except Exception:
+                  pass
+
+          results = []
+          for name, filt, cap in groups:
+              remaining = BUDGET - (time.time() - started_all)
+              limit = int(max(10, min(cap, remaining)))
+              cmd = ["stdbuf", "-o0", "-e0", "swift", "test", "--package-path", PKG]
               if filt:
                   cmd += ["--filter", filt]
               print(f"\n===== GROUP {name} START {time.strftime('%H:%M:%S')} limit={limit}s =====", flush=True)
               print("CMD: " + " ".join(cmd), flush=True)
               t0 = time.time()
               p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                   start_new_session=True, text=True, errors="replace")
+                                   start_new_session=True, text=True, errors="replace", bufsize=1)
               timed_out = False
               try:
                   out, _ = p.communicate(timeout=limit)
                   code = p.returncode
               except subprocess.TimeoutExpired:
                   timed_out = True
+                  try:
+                      dump_stacks(name, p.pid)
+                  except Exception as e:
+                      print("dump_stacks failed", e)
                   try:
                       os.killpg(os.getpgid(p.pid), signal.SIGKILL)
                   except Exception:
@@ -97,51 +139,21 @@ jobs:
               started = re.findall(r"Test Case '([^']+)' started", out or "")
               passed = re.findall(r"Test Case '([^']+)' passed", out or "")
               failed = re.findall(r"Test Case '([^']+)' failed", out or "")
-              executed = re.findall(r"Executed (\d+) tests?, with (\d+) failures", out or "")
-              probes = [l for l in (out or "").splitlines() if "[orch " in l]
               print(f"EXIT={code} TIMEOUT={timed_out} ELAPSED={dur:.1f}s", flush=True)
               print(f"COUNT started={len(started)} passed={len(passed)} failed={len(failed)}", flush=True)
-              if executed:
-                  print(f"EXECUTED_LINE={executed[-1]}", flush=True)
               print(f"LAST_STARTED={started[-1] if started else 'NONE'}", flush=True)
               print(f"LAST_PASSED={passed[-1] if passed else 'NONE'}", flush=True)
-              print(f"PROBE_EVENTS={len(probes)}", flush=True)
-              if probes:
-                  print("--- LAST 6 PROBE EVENTS ---", flush=True)
-                  for l in probes[-6:]:
-                      print("PROBE " + l.strip(), flush=True)
               if timed_out or failed:
-                  print("--- LOG TAIL (80) ---", flush=True)
-                  for l in (out or "").splitlines()[-80:]:
+                  print("--- OUTPUT TAIL (60) ---", flush=True)
+                  for l in (out or "").splitlines()[-60:]:
                       print("TAIL " + l, flush=True)
               print(f"===== GROUP {name} END {time.strftime('%H:%M:%S')} =====", flush=True)
-              return {"name": name, "exit": code, "timeout": timed_out, "dur": round(dur, 1),
-                      "started": len(started), "passed": len(passed), "failed": len(failed),
-                      "last_started": started[-1] if started else "NONE",
-                      "probes": len(probes)}
+              results.append((name, code, timed_out, round(dur, 1), len(started), len(passed),
+                              len(failed), started[-1] if started else "NONE"))
 
-          results = []
-          for name, filt, cap, desc in groups:
-              print(f"\n### {name} :: {desc}", flush=True)
-              results.append(run_group(name, filt, cap))
-
-          print("\n\n========== MATRIX SUMMARY ==========", flush=True)
-          print(f"{'group':24} {'exit':>5} {'to':>3} {'sec':>7} {'start':>6} {'pass':>5} {'fail':>5}  last_started", flush=True)
+          print("\n\n========== MATRIX SUMMARY (无探针, stdbuf -o0) ==========", flush=True)
           for r in results:
-              print(f"{r['name']:24} {r['exit']:>5} {str(r['timeout']):>5} {r['dur']:>7.1f} "
-                    f"{r['started']:>6} {r['passed']:>5} {r['failed']:>5}  {r['last_started']}", flush=True)
+              print(f"{r[0]:22} exit={r[1]:>4} to={str(r[2]):>5} {r[3]:>7}s "
+                    f"start={r[4]:>3} pass={r[5]:>3} fail={r[6]:>3}  last={r[7]}", flush=True)
           print("========== END ==========", flush=True)
           PY
-
-      - name: 汇总探针事件
-        if: always()
-        shell: bash
-        run: |
-          echo "=== 所有组的探针条数 ==="
-          for f in /tmp/*.log; do
-            [ -f "$f" ] || continue
-            n=$(grep -c '\[orch ' "$f" 2>/dev/null || true)
-            echo "$(basename $f): $n"
-          done
-          echo "=== 出现 timeout 138/124 或未 finish 的组 ==="
-          grep -l 'finish' /tmp/*.log 2>/dev/null || true
