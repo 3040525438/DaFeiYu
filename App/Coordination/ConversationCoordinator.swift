@@ -199,6 +199,9 @@ final class ConversationCoordinator {
             accumulated += chunk
         case let .assistantReplaced(text):
             accumulated = text
+        case .assistantSegmented:
+            // 多气泡已落库；快照累积文本以 assistantReplaced 为准，这里不改状态
+            break
         case .turnCompleted, .turnFailed, .turnCancelled, .turnRecoveryPending:
             break
         }

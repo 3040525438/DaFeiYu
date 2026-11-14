@@ -49,6 +49,14 @@ public struct GRDBMessageGroupRepository: MessageGroupRepository, StaleTurnRecov
                 )
                 try assistant.insert(db)
 
+                // 4. 全文索引：开组阶段先索引用户输入（assistant 正文在事务 B 索引）
+                try MessageIndexer.index(
+                    db,
+                    messageID: user.id,
+                    conversationID: request.group.conversationID,
+                    text: user.text
+                )
+
                 group.userMessageID = user.id
                 group.assistantMessageID = assistant.id
                 try group.update(db)
@@ -374,6 +382,51 @@ public struct GRDBMessageTurnRepository: MessageTurnRepository, Sendable {
                 guard db.changesCount == 1 else {
                     // 影响 0 行：助理行不存在或不是 sending → 整个事务回滚
                     throw ChatOrchestrationError.assistantMessageMissing
+                }
+
+                guard let conversationID = try String.fetchOne(
+                    db,
+                    sql: "SELECT conversation_id FROM message_groups WHERE id = ?",
+                    arguments: [request.groupID]
+                ) else {
+                    throw DFError.database("消息组不存在：\(request.groupID)")
+                }
+
+                // ①.4 首条气泡正文入全文索引（定稿文本才是可检索文本）
+                try MessageIndexer.index(
+                    db,
+                    messageID: request.assistantMessageID,
+                    conversationID: conversationID,
+                    text: request.text
+                )
+
+                // ①.5 多气泡：后续气泡在同一事务内追加，任一失败整体回滚。
+                //      seq 从当前组内最大值继续递增，绝不与首条或历史消息重号。
+                if !request.additionalBubbles.isEmpty {
+                    var seq = try GRDBMessageGroupRepository.maxSeqValue(db, groupID: request.groupID) ?? 0
+                    for bubble in request.additionalBubbles {
+                        let trimmed = bubble.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty else { continue }
+                        seq += 1
+                        let message = Message(
+                            conversationID: conversationID,
+                            role: .assistant,
+                            text: trimmed,
+                            status: request.assistantStatus,
+                            origin: .reply,
+                            createdAt: request.sentAt ?? Clock.nowMillis(),
+                            sentAt: request.sentAt,
+                            groupID: request.groupID,
+                            seqInGroup: seq
+                        )
+                        try message.insert(db)
+                        try MessageIndexer.index(
+                            db,
+                            messageID: message.id,
+                            conversationID: conversationID,
+                            text: trimmed
+                        )
+                    }
                 }
 
                 // ② 唯一主引用：仅当原值为空时写入，不覆盖已有引用

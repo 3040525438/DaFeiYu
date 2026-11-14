@@ -320,6 +320,16 @@ final class ChatViewModel: ObservableObject {
             updateText(id: turn.assistantMessageID, text: text)
             return
 
+        case let .assistantSegmented(groupID, _):
+            // 多气泡：以库内真值刷新本轮所有气泡（每条有自己的 messageID 与状态）
+            if let rows = try? await container.messages.messages(inGroup: groupID) {
+                guard subscriptionID == self.subscriptionID else { return }
+                for row in rows where row.deletedAt == nil {
+                    upsert(row)
+                }
+            }
+            return
+
         case let .turnCompleted(_, assistantMessageID, _),
              let .turnCancelled(_, assistantMessageID):
             // 终态以库内真值为准：取消路径不保证发 assistantReplaced，

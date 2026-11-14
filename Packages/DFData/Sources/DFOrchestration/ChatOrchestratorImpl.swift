@@ -379,7 +379,9 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
             PromptInput(corePersona: persona, rules: deps.rules, history: composed.turns),
             budget: deps.budget
         )
-        let systemPrompt = prompt.system + "\n\n" + ReferenceProtocol.systemFragment
+        let systemPrompt = prompt.system
+            + "\n\n" + ReferenceProtocol.systemFragment
+            + "\n\n" + SegmentProtocol.systemFragment
 
         // 取消发生在 openTurn 之前：不得创建消息组（时序 A）
         if shouldStop() {
@@ -451,6 +453,9 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         // ---- 模型请求 ----
         phase = .streaming(groupID: groupID, assistantMessageID: assistantID)
         var parser = StreamingReferenceParser()
+        // 多气泡：先剥尾注，再按气泡协议切分；分隔符替换为换行，
+        // 半个分隔符被扣留，绝不把协议标记泄漏到用户界面。
+        var segmenter = SegmentParser()
         var visibleAccumulated = ""
 
         do {
@@ -463,8 +468,11 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
                 if case let .text(chunk) = delta {
                     let visible = parser.feed(chunk)
                     if !visible.isEmpty {
-                        visibleAccumulated += visible
-                        continuation.yield(.assistantDelta(visible))
+                        let shown = segmenter.feed(visible)
+                        if !shown.isEmpty {
+                            visibleAccumulated += shown
+                            continuation.yield(.assistantDelta(shown))
+                        }
                     }
                 }
             }
@@ -500,8 +508,8 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
 
         // ---- finish()：整段替换 ----
         let output = parser.finish()
-        let finalText = output.visibleText
-        guard !finalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let rawText = output.visibleText
+        guard !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             await failPath(
                 groupID: groupID,
                 assistantMessageID: assistantID,
@@ -512,7 +520,13 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
             return
         }
 
-        continuation.yield(.assistantReplaced(finalText))
+        // 多气泡切分：第一条作为本轮 assistant 正文，其余在事务 B 内追加为独立消息行。
+        // 切分完全基于定稿文本，流式期间被扣留的尾巴不会丢字。
+        let bubbles = SegmentParser.split(rawText)
+        let finalText = bubbles.first ?? rawText
+        let additionalBubbles = Array(bubbles.dropFirst())
+
+        continuation.yield(.assistantReplaced(bubbles.joined(separator: "\n")))
 
         // ---- 事务 B：正文 + reply_to_id + 引用 + 组状态，一次原子提交 ----
         let kept = await validate(
@@ -540,19 +554,32 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
                     replyToID: kept.first,
                     references: references,
                     groupStatus: .complete,
-                    closedAt: Clock.nowMillis()
+                    closedAt: Clock.nowMillis(),
+                    additionalBubbles: additionalBubbles
                 )
             )
+
+            // 多气泡：回读库内**真实**气泡列表（id / 序号 / 状态），再发非终态事件
+            if !additionalBubbles.isEmpty {
+                let segments = await loadSegments(groupID: groupID)
+                if segments.count > 1 {
+                    continuation.yield(.assistantSegmented(groupID: groupID, segments: segments))
+                } else {
+                    lastDiagnostic = "segments: 多气泡已落库但回读为空，未发送分段事件"
+                }
+            }
+
             continuation.yield(
                 .turnCompleted(groupID: groupID, assistantMessageID: assistantID, citations: kept)
             )
             continuation.finish()
         } catch {
-            // 事务 B 失败：走补偿；若组已被取消方终结则以库内真实状态为准
+            // 事务 B 失败：走补偿；若组已被取消方终结则以库内真实状态为准。
+            // 补偿写入**完整原文**（含所有气泡），不能只保住第一条。
             await failPath(
                 groupID: groupID,
                 assistantMessageID: assistantID,
-                text: finalText,
+                text: rawText,
                 reason: describe(error),
                 continuation: continuation
             )
@@ -683,6 +710,23 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
     }
 
     // MARK: - 辅助
+
+    /// 回读组内的真实气泡列表（按 `seq_in_group` 升序）。
+    /// 只用于多气泡事件，数据一律来自库内，不由流式片段拼装。
+    private func loadSegments(groupID: String) async -> [AssistantSegment] {
+        guard let rows = try? await deps.messages.messages(inGroup: groupID) else { return [] }
+        let assistants = rows
+            .filter { $0.role == .assistant }
+            .sorted { ($0.seqInGroup ?? 0) < ($1.seqInGroup ?? 0) }
+        return assistants.enumerated().map { index, message in
+            AssistantSegment(
+                messageID: message.id,
+                index: index,
+                text: message.text,
+                status: message.status
+            )
+        }
+    }
 
     /// 持久化执行边界：不继承"生成 Task"的取消状态。
     ///

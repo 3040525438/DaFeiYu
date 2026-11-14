@@ -97,6 +97,9 @@ public struct FinalizeTurnRequest: Sendable {
     public var references: [MessageReference]
     public var groupStatus: MessageGroupStatus
     public var closedAt: Int64
+    /// 多气泡回复的**后续**气泡正文（第一条即 `text`）。
+    /// 与第一条在**同一事务**内落库，任一失败整体回滚；空串条目会被忽略。
+    public var additionalBubbles: [String]
 
     public init(
         groupID: String,
@@ -107,7 +110,8 @@ public struct FinalizeTurnRequest: Sendable {
         replyToID: String?,
         references: [MessageReference],
         groupStatus: MessageGroupStatus,
-        closedAt: Int64
+        closedAt: Int64,
+        additionalBubbles: [String] = []
     ) {
         self.groupID = groupID
         self.assistantMessageID = assistantMessageID
@@ -118,6 +122,7 @@ public struct FinalizeTurnRequest: Sendable {
         self.references = references
         self.groupStatus = groupStatus
         self.closedAt = closedAt
+        self.additionalBubbles = additionalBubbles
     }
 }
 

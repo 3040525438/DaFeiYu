@@ -220,7 +220,22 @@ public struct GRDBMessageRepository: MessageRepository, Sendable {
                     """,
                     arguments: [text, messageID, expectedStatus.rawValue]
                 )
-                return db.changesCount == 1 ? .updated : .statusMismatch
+                guard db.changesCount == 1 else { return .statusMismatch }
+
+                // 正文变更必须同步全文索引，避免"库里能读到、搜索查不到"
+                if let conversationID = try String.fetchOne(
+                    db,
+                    sql: "SELECT conversation_id FROM messages WHERE id = ?",
+                    arguments: [messageID]
+                ) {
+                    try MessageIndexer.index(
+                        db,
+                        messageID: messageID,
+                        conversationID: conversationID,
+                        text: text
+                    )
+                }
+                return .updated
             }
         } catch {
             throw GRDBErrorMapper.map(error)

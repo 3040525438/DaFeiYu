@@ -25,6 +25,11 @@ public enum OrchestratorEvent: Sendable, Equatable {
     case assistantDelta(String)
     /// 定稿正文：UI 应**整体替换**当前 assistant 文本（`finish()` 之后、事务 B 之前/后的一致性文本）
     case assistantReplaced(String)
+    /// 多气泡落库完成（**非终态**，只在拆分出 ≥2 条气泡时发出，且一定早于终态事件）。
+    ///
+    /// 事务 B 已把每条气泡写成独立消息行；`segments` 是库内**真实** id / 序号 / 状态，
+    /// 不是预期值。UI 应据此把临时气泡替换成多条独立气泡。
+    case assistantSegmented(groupID: String, segments: [AssistantSegment])
     /// 正常结束：事务 B 已提交
     case turnCompleted(groupID: String, assistantMessageID: String, citations: [String])
     /// 运行期失败：事务 C 已提交（组 failed / assistant failed）
