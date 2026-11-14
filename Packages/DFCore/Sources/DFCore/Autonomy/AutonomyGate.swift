@@ -30,6 +30,8 @@ public struct AutonomyPolicy: Codable, Sendable, Equatable {
     /// 每日主动消息上限（D14 默认 5）
     public var dailyLimit: Int
     public var notificationLevel: NotificationLevel
+    /// 每日模型预算（元）。nil 表示不限制；为 0 表示不允许任何花费。
+    public var dailyBudgetYuan: Double?
     /// 分项开关
     public var allowProactiveMessage: Bool
     public var allowNewConversation: Bool
@@ -44,6 +46,7 @@ public struct AutonomyPolicy: Codable, Sendable, Equatable {
         minIntervalMinutes: 120,
         dailyLimit: 5,
         notificationLevel: .brief,
+        dailyBudgetYuan: nil,
         allowProactiveMessage: true,
         allowNewConversation: false,
         allowMemoryConsolidation: true,
@@ -58,6 +61,7 @@ public struct AutonomyPolicy: Codable, Sendable, Equatable {
         minIntervalMinutes: Int,
         dailyLimit: Int,
         notificationLevel: NotificationLevel,
+        dailyBudgetYuan: Double? = nil,
         allowProactiveMessage: Bool,
         allowNewConversation: Bool,
         allowMemoryConsolidation: Bool,
@@ -70,6 +74,7 @@ public struct AutonomyPolicy: Codable, Sendable, Equatable {
         self.minIntervalMinutes = minIntervalMinutes
         self.dailyLimit = dailyLimit
         self.notificationLevel = notificationLevel
+        self.dailyBudgetYuan = dailyBudgetYuan
         self.allowProactiveMessage = allowProactiveMessage
         self.allowNewConversation = allowNewConversation
         self.allowMemoryConsolidation = allowMemoryConsolidation
@@ -84,6 +89,9 @@ public struct AutonomyPolicy: Codable, Sendable, Equatable {
         copy.quietEndMinute = min(max(copy.quietEndMinute, 0), 1439)
         copy.minIntervalMinutes = min(max(copy.minIntervalMinutes, 0), 1440)
         copy.dailyLimit = min(max(copy.dailyLimit, 0), 100)
+        if let budget = copy.dailyBudgetYuan {
+            copy.dailyBudgetYuan = max(0, budget)
+        }
         return copy
     }
 
@@ -121,13 +129,19 @@ public enum AutonomyGate {
     ///   - nowMinuteOfDay: 当前本地时间的"当天第几分钟"（0...1439）
     ///   - lastSentAt: 上次主动消息时间（毫秒）；nil 表示今天还没发过
     ///   - todaySentCount: 今天已发主动消息条数
+    ///   - pausedUntil: 用户暂停自主行为的截止时间（毫秒）；nil 表示未暂停
+    ///   - todaySpentYuan: 今天已花费的模型成本（元）
+    ///   - notificationsAuthorized: 用户是否已授权通知
     public static func evaluate(
         policy: AutonomyPolicy,
         trigger: ProactiveTrigger,
         nowMillis: Int64,
         nowMinuteOfDay: Int,
         lastSentAt: Int64?,
-        todaySentCount: Int
+        todaySentCount: Int,
+        pausedUntil: Int64? = nil,
+        todaySpentYuan: Double = 0,
+        notificationsAuthorized: Bool = true
     ) -> AutonomyDecision {
         let policy = policy.normalized()
         guard policy.enabled else {
@@ -136,9 +150,19 @@ public enum AutonomyGate {
         guard policy.allows(trigger) else {
             return AutonomyDecision(allowed: false, reason: "该类型主动行为已被单独关闭")
         }
-        // 记忆整理与自我反思不打扰用户，不受免打扰与频率限制
+        if let pausedUntil, pausedUntil > nowMillis {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "MM-dd HH:mm"
+            let until = formatter.string(from: Date(timeIntervalSince1970: Double(pausedUntil) / 1000))
+            return AutonomyDecision(allowed: false, reason: "自主行为已暂停至 \(until)")
+        }
+        // 记忆整理与自我反思不打扰用户，不受免打扰、授权、频率与通知档位限制
         guard trigger == .message || trigger == .newConversation || trigger == .suggestion else {
             return .allowed
+        }
+        // 会触达用户的行为必须已获得通知授权；隐藏档位不展示任何内容，不依赖通知权限
+        if !notificationsAuthorized && policy.notificationLevel != .hidden {
+            return AutonomyDecision(allowed: false, reason: "未获得通知授权，已阻止主动打扰")
         }
         if isQuietHours(policy: policy, minuteOfDay: nowMinuteOfDay) {
             return AutonomyDecision(allowed: false, reason: "当前处于免打扰时段")
@@ -152,6 +176,12 @@ public enum AutonomyGate {
                 let remaining = Int((Double(policy.minIntervalMinutes) - elapsedMinutes).rounded(.up))
                 return AutonomyDecision(allowed: false, reason: "距上次主动消息不足最小间隔，还需 \(remaining) 分钟")
             }
+        }
+        if let budget = policy.dailyBudgetYuan, todaySpentYuan >= budget {
+            return AutonomyDecision(
+                allowed: false,
+                reason: String(format: "已达今日模型预算（%.2f 元），今日已用 %.2f 元", budget, todaySpentYuan)
+            )
         }
         return .allowed
     }
