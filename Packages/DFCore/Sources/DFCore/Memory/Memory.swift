@@ -5,7 +5,8 @@ import Foundation
 public enum MemoryScope: String, Codable, Sendable, CaseIterable {
     case user
     case shared
-    case self
+    /// 键值仍是 `self`（与 v2 迁移的 CHECK 口径一致），只是 Swift 里不能用关键字作 case 名
+    case selfScope = "self"
 }
 
 /// 记忆来源引用：一条记忆可以有多处出处，删除来源时可据此定位（D19）。

@@ -101,14 +101,14 @@ final class MemoryRepositoryTests: XCTestCase {
     func testSearchRespectsScopeAndUpdatedContent() async throws {
         let userMemory = try await repo.insert(draft(scope: .user), at: 1000)
         _ = try await repo.insert(
-            draft(title: "她的观察", content: "她注意到用户总在深夜说话", scope: .self),
+            draft(title: "她的观察", content: "她注意到用户总在深夜说话", scope: .selfScope),
             at: 1100
         )
 
         let all = try await repo.search(query: "海边", scope: nil, limit: 10)
         XCTAssertEqual(all.map(\.id), [userMemory.id])
 
-        let selfScope = try await repo.search(query: "深夜", scope: .self, limit: 10)
+        let selfScope = try await repo.search(query: "深夜", scope: .selfScope, limit: 10)
         XCTAssertEqual(selfScope.count, 1)
 
         let wrongScope = try await repo.search(query: "深夜", scope: .user, limit: 10)
@@ -132,13 +132,13 @@ final class MemoryRepositoryTests: XCTestCase {
             MemoryDraft(title: "共同经历", content: "一起看了一场电影", scope: .shared),
             at: 1100
         )
-        try await repo.setScope(id: shared.id, scope: .self, evidence: "用户确认这是 AI 的感受", at: 2000)
+        try await repo.setScope(id: shared.id, scope: .selfScope, evidence: "用户确认这是 AI 的感受", at: 2000)
 
         let updated = try await repo.memory(id: shared.id)
-        XCTAssertEqual(updated?.scope, .self)
+        XCTAssertEqual(updated?.scope, .selfScope)
         XCTAssertEqual(updated?.classificationStatus, "confirmed")
 
-        let hits = try await repo.search(query: "电影", scope: .self, limit: 10)
+        let hits = try await repo.search(query: "电影", scope: .selfScope, limit: 10)
         XCTAssertEqual(hits.map(\.id), [shared.id])
     }
 
@@ -211,7 +211,7 @@ final class MemoryRepositoryTests: XCTestCase {
     func testCountByScope() async throws {
         _ = try await repo.insert(draft(), at: 1000)
         _ = try await repo.insert(draft(title: "共同", content: "一起经历", scope: .shared), at: 1100)
-        _ = try await repo.insert(draft(title: "自我", content: "她的想法", scope: .self), at: 1200)
+        _ = try await repo.insert(draft(title: "自我", content: "她的想法", scope: .selfScope), at: 1200)
 
         let totalCount = try await repo.count(scope: nil)
         XCTAssertEqual(totalCount, 3)
