@@ -63,6 +63,15 @@ public struct Message: Codable, Identifiable, Hashable, Sendable {
     public var groupID: String?
     /// 组内序号，从 0 开始；与 `groupID` 同时为 `nil` 或同时非空
     public var seqInGroup: Int?
+    /// 最近一次编辑时间（`nil` 表示从未编辑）
+    public var editedAt: Int64?
+    /// 累计编辑次数，编辑历史条数与之一致
+    public var editCount: Int
+    /// 撤回时间（`nil` 表示未撤回）；撤回**不删原文**
+    public var revokedAt: Int64?
+    public var revokeReason: String?
+    /// 是否收藏（收藏不会自动写入记忆）
+    public var isFavorite: Bool
 
     public init(
         id: String = UUID().uuidString,
@@ -80,7 +89,12 @@ public struct Message: Codable, Identifiable, Hashable, Sendable {
         emotionStateID: String? = nil,
         deletedAt: Int64? = nil,
         groupID: String? = nil,
-        seqInGroup: Int? = nil
+        seqInGroup: Int? = nil,
+        editedAt: Int64? = nil,
+        editCount: Int = 0,
+        revokedAt: Int64? = nil,
+        revokeReason: String? = nil,
+        isFavorite: Bool = false
     ) {
         self.id = id
         self.clientUUID = clientUUID
@@ -98,6 +112,11 @@ public struct Message: Codable, Identifiable, Hashable, Sendable {
         self.deletedAt = deletedAt
         self.groupID = groupID
         self.seqInGroup = seqInGroup
+        self.editedAt = editedAt
+        self.editCount = editCount
+        self.revokedAt = revokedAt
+        self.revokeReason = revokeReason
+        self.isFavorite = isFavorite
     }
 
     enum CodingKeys: String, CodingKey {
@@ -117,6 +136,11 @@ public struct Message: Codable, Identifiable, Hashable, Sendable {
         case deletedAt = "deleted_at"
         case groupID = "group_id"
         case seqInGroup = "seq_in_group"
+        case editedAt = "edited_at"
+        case editCount = "edit_count"
+        case revokedAt = "revoked_at"
+        case revokeReason = "revoke_reason"
+        case isFavorite = "is_favorite"
     }
 }
 

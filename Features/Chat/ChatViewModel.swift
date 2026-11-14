@@ -19,6 +19,17 @@ final class ChatViewModel: ObservableObject {
     @Published var errorText: String?
     @Published private(set) var hasModel: Bool = false
 
+    /// W2-7：外观设置（主题/背景/气泡/字号/头像），默认值兜底
+    @Published private(set) var theme: ChatTheme = .default
+    /// W2-5：会话内搜索
+    @Published var searchQuery: String = ""
+    @Published private(set) var searchHits: [ChatSearchHit] = []
+    /// 搜索定位：命中的消息 id，由列表滚动后清空
+    @Published var scrollTargetID: String?
+    /// W2-3：编辑态
+    @Published var editingMessage: Message?
+    @Published var editDraft: String = ""
+
     /// 待恢复轮次（`turnRecoveryPending` 产生）：库里组仍为 `open`，属非终态。
     /// 仅保存编排器明确告知的 groupID，**绝不伪造**。
     @Published private(set) var pendingRecovery: PendingRecovery?
@@ -87,6 +98,7 @@ final class ChatViewModel: ObservableObject {
             // D1：`hasRecovered` 只代表"历史上恢复过"，不代表"现在没有残留"。
             await recoverStaleAfterLoad(coordinator: coordinator)
             hasModel = (try await container.modelConfigs.defaultConfig()) != nil
+            theme = (try? await container.chatTheme.load()) ?? .default
         } catch {
             errorText = error.localizedDescription
         }
@@ -177,6 +189,140 @@ final class ChatViewModel: ObservableObject {
 
     private var hasUnfinishedAssistant: Bool {
         messages.contains { $0.role == .assistant && $0.status == .sending }
+    }
+
+    /// 供"清空会话"使用：当前会话 id
+    var conversationIDForDeletion: String { conversationID }
+
+    // MARK: - W2 消息交互（编辑 / 撤回 / 收藏 / 删除 / 搜索 / 外观）
+
+    func beginEdit(_ message: Message) {
+        guard !isStreaming, message.deletedAt == nil, message.revokedAt == nil else { return }
+        editingMessage = message
+        editDraft = message.text
+    }
+
+    func cancelEdit() {
+        editingMessage = nil
+        editDraft = ""
+    }
+
+    func commitEdit() async {
+        guard let target = editingMessage else { return }
+        do {
+            let outcome = try await container.editing.editMessage(
+                id: target.id,
+                newText: editDraft,
+                editedAt: Clock.nowMillis()
+            )
+            editingMessage = nil
+            editDraft = ""
+            if !outcome.changed {
+                errorText = "内容没有变化"
+            }
+            await reloadMessage(id: target.id)
+        } catch {
+            errorText = Self.interactionMessage(error)
+        }
+    }
+
+    func revoke(_ message: Message) async {
+        do {
+            try await container.editing.revokeMessage(
+                id: message.id,
+                reason: nil,
+                revokedAt: Clock.nowMillis()
+            )
+            await reloadMessage(id: message.id)
+        } catch {
+            errorText = Self.interactionMessage(error)
+        }
+    }
+
+    func toggleFavorite(_ message: Message) async {
+        do {
+            try await container.editing.setFavorite(
+                id: message.id,
+                isFavorite: !message.isFavorite,
+                at: Clock.nowMillis()
+            )
+            await reloadMessage(id: message.id)
+        } catch {
+            errorText = Self.interactionMessage(error)
+        }
+    }
+
+    /// 批量删除入口（逐条 / 按日期 / 按关键词 / 清空会话）
+    func delete(_ scope: MessageDeleteScope) async {
+        guard !isStreaming else { return }
+        do {
+            _ = try await container.deletion.softDelete(
+                scope,
+                in: conversationID,
+                at: Clock.nowMillis()
+            )
+            messages = try await container.messages.recentMessages(in: conversationID, limit: 300)
+        } catch {
+            errorText = Self.interactionMessage(error)
+        }
+    }
+
+    func runSearch() async {
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            searchHits = []
+            return
+        }
+        do {
+            searchHits = try await container.chatSearch.search(
+                query: query,
+                conversationID: conversationID,
+                limit: 50
+            )
+        } catch {
+            errorText = Self.interactionMessage(error)
+        }
+    }
+
+    func clearSearch() {
+        searchQuery = ""
+        searchHits = []
+    }
+
+    /// 定位命中消息：不在当前窗口时先重新装载最近 300 条，再交给列表滚动
+    func revealSearchHit(_ hit: ChatSearchHit) async {
+        if !messages.contains(where: { $0.id == hit.messageID }) {
+            messages = (try? await container.messages.recentMessages(in: conversationID, limit: 300)) ?? messages
+        }
+        guard messages.contains(where: { $0.id == hit.messageID }) else {
+            errorText = "这条消息不在最近 300 条内，请先加载更早的消息"
+            return
+        }
+        scrollTargetID = hit.messageID
+        searchHits = []
+        searchQuery = ""
+    }
+
+    func saveTheme(_ theme: ChatTheme) async {
+        do {
+            try await container.chatTheme.save(theme)
+            self.theme = theme.normalized()
+        } catch {
+            errorText = Self.interactionMessage(error)
+        }
+    }
+
+    func resetTheme() async {
+        do {
+            theme = try await container.chatTheme.reset()
+        } catch {
+            errorText = Self.interactionMessage(error)
+        }
+    }
+
+    private static func interactionMessage(_ error: Error) -> String {
+        if let interaction = error as? MessageInteractionError { return interaction.description }
+        return error.localizedDescription
     }
 
     // MARK: - 订阅
@@ -430,6 +576,12 @@ final class ChatViewModel: ObservableObject {
             hasRecovered = false
             NSLog("装载后补偿恢复失败：\(error.localizedDescription)")
         }
+    }
+
+    /// 交互操作后的单条重读（无订阅约束：编辑/撤回/收藏由本页直接发起）
+    private func reloadMessage(id: String) async {
+        guard let message = try? await container.messages.message(id: id) else { return }
+        upsert(message)
     }
 
     private func reloadMessage(id: String, subscriptionID: UUID) async {

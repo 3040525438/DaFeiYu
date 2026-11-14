@@ -6,6 +6,11 @@ import DFCore
 struct ChatView: View {
     @StateObject private var viewModel: ChatViewModel
     @FocusState private var isInputFocused: Bool
+    @State private var isSearching = false
+    @State private var showThemeSheet = false
+    @State private var showClearConfirm = false
+    @State private var showKeywordDelete = false
+    @State private var deleteKeyword = ""
     private let onOpenSettings: () -> Void
 
     @MainActor
@@ -17,21 +22,57 @@ struct ChatView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                if isSearching {
+                    searchBar
+                }
+                if !viewModel.searchHits.isEmpty {
+                    searchResults
+                }
                 messageList
                 composer
             }
             .background(alignment: .top) { chatBackground }
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(DFColor.canvas, for: .navigationBar)
+            .toolbarBackground(backgroundBaseColor, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .principal) { headerTitle }
-                ToolbarItem(placement: .topBarTrailing) {
-                    if viewModel.isStreaming {
-                        Text("正在输入…")
-                            .font(.system(size: 10))
-                            .foregroundStyle(DFColor.inkMuted)
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        isSearching.toggle()
+                        if !isSearching { viewModel.clearSearch() }
+                    } label: {
+                        Image(systemName: "magnifyingglass")
                     }
+                    .accessibilityLabel("搜索会话")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button {
+                            showThemeSheet = true
+                        } label: {
+                            Label("外观", systemImage: "paintpalette")
+                        }
+                        Divider()
+                        Button {
+                            deleteToday()
+                        } label: {
+                            Label("删除今天的消息", systemImage: "calendar.badge.minus")
+                        }
+                        Button {
+                            showKeywordDelete = true
+                        } label: {
+                            Label("按关键词删除…", systemImage: "text.badge.minus")
+                        }
+                        Button(role: .destructive) {
+                            showClearConfirm = true
+                        } label: {
+                            Label("清空会话", systemImage: "trash")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .accessibilityLabel("更多操作")
                 }
                 // 键盘上方的收起按钮：滑动手势不一定生效，需要一个明确出口
                 ToolbarItemGroup(placement: .keyboard) {
@@ -56,6 +97,66 @@ struct ChatView: View {
         } message: {
             Text(viewModel.errorText ?? "")
         }
+        .alert("清空会话", isPresented: $showClearConfirm) {
+            Button("取消", role: .cancel) {}
+            Button("清空", role: .destructive) {
+                Task { await viewModel.delete(.conversation(viewModel.conversationIDForDeletion)) }
+            }
+        } message: {
+            Text("将删除本会话的全部消息（记忆与人格不受影响）。")
+        }
+        .alert("按关键词删除", isPresented: $showKeywordDelete) {
+            TextField("关键词", text: $deleteKeyword)
+            Button("取消", role: .cancel) {}
+            Button("删除", role: .destructive) {
+                let keyword = deleteKeyword.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !keyword.isEmpty else { return }
+                deleteKeyword = ""
+                Task { await viewModel.delete(.keyword(keyword)) }
+            }
+        } message: {
+            Text("只删除正文包含该关键词的消息。")
+        }
+        .sheet(isPresented: $showThemeSheet) {
+            ThemeSettingsSheet(
+                theme: viewModel.theme,
+                onSave: { updated in
+                    Task { await viewModel.saveTheme(updated) }
+                },
+                onReset: {
+                    Task { await viewModel.resetTheme() }
+                }
+            )
+        }
+        .sheet(item: $viewModel.editingMessage) { message in
+            EditMessageSheet(
+                message: message,
+                draft: $viewModel.editDraft,
+                onCancel: { viewModel.cancelEdit() },
+                onSave: { Task { await viewModel.commitEdit() } }
+            )
+        }
+    }
+
+    private func deleteToday() {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: Date())
+        let end = calendar.date(byAdding: .day, value: 1, to: start) ?? Date()
+        Task {
+            await viewModel.delete(
+                .dateRange(
+                    fromMillis: Clock.millis(from: start),
+                    toMillis: Clock.millis(from: end)
+                )
+            )
+        }
+    }
+
+    /// 导航栏底色随主题变化（暗色主题下不刺眼）
+    private var backgroundBaseColor: Color {
+        viewModel.theme.background == "dark"
+            ? Color(red: 0.09, green: 0.09, blue: 0.11)
+            : DFColor.canvas
     }
 
     private var errorBinding: Binding<Bool> {
@@ -103,8 +204,12 @@ struct ChatView: View {
                             message: message,
                             isStreaming: isStreaming(message),
                             isPendingRecovery: viewModel.isPendingRecovery(message),
+                            theme: viewModel.theme,
                             onRetry: { viewModel.retry(message) },
-                            onDelete: { viewModel.delete(message) }
+                            onDelete: { viewModel.delete(.ids([message.id])) },
+                            onEdit: { viewModel.beginEdit(message) },
+                            onRevoke: { Task { await viewModel.revoke(message) } },
+                            onToggleFavorite: { Task { await viewModel.toggleFavorite(message) } }
                         )
                         .id(message.id)
                     }
@@ -120,18 +225,97 @@ struct ChatView: View {
                     proxy.scrollTo(last.id, anchor: .bottom)
                 }
             }
+            .onChange(of: viewModel.scrollTargetID) { _, target in
+                guard let target else { return }
+                withAnimation(DFMotion.messageIn) {
+                    proxy.scrollTo(target, anchor: .center)
+                }
+                viewModel.scrollTargetID = nil
+            }
         }
     }
 
-    /// 页面底色：奶油白 + 顶部柔光 + 鱼鳞暗纹（只到 190pt，向下淡出）
+    // MARK: - 搜索
+
+    private var searchBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12))
+                .foregroundStyle(DFColor.inkMuted)
+            TextField("搜索本会话的消息", text: $viewModel.searchQuery)
+                .font(DFFont.caption)
+                .submitLabel(.search)
+                .onSubmit { Task { await viewModel.runSearch() } }
+            Button("搜索") {
+                Task { await viewModel.runSearch() }
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(DFColor.primary)
+
+            Button {
+                isSearching = false
+                viewModel.clearSearch()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 13))
+                    .foregroundStyle(DFColor.inkMuted)
+            }
+            .accessibilityLabel("关闭搜索")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(DFColor.surface)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(DFColor.hairline).frame(height: 1)
+        }
+    }
+
+    private var searchResults: some View {
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(viewModel.searchHits) { hit in
+                    Button {
+                        Task { await viewModel.revealSearchHit(hit) }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "text.magnifyingglass")
+                                .font(.system(size: 11))
+                                .foregroundStyle(DFColor.inkMuted)
+                            Text(previewText(for: hit))
+                                .font(DFFont.caption)
+                                .foregroundStyle(DFColor.ink)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
+                    }
+                    Divider().overlay(DFColor.hairline)
+                }
+            }
+        }
+        .frame(maxHeight: 180)
+        .background(DFColor.surface)
+    }
+
+    private func previewText(for hit: ChatSearchHit) -> String {
+        viewModel.messages.first { $0.id == hit.messageID }?.text ?? hit.messageID
+    }
+
+    /// 页面底色：随主题变化（暗色不叠加柔光/暗纹，避免脏色）
     private var chatBackground: some View {
         ZStack(alignment: .top) {
-            DFColor.canvas
-            DFSoftGlow()
-                .frame(height: 260)
-                .clipped()
-            DFScaleBackdrop(opacity: 0.16)
-                .frame(height: 190)
+            backgroundBaseColor
+            switch viewModel.theme.background {
+            case "dark", "plain":
+                EmptyView()
+            default:
+                DFSoftGlow()
+                    .frame(height: 260)
+                    .clipped()
+                DFScaleBackdrop(opacity: 0.16)
+                    .frame(height: 190)
+            }
         }
         .ignoresSafeArea()
     }
@@ -228,12 +412,18 @@ struct MessageRow: View {
     var isStreaming: Bool = false
     /// 该轮次还没收尾（库里组仍 open）：显示"待恢复"，不得显示为成功/失败/取消
     var isPendingRecovery: Bool = false
+    var theme: ChatTheme = .default
     let onRetry: () -> Void
     let onDelete: () -> Void
+    var onEdit: () -> Void = {}
+    var onRevoke: () -> Void = {}
+    var onToggleFavorite: () -> Void = {}
 
     private var isUser: Bool {
         message.role == .user
     }
+
+    private var isRevoked: Bool { message.revokedAt != nil }
 
     /// 只有失败的 assistant 才提供重试入口（重试会新建组，不是删了重发）
     private var canRetry: Bool {
@@ -249,18 +439,35 @@ struct MessageRow: View {
                 MessageBubble(
                     text: displayText,
                     kind: isUser ? .me : .other,
-                    isFailed: message.status == .failed,
-                    isStreaming: isStreaming
+                    isFailed: message.status == .failed || isRevoked,
+                    isStreaming: isStreaming,
+                    theme: theme
                 )
                 .contextMenu {
-                    Button {
-                        UIPasteboard.general.string = message.text
-                    } label: {
-                        Label("复制", systemImage: "doc.on.doc")
+                    if !isRevoked {
+                        Button {
+                            UIPasteboard.general.string = message.text
+                        } label: {
+                            Label("复制", systemImage: "doc.on.doc")
+                        }
+                        Button(action: onEdit) {
+                            Label("编辑", systemImage: "pencil")
+                        }
+                        Button(action: onToggleFavorite) {
+                            Label(
+                                message.isFavorite ? "取消收藏" : "收藏",
+                                systemImage: message.isFavorite ? "star.slash" : "star"
+                            )
+                        }
                     }
                     if canRetry {
                         Button(action: onRetry) {
                             Label("重试", systemImage: "arrow.clockwise")
+                        }
+                    }
+                    if !isRevoked {
+                        Button(action: onRevoke) {
+                            Label("撤回", systemImage: "arrow.uturn.backward")
                         }
                     }
                     Button(role: .destructive, action: onDelete) {
@@ -284,6 +491,7 @@ struct MessageRow: View {
     }
 
     private var displayText: String {
+        if isRevoked { return isUser ? "你撤回了一条消息" : "这条消息已撤回" }
         if !message.text.isEmpty { return message.text }
         if isPendingRecovery { return "上一轮尚未完成" }
         if message.status == .sending { return "…" }
@@ -318,6 +526,15 @@ struct MessageRow: View {
                     RoundedRectangle(cornerRadius: 11, style: .continuous)
                         .stroke(DFColor.hairline, lineWidth: 1)
                 )
+        } else if theme.avatarStyle == "initial" {
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(DFColor.primary.opacity(0.16))
+                .frame(width: 31, height: 31)
+                .overlay(
+                    Text("鱼")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(DFColor.primary)
+                )
         } else {
             DFCharacterMark(size: 31)
         }
@@ -330,9 +547,26 @@ struct MessageRow: View {
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(DFColor.success)
             }
+            if message.isFavorite {
+                Image(systemName: "star.fill")
+                    .font(.system(size: 8))
+                    .foregroundStyle(DFColor.primary)
+            }
             Text(Self.timeText(for: message.createdAt))
                 .font(DFFont.timestamp)
                 .foregroundStyle(DFColor.inkMuted)
+
+            if message.editCount > 0 {
+                Text("已编辑")
+                    .font(DFFont.timestamp)
+                    .foregroundStyle(DFColor.inkMuted)
+            }
+
+            if isRevoked {
+                Text("已撤回")
+                    .font(DFFont.timestamp)
+                    .foregroundStyle(DFColor.inkMuted)
+            }
 
             if message.status == .sending {
                 Text("发送中…")
@@ -356,5 +590,119 @@ struct MessageRow: View {
 
     private static func timeText(for millis: Int64) -> String {
         timeFormatter.string(from: Clock.date(fromMillis: millis))
+    }
+}
+
+/// W2-7 外观设置：主题 / 底色 / 气泡样式 / 字号 / 头像 + 恢复默认。
+struct ThemeSettingsSheet: View {
+    let onSave: (ChatTheme) -> Void
+    let onReset: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft: ChatTheme
+
+    init(theme: ChatTheme, onSave: @escaping (ChatTheme) -> Void, onReset: @escaping () -> Void) {
+        self.onSave = onSave
+        self.onReset = onReset
+        _draft = State(initialValue: theme)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("主题") {
+                    Picker("主题", selection: $draft.themeID) {
+                        Text("经典").tag("classic")
+                        Text("暖调").tag("warm")
+                        Text("夜间").tag("night")
+                    }
+                    Picker("底色", selection: $draft.background) {
+                        Text("奶油").tag("cream")
+                        Text("纯净").tag("plain")
+                        Text("暗色").tag("dark")
+                    }
+                }
+                Section("气泡") {
+                    Picker("气泡样式", selection: $draft.bubbleStyle) {
+                        Text("气泡").tag("bubble")
+                        Text("纯文字").tag("plain")
+                    }
+                    Picker("头像", selection: $draft.avatarStyle) {
+                        Text("鱼形").tag("fish")
+                        Text("文字").tag("initial")
+                    }
+                    HStack {
+                        Text("字号")
+                        Slider(value: $draft.fontScale, in: ChatTheme.fontScaleRange, step: 0.05)
+                        Text(String(format: "%.0f%%", draft.fontScale * 100))
+                            .font(DFFont.caption)
+                            .foregroundStyle(DFColor.inkMuted)
+                    }
+                }
+                Section {
+                    Button("恢复默认", role: .destructive) {
+                        onReset()
+                        dismiss()
+                    }
+                }
+            }
+            .navigationTitle("外观")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") {
+                        onSave(draft)
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// W2-3 编辑消息：保存时写入编辑留痕，原文不丢。
+struct EditMessageSheet: View {
+    let message: Message
+    @Binding var draft: String
+    let onCancel: () -> Void
+    let onSave: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("编辑后原文会保留在编辑历史里，可随时回查")
+                    .font(DFFont.caption)
+                    .foregroundStyle(DFColor.inkMuted)
+                TextEditor(text: $draft)
+                    .font(DFFont.body)
+                    .frame(minHeight: 160)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(DFColor.hairline, lineWidth: 1)
+                    )
+            }
+            .padding(16)
+            .navigationTitle("编辑消息")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") {
+                        onCancel()
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") {
+                        onSave()
+                        dismiss()
+                    }
+                }
+            }
+        }
     }
 }

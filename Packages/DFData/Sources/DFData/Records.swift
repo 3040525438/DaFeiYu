@@ -71,7 +71,12 @@ extension Message: FetchableRecord, PersistableRecord {
             emotionStateID: row.optionalString("emotion_state_id"),
             deletedAt: row.optionalInt64("deleted_at"),
             groupID: row.optionalString("group_id"),
-            seqInGroup: row.optionalInt("seq_in_group")
+            seqInGroup: row.optionalInt("seq_in_group"),
+            editedAt: row.optionalInt64("edited_at"),
+            editCount: row.optionalInt("edit_count") ?? 0,
+            revokedAt: row.optionalInt64("revoked_at"),
+            revokeReason: row.optionalString("revoke_reason"),
+            isFavorite: (row.optionalInt("is_favorite") ?? 0) != 0
         )
     }
 }

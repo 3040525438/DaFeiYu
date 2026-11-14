@@ -20,6 +20,14 @@ final class AppContainer: ObservableObject {
     let modelConfigs: ModelConfigRepository
     let settings: SettingsRepository
     let integrityChecker: IntegrityChecker
+    /// W2：编辑留痕 / 撤回 / 收藏
+    let editing: MessageEditingRepository
+    /// W2：四类删除
+    let deletion: MessageDeletionRepository
+    /// W2：会话内搜索
+    let chatSearch: ChatSearchRepository
+    /// W2：主题与气泡个性化
+    let chatTheme: ChatThemeStoring
 
     /// 全局活跃轮次登记表（L2）：跨页面 / 恢复路径共享。
     let activeTurns = ActiveTurnRegistry()
@@ -77,6 +85,10 @@ final class AppContainer: ObservableObject {
         self.modelConfigs = GRDBModelConfigRepository(database: database)
         self.settings = GRDBSettingsRepository(database: database)
         self.integrityChecker = IntegrityChecker(database: database, attachments: attachments)
+        self.editing = GRDBMessageEditingRepository(database: database)
+        self.deletion = GRDBMessageDeletionRepository(database: database)
+        self.chatSearch = GRDBChatSearchRepository(database: database)
+        self.chatTheme = GRDBChatThemeStore(settings: GRDBSettingsRepository(database: database))
 
         self.groups = GRDBMessageGroupRepository(database: database)
         self.turns = GRDBMessageTurnRepository(database: database)
