@@ -1,6 +1,6 @@
 name: diag-b1-05
 
-# 临时诊断：定位 ChatOrchestratorReferenceTests.testB1_05 挂起位置。
+# 临时诊断：B1-05 / DFData 挂起的一次性完整根因诊断矩阵。
 # 仅手动触发；不配置 push / pull_request 等自动触发器。
 on:
   workflow_dispatch:
@@ -9,78 +9,139 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     container: swift:6.2
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: 安装系统依赖
         run: |
           apt-get update
-          apt-get install -y libsqlite3-dev
+          apt-get install -y libsqlite3-dev python3
 
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 记录实际 checkout 的 SHA
+      - name: 记录实际 checkout 的 SHA 与工具链
         run: |
           echo "GITHUB_SHA=$GITHUB_SHA"
           echo "GITHUB_REF=$GITHUB_REF"
           git config --global --add safe.directory "$GITHUB_WORKSPACE" || true
           git rev-parse HEAD || true
-
-      - name: 记录 Swift 版本与测试参数支持情况
-        run: |
           swift --version
-          swift test --help 2>&1 | grep -E -- '--filter|--num-workers|--list-tests|--parallel' || true
+          python3 --version
 
       - name: 构建测试目标
         run: swift build --package-path Packages/DFData --build-tests
 
-      - name: 确认用例发现与执行参数（不猜测参数）
-        shell: bash
+      - name: 确认测试发现（套件与数量）
         run: |
-          set -uo pipefail
-          echo "--- list-tests ---"
-          swift test --package-path Packages/DFData --list-tests 2>&1 | grep -i 'testB1_05' || echo "list-tests: 未匹配到 testB1_05"
-          echo "--- 能力探测：--num-workers 1 是否被接受（用 B1_04 快速验证）---"
-          if swift test --package-path Packages/DFData \
-              --filter 'ChatOrchestratorReferenceTests/testB1_04' \
-              --num-workers 1 > /tmp/probe_nw.log 2>&1; then
-            echo "确诊：--num-workers 1 可用"
-            echo "SWIFT_NW=--num-workers=1" >> "$GITHUB_ENV"
-          else
-            echo "确诊：--num-workers 1 不可用，退回默认串行（swift test 默认为串行）"
-            cat /tmp/probe_nw.log
-            echo "SWIFT_NW=" >> "$GITHUB_ENV"
-          fi
-
-      - name: 第一组：B1-05 独立执行 10 次
-        shell: bash
-        run: |
-          set -uo pipefail
-          for i in $(seq 1 10); do
-            start=$(date -u +%H:%M:%S.%3N)
-            echo "===== ATTEMPT $i START $start (flags='${SWIFT_NW}') ====="
-            timeout 25 swift test --package-path Packages/DFData \
-              --filter 'ChatOrchestratorReferenceTests/testB1_05' ${SWIFT_NW:-} \
-              > "/tmp/b105_$i.log" 2>&1
-            code=$?
-            end=$(date -u +%H:%M:%S.%3N)
-            echo "===== ATTEMPT $i END $end exit=$code ====="
-            sed -n '1,400p' "/tmp/b105_$i.log"
-            if [ "$code" -eq 124 ]; then
-              echo "===== ATTEMPT $i 判定：超时（挂起复现） ====="
-            fi
+          swift test --package-path Packages/DFData --list-tests 2>&1 | tee /tmp/list_tests.txt | tail -5
+          echo "--- 各套件用例数 ---"
+          for s in FailurePath Lifecycle Recovery Reference S4Extra; do
+            n=$(grep -c "ChatOrchestrator${s}Tests/" /tmp/list_tests.txt || true)
+            echo "ChatOrchestrator${s}Tests: $n"
           done
+          echo "ChatOrchestrator 全部: $(grep -c 'DFOrchestrationTests.ChatOrchestrator' /tmp/list_tests.txt || true)"
+          echo "DFData 全部: $(grep -c 'DFOrchestrationTests\.\|DFDataTests\.' /tmp/list_tests.txt || true)"
 
-      - name: 第二组：完整 ChatOrchestratorReferenceTests 套件一次
+      - name: 诊断矩阵（每组独立进程 + 子进程级超时）
         shell: bash
         run: |
           set -uo pipefail
-          start=$(date -u +%H:%M:%S.%3N)
-          echo "===== SUITE START $start ====="
-          timeout 90 swift test --package-path Packages/DFData \
-            --filter 'ChatOrchestratorReferenceTests' ${SWIFT_NW:-} \
-            > /tmp/suite_reference.log 2>&1
-          code=$?
-          end=$(date -u +%H:%M:%S.%3N)
-          echo "===== SUITE END $end exit=$code ====="
-          sed -n '1,800p' /tmp/suite_reference.log
+          python3 - <<'PY' 2>&1 | tee /tmp/matrix.txt
+          import os, re, signal, subprocess, sys, time
+
+          PKG = "Packages/DFData"
+          JOB_BUDGET = 900  # 构建之后留给矩阵的总预算（秒），确保 < 20 分钟 job 上限
+          GROUP_TIMEOUT = 120
+          FULL_TIMEOUT = 240
+          started_all = time.time()
+
+          groups = [
+              ("D_full_dfdata",        None,                                                       FULL_TIMEOUT, "完整 DFData（复现基准）"),
+              ("A_all_orchestrator",   "ChatOrchestrator",                                          GROUP_TIMEOUT, "全部编排套件组合"),
+              ("C1_recovery+reference","ChatOrchestratorRecoveryTests|ChatOrchestratorReferenceTests", GROUP_TIMEOUT, "Recovery + Reference"),
+              ("C2_lifecycle+reference","ChatOrchestratorLifecycleTests|ChatOrchestratorReferenceTests", GROUP_TIMEOUT, "Lifecycle + Reference"),
+              ("C3_failure+recovery",  "ChatOrchestratorFailurePathTests|ChatOrchestratorRecoveryTests", GROUP_TIMEOUT, "FailurePath + Recovery"),
+              ("C4_recovery+s4extra",  "ChatOrchestratorRecoveryTests|ChatOrchestratorS4ExtraTests",   GROUP_TIMEOUT, "Recovery + S4Extra"),
+              ("B3_recovery",          "ChatOrchestratorRecoveryTests",                              GROUP_TIMEOUT, "Recovery 单独"),
+              ("B4_reference",         "ChatOrchestratorReferenceTests",                             GROUP_TIMEOUT, "Reference 单独"),
+              ("B5_s4extra",           "ChatOrchestratorS4ExtraTests",                               GROUP_TIMEOUT, "S4Extra 单独"),
+              ("B1_failurepath",       "ChatOrchestratorFailurePathTests",                           GROUP_TIMEOUT, "FailurePath 单独"),
+              ("B2_lifecycle",         "ChatOrchestratorLifecycleTests",                             GROUP_TIMEOUT, "Lifecycle 单独"),
+          ]
+
+          def run_group(name, filt, cap):
+              remaining = JOB_BUDGET - (time.time() - started_all)
+              limit = int(max(5, min(cap, remaining)))
+              cmd = ["swift", "test", "--package-path", PKG]
+              if filt:
+                  cmd += ["--filter", filt]
+              print(f"\n===== GROUP {name} START {time.strftime('%H:%M:%S')} limit={limit}s =====", flush=True)
+              print("CMD: " + " ".join(cmd), flush=True)
+              t0 = time.time()
+              p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   start_new_session=True, text=True, errors="replace")
+              timed_out = False
+              try:
+                  out, _ = p.communicate(timeout=limit)
+                  code = p.returncode
+              except subprocess.TimeoutExpired:
+                  timed_out = True
+                  try:
+                      os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+                  except Exception:
+                      pass
+                  out, _ = p.communicate()
+                  code = 124
+              dur = time.time() - t0
+              open(f"/tmp/{name}.log", "w").write(out or "")
+              started = re.findall(r"Test Case '([^']+)' started", out or "")
+              passed = re.findall(r"Test Case '([^']+)' passed", out or "")
+              failed = re.findall(r"Test Case '([^']+)' failed", out or "")
+              executed = re.findall(r"Executed (\d+) tests?, with (\d+) failures", out or "")
+              probes = [l for l in (out or "").splitlines() if "[orch " in l]
+              print(f"EXIT={code} TIMEOUT={timed_out} ELAPSED={dur:.1f}s", flush=True)
+              print(f"COUNT started={len(started)} passed={len(passed)} failed={len(failed)}", flush=True)
+              if executed:
+                  print(f"EXECUTED_LINE={executed[-1]}", flush=True)
+              print(f"LAST_STARTED={started[-1] if started else 'NONE'}", flush=True)
+              print(f"LAST_PASSED={passed[-1] if passed else 'NONE'}", flush=True)
+              print(f"PROBE_EVENTS={len(probes)}", flush=True)
+              if probes:
+                  print("--- LAST 6 PROBE EVENTS ---", flush=True)
+                  for l in probes[-6:]:
+                      print("PROBE " + l.strip(), flush=True)
+              if timed_out or failed:
+                  print("--- LOG TAIL (80) ---", flush=True)
+                  for l in (out or "").splitlines()[-80:]:
+                      print("TAIL " + l, flush=True)
+              print(f"===== GROUP {name} END {time.strftime('%H:%M:%S')} =====", flush=True)
+              return {"name": name, "exit": code, "timeout": timed_out, "dur": round(dur, 1),
+                      "started": len(started), "passed": len(passed), "failed": len(failed),
+                      "last_started": started[-1] if started else "NONE",
+                      "probes": len(probes)}
+
+          results = []
+          for name, filt, cap, desc in groups:
+              print(f"\n### {name} :: {desc}", flush=True)
+              results.append(run_group(name, filt, cap))
+
+          print("\n\n========== MATRIX SUMMARY ==========", flush=True)
+          print(f"{'group':24} {'exit':>5} {'to':>3} {'sec':>7} {'start':>6} {'pass':>5} {'fail':>5}  last_started", flush=True)
+          for r in results:
+              print(f"{r['name']:24} {r['exit']:>5} {str(r['timeout']):>5} {r['dur']:>7.1f} "
+                    f"{r['started']:>6} {r['passed']:>5} {r['failed']:>5}  {r['last_started']}", flush=True)
+          print("========== END ==========", flush=True)
+          PY
+
+      - name: 汇总探针事件
+        if: always()
+        shell: bash
+        run: |
+          echo "=== 所有组的探针条数 ==="
+          for f in /tmp/*.log; do
+            [ -f "$f" ] || continue
+            n=$(grep -c '\[orch ' "$f" 2>/dev/null || true)
+            echo "$(basename $f): $n"
+          done
+          echo "=== 出现 timeout 138/124 或未 finish 的组 ==="
+          grep -l 'finish' /tmp/*.log 2>/dev/null || true
