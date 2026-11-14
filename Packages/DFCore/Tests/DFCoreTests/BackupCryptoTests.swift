@@ -15,8 +15,8 @@ final class BackupCryptoTests: XCTestCase {
             for (index, byte) in plaintext.enumerated() {
                 output.append(byte ^ stream[index % stream.count])
             }
-            let tag = tag(for: plaintext, key: key, nonce: nonce)
-            output.append(contentsOf: tag)
+            let digest = tagBytes(for: plaintext, key: key, nonce: nonce)
+            output.append(contentsOf: digest)
             return output
         }
 
@@ -30,13 +30,13 @@ final class BackupCryptoTests: XCTestCase {
             for (index, byte) in ciphertext.enumerated() {
                 output.append(byte ^ stream[index % stream.count])
             }
-            guard tag == Array(tag(for: output, key: key, nonce: nonce)) else {
+            guard tag == tagBytes(for: output, key: key, nonce: nonce) else {
                 throw BackupCipherError.authenticationFailed
             }
             return output
         }
 
-        private func tag(for plaintext: Data, key: Data, nonce: Data) -> [UInt8] {
+        private func tagBytes(for plaintext: Data, key: Data, nonce: Data) -> [UInt8] {
             Array(SHA256.hash(key + nonce + plaintext).utf8.prefix(16))
         }
     }

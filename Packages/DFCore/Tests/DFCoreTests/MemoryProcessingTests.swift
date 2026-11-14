@@ -133,7 +133,7 @@ final class MemoryProcessingTests: XCTestCase {
 
     func testRouteRules() {
         XCTAssertEqual(policy.route(for: candidate(importance: 0.8)), .confirm, "高重要度必须确认")
-        XCTAssertEqual(policy.route(for: candidate(importance: 0.3, category: "relationship")), .confirm)
+        XCTAssertEqual(policy.route(for: candidate(category: "relationship", importance: 0.3)), .confirm)
         XCTAssertEqual(policy.route(for: candidate(importance: 0.3, needsConfirmation: true)), .confirm)
         XCTAssertEqual(policy.route(for: candidate(importance: 0.3)), .direct)
     }

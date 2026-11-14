@@ -75,9 +75,10 @@ final class BackupServiceTests: XCTestCase {
     }
 
     private func makeService(store: BackupKeyStoring? = nil) -> BackupService {
-        BackupService(
+        let resolved: BackupKeyStoring = store ?? keyStore
+        return BackupService(
             database: database,
-            keyStore: store ?? keyStore,
+            keyStore: resolved,
             cipher: TestCipher(),
             appVersion: "0.1.0",
             now: { self.now }
