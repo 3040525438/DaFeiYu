@@ -236,7 +236,7 @@ enum V6Character {
             "CREATE UNIQUE INDEX ux_character_moods_code ON character_moods(character_id, code)",
             "CREATE UNIQUE INDEX ux_character_states_char ON character_states(character_id)",
             "CREATE INDEX ix_character_state_history_time ON character_state_history(character_id, created_at)",
-            "CREATE INDEX ix_proactive_messages_feedback ON proactive_messages(feedback, created_at)"
+            "CREATE INDEX ix_proactive_messages_feedback ON proactive_messages(feedback, planned_at)"
         ]
         for statement in statements {
             try db.execute(sql: statement)
