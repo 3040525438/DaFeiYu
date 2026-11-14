@@ -282,7 +282,7 @@ final class AutonomyServiceTests: XCTestCase {
         let rows = try await int("SELECT count(*) FROM autonomy_tasks")
         XCTAssertEqual(rows, 2)
 
-        // 今天已经成功整理过记忆，就只补自我反思
+        // 今天已经成功整理过记忆（finish 会写一条 done 的执行记录），就只补自我反思
         let task = try await service.claim(taskID: first.createdTaskIDs[0])
         XCTAssertNotNil(task)
         try await service.finish(taskID: first.createdTaskIDs[0], status: .done)

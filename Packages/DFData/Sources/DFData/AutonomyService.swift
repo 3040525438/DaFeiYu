@@ -264,6 +264,7 @@ public final class AutonomyService: @unchecked Sendable {
     }
 
     /// 结束任务：只接受 done / skipped / failed；从 running 之外的终态重复调用直接报错。
+    /// 结束时自动写一条 `autonomy_runs`，保证"执行记录"不依赖调用方记得补写。
     public func finish(
         taskID: String,
         status: AutonomyTaskStatus,
@@ -274,23 +275,51 @@ public final class AutonomyService: @unchecked Sendable {
             throw AutonomyError.invalidStatus(status.rawValue)
         }
         try await database.write { db in
-            guard let current = try String.fetchOne(
+            guard let row = try Row.fetchOne(
                 db,
-                sql: "SELECT status FROM autonomy_tasks WHERE id = ?",
+                sql: "SELECT status, kind FROM autonomy_tasks WHERE id = ?",
                 arguments: [taskID]
             ) else {
                 throw AutonomyError.taskNotFound(taskID)
             }
+            let current = (try? row.decode(String.self, forColumn: "status")) ?? ""
             guard current == AutonomyTaskStatus.running.rawValue else {
                 throw AutonomyError.taskNotPending(current)
             }
+            let now = self.clock.now()
             try db.execute(
                 sql: """
                 UPDATE autonomy_tasks
                    SET status = ?, result_json = ?, error = ?, updated_at = ?
                  WHERE id = ?
                 """,
-                arguments: [status.rawValue, resultJSON, error, self.clock.now(), taskID]
+                arguments: [status.rawValue, resultJSON, error, now, taskID]
+            )
+            let runStatus: AutonomyRunStatus
+            switch status {
+            case .done: runStatus = .done
+            case .skipped: runStatus = .skipped
+            default: runStatus = .failed
+            }
+            let runDecision: String? = status == .done ? "allow" : nil
+            try db.execute(
+                sql: """
+                INSERT INTO autonomy_runs
+                    (id, task_id, kind, trigger, status, decision, block_reason,
+                     model_config_id, started_at, finished_at, duration_ms, detail_json, error)
+                VALUES (?, ?, ?, 'foreground', ?, ?, NULL, NULL, ?, ?, NULL, ?, ?)
+                """,
+                arguments: [
+                    UUID().uuidString,
+                    taskID,
+                    (try? row.decode(String.self, forColumn: "kind")) ?? "",
+                    runStatus.rawValue,
+                    runDecision,
+                    now,
+                    now,
+                    resultJSON ?? "{}",
+                    error
+                ]
             )
         }
     }
