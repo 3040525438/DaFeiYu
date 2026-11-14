@@ -186,6 +186,17 @@ public enum SchemaMeta {
             "ux_character_states_char",
             "ix_character_state_history_time",
             "ix_proactive_messages_feedback"
+        ]),
+        (.v7_meta_backup, [
+            "backup_manifests",
+            "restore_logs",
+            "upgrade_records",
+            "ix_backup_manifests_time",
+            "ix_backup_manifests_status",
+            "ix_restore_logs_backup",
+            "ix_restore_logs_status",
+            "ix_upgrade_records_time",
+            "ix_attachments_deleted"
         ])
     ]
 
@@ -193,7 +204,7 @@ public enum SchemaMeta {
     /// 只做存在性检查，不校验 DDL 细节；用于"迁移成功后能否恢复读写"的门禁。
     /// - Parameter last: 校验目标版本，默认生产最终版本；旧版本测试须显式传入，避免被新迁移牵连。
     ///
-    /// 数量演进：v3 由 10 项扩为 16 项；v4 再扩 11 项（共 27）；v5 再扩 16 项（共 43）；v6 再扩 9 项（共 52）。
+    /// 数量演进：v3 由 10 项扩为 16 项；v4 再扩 11 项（共 27）；v5 再扩 16 项（共 43）；v6 再扩 9 项（共 52）；v7 再扩 9 项（共 61）。
     public static func verifyRequiredObjects(_ db: Database, upTo last: MigrationID = Migrations.latest) throws {
         let allCases = MigrationID.allCases
         guard let boundary = allCases.firstIndex(of: last) else { return }
