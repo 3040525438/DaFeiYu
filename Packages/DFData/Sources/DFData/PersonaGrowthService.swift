@@ -373,7 +373,7 @@ public final class PersonaGrowthService: @unchecked Sendable {
                  tier, tier_status, tier_source, status)
             VALUES (?, ?, ?, ?, ?, 0.8, 1.0, ?, ?, ?, ?, ?, 'active')
             """,
-            arguments: [UUID().uuidString, personaID, section, key, value, source, millis, tier, source]
+            arguments: [UUID().uuidString, personaID, section, key, value, source, millis, tier, tier, source]
         )
     }
 
