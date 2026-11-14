@@ -65,7 +65,7 @@ public struct GRDBMessageEditingRepository: MessageEditingRepository, Sendable {
                     arguments: [trimmed, editedAt, version, id]
                 )
                 try MessageIndexer.index(
-                    db,
+                    db: db,
                     messageID: id,
                     conversationID: conversationID,
                     text: trimmed
@@ -105,7 +105,7 @@ public struct GRDBMessageEditingRepository: MessageEditingRepository, Sendable {
                 guard db.changesCount == 1 else { throw MessageInteractionError.revoked }
 
                 // 撤回后不再被搜索命中；正文仍完整保留在库里
-                try MessageIndexer.remove(db, messageID: id)
+                try MessageIndexer.remove(db: db, messageID: id)
             }
         } catch let error as DatabaseError {
             throw DFError.database(error.message ?? "数据库操作失败")
@@ -186,7 +186,7 @@ public struct GRDBMessageDeletionRepository: MessageDeletionRepository, Sendable
                     )
                     guard db.changesCount == 1 else { continue }
                     affected += 1
-                    try MessageIndexer.remove(db, messageID: id)
+                    try MessageIndexer.remove(db: db, messageID: id)
                 }
                 // 清空会话：用户删的是"会话里的消息"，不因 0 条命中就报错
                 return affected
@@ -321,7 +321,7 @@ public struct GRDBChatSearchRepository: ChatSearchRepository, Sendable {
                 var indexed = 0
                 for row in rows {
                     try MessageIndexer.index(
-                        db,
+                        db: db,
                         messageID: try row.decode(String.self, forColumn: "id"),
                         conversationID: try row.decode(String.self, forColumn: "conversation_id"),
                         text: try row.decode(String.self, forColumn: "text")

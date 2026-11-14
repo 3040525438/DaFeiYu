@@ -51,7 +51,7 @@ public struct GRDBMessageGroupRepository: MessageGroupRepository, StaleTurnRecov
 
                 // 4. 全文索引：开组阶段先索引用户输入（assistant 正文在事务 B 索引）
                 try MessageIndexer.index(
-                    db,
+                    db: db,
                     messageID: user.id,
                     conversationID: request.group.conversationID,
                     text: user.text
@@ -394,7 +394,7 @@ public struct GRDBMessageTurnRepository: MessageTurnRepository, Sendable {
 
                 // ①.4 首条气泡正文入全文索引（定稿文本才是可检索文本）
                 try MessageIndexer.index(
-                    db,
+                    db: db,
                     messageID: request.assistantMessageID,
                     conversationID: conversationID,
                     text: request.text
@@ -421,7 +421,7 @@ public struct GRDBMessageTurnRepository: MessageTurnRepository, Sendable {
                         )
                         try message.insert(db)
                         try MessageIndexer.index(
-                            db,
+                    db: db,
                             messageID: message.id,
                             conversationID: conversationID,
                             text: trimmed

@@ -229,7 +229,7 @@ public struct GRDBMessageRepository: MessageRepository, Sendable {
                     arguments: [messageID]
                 ) {
                     try MessageIndexer.index(
-                        db,
+                        db: db,
                         messageID: messageID,
                         conversationID: conversationID,
                         text: text
