@@ -11,7 +11,7 @@ import DFCore
 public enum Migrations {
     /// 当前**已发布**的最终迁移版本（唯一事实源）。
     /// `MigrationID` 里可能有尚未发布的后续阶段，因此判定"库应为哪个版本"必须看这里，而不是 `allCases.last`。
-    public static let latest: MigrationID = .v8_chat_v2
+    public static let latest: MigrationID = .v9_astrbot
 
     /// 已发布版本对应的规范台账前缀（按 `MigrationID` 规范顺序截断）
     public static var releasedPrefix: [String] {
@@ -256,6 +256,12 @@ public enum Migrations {
         if includes(.v8_chat_v2, upTo: last) {
             migrator.registerMigration("v8_chat_v2") { db in
                 try V8ChatV2.migrate(db)
+            }
+        }
+
+        if includes(.v9_astrbot, upTo: last) {
+            migrator.registerMigration("v9_astrbot") { db in
+                try V9AstrBot.migrate(db)
             }
         }
 
