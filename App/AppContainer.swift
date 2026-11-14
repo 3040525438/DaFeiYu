@@ -40,6 +40,8 @@ final class AppContainer: ObservableObject {
     let localModels: LocalModelRepository
     /// W6：每日日记
     let diary: DiaryRepository
+    /// W8：记忆（三主体 + 版本 + 按来源删除）
+    let memories: MemoryRepository
 
     /// 全局活跃轮次登记表（L2）：跨页面 / 恢复路径共享。
     let activeTurns = ActiveTurnRegistry()
@@ -112,6 +114,7 @@ final class AppContainer: ObservableObject {
         )
         self.localModels = GRDBLocalModelRepository(database: database)
         self.diary = GRDBDiaryRepository(database: database)
+        self.memories = GRDBMemoryRepository(database: database)
 
         self.groups = GRDBMessageGroupRepository(database: database)
         self.turns = GRDBMessageTurnRepository(database: database)

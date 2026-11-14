@@ -21,6 +21,34 @@ public struct DiaryEntry: Sendable, Equatable, Identifiable {
     public var deletedAt: Int64?
 
     public var isDeleted: Bool { deletedAt != nil }
+
+    public init(
+        id: String,
+        entryDate: String,
+        title: String,
+        content: String,
+        moodCode: String?,
+        source: String,
+        generatedBy: String?,
+        isUserEdited: Bool,
+        memoryID: String?,
+        createdAt: Int64,
+        updatedAt: Int64,
+        deletedAt: Int64?
+    ) {
+        self.id = id
+        self.entryDate = entryDate
+        self.title = title
+        self.content = content
+        self.moodCode = moodCode
+        self.source = source
+        self.generatedBy = generatedBy
+        self.isUserEdited = isUserEdited
+        self.memoryID = memoryID
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.deletedAt = deletedAt
+    }
 }
 
 /// 全量版本快照：任何一次编辑都留档，不可覆盖。
@@ -34,6 +62,26 @@ public struct DiaryVersion: Sendable, Equatable, Identifiable {
     /// user / ai / migration
     public var changedBy: String
     public var createdAt: Int64
+
+    public init(
+        id: String,
+        diaryID: String,
+        version: Int,
+        title: String,
+        content: String,
+        changeReason: String,
+        changedBy: String,
+        createdAt: Int64
+    ) {
+        self.id = id
+        self.diaryID = diaryID
+        self.version = version
+        self.title = title
+        self.content = content
+        self.changeReason = changeReason
+        self.changedBy = changedBy
+        self.createdAt = createdAt
+    }
 }
 
 public enum DiaryError: Error, Equatable, CustomStringConvertible {

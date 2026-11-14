@@ -102,6 +102,24 @@ public struct ModelRuntimeEvent: Sendable, Equatable, Identifiable {
     public var contextTokens: Int?
     public var elapsedMs: Int?
     public var createdAt: Int64
+
+    public init(
+        id: String,
+        modelID: String?,
+        kind: String,
+        detail: String,
+        contextTokens: Int?,
+        elapsedMs: Int?,
+        createdAt: Int64
+    ) {
+        self.id = id
+        self.modelID = modelID
+        self.kind = kind
+        self.detail = detail
+        self.contextTokens = contextTokens
+        self.elapsedMs = elapsedMs
+        self.createdAt = createdAt
+    }
 }
 
 public enum LocalModelError: Error, Equatable, CustomStringConvertible {
