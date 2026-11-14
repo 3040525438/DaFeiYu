@@ -1,6 +1,10 @@
 import Foundation
 import DFCore
 
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+
 // MARK: - 本地模型下载（W5 / D58–D61）
 
 /// 单次拉取结果。
