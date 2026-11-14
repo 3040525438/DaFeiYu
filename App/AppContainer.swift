@@ -20,8 +20,8 @@ final class AppContainer: ObservableObject {
     let settings: SettingsRepository
     let integrityChecker: IntegrityChecker
 
-    init(environment: AppEnvironment) throws {
-        self.environment = environment
+    init(identity: EnvironmentIdentity) throws {
+        self.environment = identity.environment
 
         let base = try FileManager.default.url(
             for: .applicationSupportDirectory,
@@ -29,14 +29,31 @@ final class AppContainer: ObservableObject {
             appropriateFor: nil,
             create: true
         )
-        let root = base.appendingPathComponent(environment.dataDirectoryName, isDirectory: true)
+        let root = base.appendingPathComponent(identity.environment.dataDirectoryName, isDirectory: true)
+        let paths = DatabasePaths(root: root)
 
-        let database = try AppDatabase(paths: DatabasePaths(root: root))
+        // 四重一致性：环境声明、目录名、库路径归属、Keychain service。
+        // 任一不符即抛错，不建库、不写任何文件。
+        try identity.validate(
+            root: root,
+            databaseURL: paths.databaseURL,
+            keychainService: identity.environment.keychainService
+        )
+
+        // 目录归属标记：空目录写入；标记不符、缺失但已有数据、或文件损坏一律拒绝启动。
+        try EnvironmentMarkerStore.verifyOrCreate(
+            root: root,
+            expected: identity.environment,
+            createdBy: AppBuildInfo.current,
+            now: Clock.nowMillis()
+        )
+
+        let database = try AppDatabase(paths: paths)
         let attachments = AttachmentStore(root: database.paths.attachmentsRoot)
 
         self.database = database
         self.attachments = attachments
-        self.secureStore = KeychainStore(service: environment.keychainService)
+        self.secureStore = KeychainStore(service: identity.environment.keychainService)
 
         self.conversations = GRDBConversationRepository(database: database)
         self.messages = GRDBMessageRepository(database: database)
