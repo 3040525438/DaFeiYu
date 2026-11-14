@@ -3,7 +3,7 @@ import GRDB
 import DFCore
 @testable import DFData
 
-/// 消息组仓储测试（M13–M21、DB01、DB02），全部基于真实 SQLite。
+/// 消息组仓储测试（M13–M22、DB01、DB02），全部基于真实 SQLite。
 final class MessageGroupRepositoryTests: XCTestCase {
     private var root: URL!
 
@@ -496,5 +496,148 @@ final class MessageGroupRepositoryTests: XCTestCase {
             XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM message_groups WHERE turn_index = 2"), 0)
             XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM message_groups"), 1)
         }
+    }
+
+    // MARK: - M22 软删占位 seq + 部分唯一索引拒绝重复
+
+    /// 证明两件互相独立的事：
+    /// A. `max(seq_in_group)` 不过滤 `deleted_at`，软删消息仍占位（否则会重用历史序号）；
+    /// B. `ux_messages_group_seq` 作为部分唯一索引，真实拒绝同组重复序号。
+    ///
+    /// 全程使用临时文件 SQLite（`AppDatabase` 真实建库 + 真实迁移），不 mock 仓储。
+    func testM22_SoftDeletedSeqOccupiedAndPartialUniqueIndexRejectsDuplicate() async throws {
+        let database = try makeDatabase("m22")
+        try await seedConversation(database)
+        let groups = GRDBMessageGroupRepository(database: database)
+
+        // 1. 创建消息组：openTurn 在同一事务内写入 seq 0（user）与 seq 1（assistant）
+        let group = try await groups.openTurn(makeRequest(at: 1000, userText: "问", assistantText: "答"))
+        let userID = try XCTUnwrap(group.userMessageID)
+        let assistantID = try XCTUnwrap(group.assistantMessageID)
+
+        // 2. 在组内再写入一条 seq_in_group = 2 的消息（走真实记录层 Message.insert）
+        let third = Message(
+            conversationID: "c1",
+            role: .assistant,
+            text: "第三条",
+            status: .sent,
+            origin: .reply,
+            createdAt: 1002,
+            sentAt: 1002,
+            groupID: group.id,
+            seqInGroup: 2
+        )
+        try await database.write { db in try third.insert(db) }
+
+        // 其他消息（seq 0 / 1）的 14 列快照，用于最后证明未被本次操作修改
+        let othersBefore = try await rowLines(
+            database,
+            where: "id IN ('\(userID)', '\(assistantID)')"
+        )
+
+        // 3. 软删除 seq_in_group = 2 的消息
+        try await database.write { db in
+            try db.execute(
+                sql: "UPDATE messages SET deleted_at = 3000 WHERE id = ?",
+                arguments: [third.id]
+            )
+        }
+
+        // 4. A：真实查询 max(seq_in_group)，软删消息仍在计数内 → 必须为 2
+        let maxSeq = try await database.dbQueue.read { db in
+            try GRDBMessageGroupRepository.maxSeqValue(db, groupID: group.id)
+        }
+        XCTAssertEqual(maxSeq, 2, "max(seq_in_group) 必须包含已软删消息（不得按有效条数回退到 1）")
+
+        // 5. 用真实序号分配逻辑算出下一条序号，并真正写库
+        let nextSeq = GroupPlanner.nextSeq(afterMaxExisting: maxSeq)
+        XCTAssertEqual(nextSeq, 3, "软删占位后下一条必须是 3，不能重用 2")
+        let fourth = Message(
+            conversationID: "c1",
+            role: .assistant,
+            text: "第四条",
+            status: .sent,
+            origin: .reply,
+            createdAt: 1003,
+            sentAt: 1003,
+            groupID: group.id,
+            seqInGroup: nextSeq
+        )
+        try await database.write { db in try fourth.insert(db) }
+
+        // 6./7. B：同组再次插入 seq_in_group = 2，必须被部分唯一索引拒绝
+        var conflictMessage: String?
+        do {
+            try await database.write { db in
+                try Message(
+                    conversationID: "c1",
+                    role: .assistant,
+                    text: "冲突",
+                    status: .sent,
+                    origin: .reply,
+                    createdAt: 1004,
+                    groupID: group.id,
+                    seqInGroup: 2
+                ).insert(db)
+            }
+            XCTFail("同组重复 seq_in_group 必须抛错")
+        } catch let error as DatabaseError {
+            XCTAssertEqual(error.resultCode, .SQLITE_CONSTRAINT, "必须是约束冲突，实际：\(error)")
+            conflictMessage = error.message
+        } catch {
+            XCTFail("应抛 DatabaseError，实际：\(error)")
+        }
+        XCTAssertTrue(
+            conflictMessage?.contains("seq_in_group") == true,
+            "必须由 ux_messages_group_seq 拦截，实际错误：\(conflictMessage ?? "nil")"
+        )
+
+        // 8. 数据库终态
+        try await database.dbQueue.read { db in
+            // 软删的 seq=2 记录仍存在，且字段未被失败插入改写
+            let soft = try Row.fetchOne(
+                db,
+                sql: "SELECT text, deleted_at FROM messages WHERE id = ?",
+                arguments: [third.id]
+            )
+            XCTAssertEqual(try soft?.decode(String.self, forColumn: "text"), "第三条")
+            XCTAssertEqual(try soft?.decode(Int64.self, forColumn: "deleted_at"), 3000)
+
+            // seq=2 全组只有 1 条（就是那条软删的），不存在第二条
+            XCTAssertEqual(
+                try Int.fetchOne(
+                    db,
+                    sql: "SELECT count(*) FROM messages WHERE group_id = ? AND seq_in_group = 2",
+                    arguments: [group.id]
+                ),
+                1,
+                "冲突插入必须整体回滚，不得留下第二条 seq=2"
+            )
+            // seq=3 已写入
+            XCTAssertEqual(
+                try Int.fetchOne(
+                    db,
+                    sql: "SELECT count(*) FROM messages WHERE group_id = ? AND seq_in_group = 3",
+                    arguments: [group.id]
+                ),
+                1
+            )
+            // 组内消息总数 = 0/1/2(软删)/3 共 4 条
+            XCTAssertEqual(
+                try Int.fetchOne(
+                    db,
+                    sql: "SELECT count(*) FROM messages WHERE group_id = ?",
+                    arguments: [group.id]
+                ),
+                4
+            )
+        }
+
+        // 其他消息 14 列逐字段未变
+        let othersAfter = try await rowLines(
+            database,
+            where: "id IN ('\(userID)', '\(assistantID)')"
+        )
+        XCTAssertEqual(othersAfter, othersBefore, "seq 0/1 的消息不得被本次操作修改")
     }
 }
