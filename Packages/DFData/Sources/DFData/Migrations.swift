@@ -213,6 +213,12 @@ public enum Migrations {
             }
         }
 
+        if includes(.v3_chat, upTo: last) {
+            migrator.registerMigration("v3_chat") { db in
+                try V3Chat.migrate(db)
+            }
+        }
+
         return migrator
     }
 

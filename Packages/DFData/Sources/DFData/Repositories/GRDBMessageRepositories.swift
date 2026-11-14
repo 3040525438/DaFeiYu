@@ -125,4 +125,71 @@ public struct GRDBMessageRepository: MessageRepository, Sendable {
             throw GRDBErrorMapper.map(error)
         }
     }
+
+    // MARK: - 分页（双键游标）
+
+    public func page(in conversationID: String, before: PageCursor?, limit: Int) async throws -> MessagePage {
+        // 上限保护：越界不报错，按 1...200 夹取
+        let clamped = min(max(limit, 1), 200)
+        do {
+            return try await database.dbQueue.read { db in
+                // `? = 0` 作为"无游标"开关，避免动态拼接两套 SQL
+                let hasCursor = before == nil ? 0 : 1
+                let cursorCreated = before?.createdAt ?? 0
+                let cursorRowid = before?.rowid ?? 0
+                let rows = try MessageRow.fetchAll(
+                    db,
+                    sql: """
+                    SELECT messages.*, messages.rowid AS _rid
+                    FROM messages
+                    WHERE messages.conversation_id = ?
+                      AND messages.deleted_at IS NULL
+                      AND (? = 0 OR (messages.created_at < ?
+                                     OR (messages.created_at = ? AND messages.rowid < ?)))
+                    ORDER BY messages.created_at DESC, messages.rowid DESC
+                    LIMIT ?
+                    """,
+                    arguments: [
+                        conversationID, hasCursor, cursorCreated, cursorCreated, cursorRowid, clamped + 1
+                    ]
+                )
+
+                let hasMore = rows.count > clamped
+                let pageRows = Array(rows.prefix(clamped))
+                // SQL 取降序，返回前反转为升序（与 recentMessages 的升序语义一致）
+                let ascending = Array(pageRows.reversed())
+                let nextCursor = hasMore
+                    ? ascending.first.map { PageCursor(createdAt: $0.message.createdAt, rowid: $0.rowid) }
+                    : nil
+                return MessagePage(
+                    items: ascending.map(\.message),
+                    nextCursor: nextCursor,
+                    hasMore: hasMore
+                )
+            }
+        } catch {
+            throw GRDBErrorMapper.map(error)
+        }
+    }
+
+    // MARK: - 按组查询
+
+    public func messages(inGroup groupID: String) async throws -> [Message] {
+        do {
+            return try await database.dbQueue.read { db in
+                try MessageRow.fetchAll(
+                    db,
+                    sql: """
+                    SELECT messages.*, messages.rowid AS _rid
+                    FROM messages
+                    WHERE messages.group_id = ?
+                    ORDER BY messages.created_at ASC, messages.rowid ASC
+                    """,
+                    arguments: [groupID]
+                ).map(\.message)
+            }
+        } catch {
+            throw GRDBErrorMapper.map(error)
+        }
+    }
 }

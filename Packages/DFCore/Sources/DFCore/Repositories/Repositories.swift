@@ -14,6 +14,127 @@ public protocol MessageRepository: Sendable {
     /// 按 created_at 升序返回最近 limit 条（返回结果内部为升序）
     func recentMessages(in conversationID: String, limit: Int) async throws -> [Message]
     func count(in conversationID: String) async throws -> Int
+    /// 双键游标分页：`ORDER BY created_at DESC, rowid DESC` 取页，内存反转为升序返回。
+    /// 游标取"上一页最旧一条"的 `(createdAt, rowid)`；软删消息不占返回条数、不产生游标。
+    func page(in conversationID: String, before: PageCursor?, limit: Int) async throws -> MessagePage
+    /// 组内消息，按 `created_at ASC, rowid ASC` 升序（含软删，由调用方决定是否过滤）
+    func messages(inGroup groupID: String) async throws -> [Message]
+}
+
+/// 分页游标：`created_at` 主键 + `rowid` 次级键，保证同一毫秒内不重不漏。
+public struct PageCursor: Codable, Hashable, Sendable {
+    public var createdAt: Int64
+    public var rowid: Int64
+
+    public init(createdAt: Int64, rowid: Int64) {
+        self.createdAt = createdAt
+        self.rowid = rowid
+    }
+}
+
+public struct MessagePage: Sendable, Equatable {
+    /// 按时间升序返回
+    public var items: [Message]
+    /// `nil` 表示没有更早的消息
+    public var nextCursor: PageCursor?
+    public var hasMore: Bool
+
+    public init(items: [Message] = [], nextCursor: PageCursor? = nil, hasMore: Bool = false) {
+        self.items = items
+        self.nextCursor = nextCursor
+        self.hasMore = hasMore
+    }
+}
+
+/// 开组请求（事务 A 的输入）
+public struct OpenTurnRequest: Sendable {
+    public var group: MessageGroup
+    public var userMessage: Message
+    public var assistantMessage: Message
+
+    public init(group: MessageGroup, userMessage: Message, assistantMessage: Message) {
+        self.group = group
+        self.userMessage = userMessage
+        self.assistantMessage = assistantMessage
+    }
+}
+
+/// 定稿请求（事务 B 的输入）。四类写入在同一事务内完成。
+public struct FinalizeTurnRequest: Sendable {
+    public var groupID: String
+    public var assistantMessageID: String
+    /// 剥离尾注后的正文（解析失败时由调用方传入模型原始输出）
+    public var text: String
+    /// `.sent` / `.failed` / `.canceled`
+    public var assistantStatus: MessageStatus
+    public var sentAt: Int64?
+    /// 唯一主引用；为空时跳过 `reply_to_id` 写入
+    public var replyToID: String?
+    public var references: [MessageReference]
+    public var groupStatus: MessageGroupStatus
+    public var closedAt: Int64
+
+    public init(
+        groupID: String,
+        assistantMessageID: String,
+        text: String,
+        assistantStatus: MessageStatus,
+        sentAt: Int64?,
+        replyToID: String?,
+        references: [MessageReference],
+        groupStatus: MessageGroupStatus,
+        closedAt: Int64
+    ) {
+        self.groupID = groupID
+        self.assistantMessageID = assistantMessageID
+        self.text = text
+        self.assistantStatus = assistantStatus
+        self.sentAt = sentAt
+        self.replyToID = replyToID
+        self.references = references
+        self.groupStatus = groupStatus
+        self.closedAt = closedAt
+    }
+}
+
+/// 消息组仓储：负责事务 A（开组）、轮次/序号查询、关组、取消与陈旧消息修复。
+/// 只读查询与"必须整体原子"的写入都收敛在实现内部，调用方不得自行拼装多步写。
+public protocol MessageGroupRepository: Sendable {
+    /// 事务 A：在同一写事务内计算 `turn_index`、插入组 / user / assistant（seq 0、1）。
+    /// 唯一索引冲突时整体回滚，不产生半组。
+    func openTurn(_ request: OpenTurnRequest) async throws -> MessageGroup
+    func group(id: String) async throws -> MessageGroup?
+    func openGroup(in conversationID: String) async throws -> MessageGroup?
+    func maxTurnIndex(in conversationID: String) async throws -> Int?
+    /// 组内最大 `seq_in_group`，**必须**来自不过滤 `deleted_at` 的 `SELECT max(seq_in_group)`。
+    func maxSeq(inGroup groupID: String) async throws -> Int?
+    /// 关闭组并写 `closed_at`；仅 `open` 组可关闭。
+    func closeGroup(id: String, status: MessageGroupStatus, closedAt: Int64) async throws
+    /// 取消 open 组：assistant → `canceled`（保留正文、不写 `sent_at`），组 → `aborted`。
+    /// 终态组调用即抛错，不做静默降级。
+    func cancelTurn(groupID: String, assistantMessageID: String, closedAt: Int64) async throws
+    /// 崩溃恢复：把残留 `sending` 消息置 `failed`，其所属 `open` 组同步置 `failed` 并写 `closed_at`。
+    /// 同一事务、幂等，重复执行安全。返回处理的 assistant 消息条数。
+    @discardableResult
+    func repairStaleSending(in conversationID: String) async throws -> Int
+}
+
+/// 定稿事务仓储：事务 B（四类写入原子完成）与补偿事务 C 的唯一拥有者。
+public protocol MessageTurnRepository: Sendable {
+    /// 事务 B：assistant 定稿 + `reply_to_id` + 引用批量写 + 组状态 + `closed_at`。
+    /// 任一步失败整体回滚，不得留下"部分引用"或"已 sent 但组仍 open"。
+    func finalizeTurn(_ request: FinalizeTurnRequest) async throws
+    /// 事务 C：B 失败后的补偿——assistant 标 `failed`、组标 `failed`、写 `closed_at`（独立事务）。
+    func failTurn(groupID: String, assistantMessageID: String, text: String?, closedAt: Int64) async throws
+}
+
+public protocol MessageReferenceRepository: Sendable {
+    /// 批量写入（按 `(message_id, ref_message_id, relation)` 幂等）
+    func insertBatch(_ references: [MessageReference]) async throws
+    /// 按消息 id 批量取引用，一次往返
+    func references(for messageIDs: [String]) async throws -> [MessageReference]
+    /// 按 id 批量取被引用消息（含已软删，供 UI 判定"来源不可用"）
+    func messages(ids: [String]) async throws -> [Message]
 }
 
 /// 注意：本协议刻意不提供 updateCore / deleteCore。

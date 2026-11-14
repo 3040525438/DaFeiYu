@@ -59,6 +59,10 @@ public struct Message: Codable, Identifiable, Hashable, Sendable {
     public var modelConfigID: String?
     public var emotionStateID: String?
     public var deletedAt: Int64?
+    /// 所属消息组；`nil` 表示 v2 遗留或未分组消息（虚拟组）
+    public var groupID: String?
+    /// 组内序号，从 0 开始；与 `groupID` 同时为 `nil` 或同时非空
+    public var seqInGroup: Int?
 
     public init(
         id: String = UUID().uuidString,
@@ -74,7 +78,9 @@ public struct Message: Codable, Identifiable, Hashable, Sendable {
         sentAt: Int64? = nil,
         modelConfigID: String? = nil,
         emotionStateID: String? = nil,
-        deletedAt: Int64? = nil
+        deletedAt: Int64? = nil,
+        groupID: String? = nil,
+        seqInGroup: Int? = nil
     ) {
         self.id = id
         self.clientUUID = clientUUID
@@ -90,6 +96,8 @@ public struct Message: Codable, Identifiable, Hashable, Sendable {
         self.modelConfigID = modelConfigID
         self.emotionStateID = emotionStateID
         self.deletedAt = deletedAt
+        self.groupID = groupID
+        self.seqInGroup = seqInGroup
     }
 
     enum CodingKeys: String, CodingKey {
@@ -107,6 +115,8 @@ public struct Message: Codable, Identifiable, Hashable, Sendable {
         case modelConfigID = "model_config_id"
         case emotionStateID = "emotion_state_id"
         case deletedAt = "deleted_at"
+        case groupID = "group_id"
+        case seqInGroup = "seq_in_group"
     }
 }
 

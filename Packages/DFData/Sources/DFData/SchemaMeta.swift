@@ -10,6 +10,10 @@ public enum SchemaMetaKey {
     public static let migratedAt = "migrated_at"
     public static let ledgerDigest = "ledger_digest"
     public static let expectedMigrations = "expected_migrations"
+    /// v3 起：保留上一版元数据，避免 `migrated_at` 变化被误判为台账被改
+    public static let previousSchemaVersion = "previous_schema_version"
+    public static let previousMigrationBatch = "previous_migration_batch"
+    public static let previousMigratedAt = "previous_migrated_at"
 }
 
 public enum SchemaMetaError: Error, Equatable, CustomStringConvertible {
@@ -120,8 +124,10 @@ public enum SchemaMeta {
 
     /// 升级后必须存在的对象（结构 + 必要索引）。
     /// 只做存在性检查，不校验 DDL 细节；用于"迁移成功后能否恢复读写"的门禁。
+    /// v3 起由 10 项扩为 16 项（v2 的 10 项 + `v3_chat` 的 6 项）。
     public static func verifyRequiredObjects(_ db: Database) throws {
         let required = [
+            // v2 既有（保留）
             "schema_meta",
             "memory_scopes",
             "memory_fts",
@@ -131,7 +137,14 @@ public enum SchemaMeta {
             "v_memory_stats",
             "ux_memories_dedupe",
             "ix_memories_scope_time",
-            "ix_persona_items_tier"
+            "ix_persona_items_tier",
+            // v3 新增
+            "message_groups",
+            "message_references",
+            "ux_message_groups_turn",
+            "ix_message_groups_status",
+            "ux_messages_group_seq",
+            "ix_message_refs_ref"
         ]
         // 名字全部来自本文件常量，不拼接外部输入
         let quoted = required.map { "'\($0)'" }.joined(separator: ",")

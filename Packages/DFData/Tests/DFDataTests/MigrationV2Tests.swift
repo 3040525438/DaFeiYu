@@ -69,13 +69,13 @@ final class MigrationV2Tests: XCTestCase {
     func testT01_FreshDatabaseMigratesToV2() throws {
         let database = try makeDatabase("t01")
 
-        XCTAssertEqual(database.currentSchemaVersion, "v2_memory")
+        XCTAssertEqual(database.currentSchemaVersion, "v3_chat")
         XCTAssertFalse(database.isReadOnly)
 
         let ledger = try database.dbQueue.read { db in
             try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations")
         }
-        XCTAssertEqual(Set(ledger), ["v1_phase1", "v2_memory"])
+        XCTAssertEqual(Set(ledger), ["v1_phase1", "v2_memory", "v3_chat"])
 
         let tableCount = try database.dbQueue.read { db in
             try Int.fetchOne(db, sql: "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='memory_scopes'") ?? 0
@@ -110,7 +110,7 @@ final class MigrationV2Tests: XCTestCase {
         try queue.read { db in
             XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM messages"), 3)
             XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM memories"), 2)
-            XCTAssertEqual(try String.fetchOne(db, sql: "SELECT max(identifier) FROM grdb_migrations"), "v2_memory")
+            XCTAssertEqual(try String.fetchOne(db, sql: "SELECT max(identifier) FROM grdb_migrations"), "v3_chat")
         }
     }
 
@@ -122,7 +122,7 @@ final class MigrationV2Tests: XCTestCase {
         try Migrations.migrator.migrate(queue)
 
         try queue.read { db in
-            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM grdb_migrations"), 2)
+            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM grdb_migrations"), 3)
         }
     }
 
@@ -349,7 +349,7 @@ final class MigrationV2Tests: XCTestCase {
         let b = try digest(second)
         XCTAssertEqual(a.count, 64)
         XCTAssertEqual(a, b)
-        XCTAssertEqual(a, MigrationLedger.digest(prefix: ["v1_phase1", "v2_memory"]))
+        XCTAssertEqual(a, MigrationLedger.digest(prefix: ["v1_phase1", "v2_memory", "v3_chat"]))
     }
 
     // MARK: - T11 顺序防护

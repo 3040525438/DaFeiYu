@@ -32,7 +32,7 @@ final class DatabaseTests: XCTestCase {
 
         XCTAssertTrue(report.isHealthy)
         XCTAssertEqual(report.databaseCheck.lowercased(), "ok")
-        XCTAssertEqual(report.schemaVersion, "v2_memory")
+        XCTAssertEqual(report.schemaVersion, "v3_chat")
         XCTAssertEqual(report.messageCount, 0)
     }
 
