@@ -72,13 +72,15 @@ final class ChatOrchestratorS4ExtraTests: XCTestCase {
             status: userStatus, origin: .user, createdAt: now,
             sentAt: userStatus == .sent ? now : nil
         )
-        let assistantMessage = assistantStatus.map {
-            Message(
-                id: UUID().uuidString, conversationID: conversationID, role: .assistant, text: "半截",
-                status: $0, origin: .reply, createdAt: now + 1,
-                sentAt: $0 == .sent ? now + 1 : nil
-            )
-        }
+        // `OpenTurnRequest.assistantMessage` 是非可选协议：无 assistant 的场景先正常开组
+        // （占位 assistant 用 sending），随后只在测试数据库中删除该行，
+        // 从而真实还原"open 组 + 确实没有 assistant 行"的现场。
+        let placeholderStatus = assistantStatus ?? .sending
+        let assistantMessage = Message(
+            id: UUID().uuidString, conversationID: conversationID, role: .assistant, text: "半截",
+            status: placeholderStatus, origin: .reply, createdAt: now + 1,
+            sentAt: placeholderStatus == .sent ? now + 1 : nil
+        )
         let group = MessageGroup(
             id: groupID, conversationID: conversationID, turnIndex: turnIndex,
             status: .open, openedAt: now
@@ -86,6 +88,17 @@ final class ChatOrchestratorS4ExtraTests: XCTestCase {
         let opened = try await groups.openTurn(
             OpenTurnRequest(group: group, userMessage: userMessage, assistantMessage: assistantMessage)
         )
+
+        if assistantStatus == nil {
+            try await write("DELETE FROM messages WHERE id = ?", [assistantMessage.id])
+            let remainingAssistant = try await scalarInt(
+                "SELECT count(*) FROM messages WHERE group_id = ? AND role = 'assistant'",
+                [opened.id]
+            )
+            XCTAssertEqual(remainingAssistant, 0, "测试现场必须确实不存在 assistant 行")
+            let statusAfterDelete = try await groupStatus(opened.id)
+            XCTAssertEqual(statusAfterDelete, "open", "删除 assistant 行后组仍应为 open")
+        }
         return opened.id
     }
 
@@ -231,8 +244,8 @@ final class ChatOrchestratorS4ExtraTests: XCTestCase {
         XCTAssertEqual(status, "failed", "无可恢复的可见内容时，最安全的终态是 failed")
 
         // 软删消息不得被复活，内容与状态保持原样
-        let rows = try await database.dbQueue.read { db in
-            try Row.fetchAll(
+        let rows = try await database.dbQueue.read { db -> [Row] in
+            return try Row.fetchAll(
                 db,
                 sql: "SELECT status, deleted_at FROM messages WHERE group_id = ? ORDER BY seq_in_group",
                 arguments: [groupID]
@@ -342,9 +355,10 @@ final class ChatOrchestratorS4ExtraTests: XCTestCase {
     func testS4D_1_CancelDuringRetry() async throws {
         let sourceGroup = try await seedGroup(userStatus: .sent, assistantStatus: .failed)
         try await write("UPDATE message_groups SET status = 'failed', closed_at = 9 WHERE id = ?", [sourceGroup])
-        let sourceUserID = try XCTUnwrap(
-            try await scalarString("SELECT id FROM messages WHERE group_id = ? AND role = 'user'", [sourceGroup])
+        let sourceUserIDText = try await scalarString(
+            "SELECT id FROM messages WHERE group_id = ? AND role = 'user'", [sourceGroup]
         )
+        let sourceUserID = try XCTUnwrap(sourceUserIDText)
 
         let gate = Latch()
         let started = Latch()
@@ -394,9 +408,10 @@ final class ChatOrchestratorS4ExtraTests: XCTestCase {
     func testS4D_2_DoubleRetryRejected() async throws {
         let sourceGroup = try await seedGroup(userStatus: .sent, assistantStatus: .failed)
         try await write("UPDATE message_groups SET status = 'failed', closed_at = 9 WHERE id = ?", [sourceGroup])
-        let sourceUserID = try XCTUnwrap(
-            try await scalarString("SELECT id FROM messages WHERE group_id = ? AND role = 'user'", [sourceGroup])
+        let sourceUserIDText = try await scalarString(
+            "SELECT id FROM messages WHERE group_id = ? AND role = 'user'", [sourceGroup]
         )
+        let sourceUserID = try XCTUnwrap(sourceUserIDText)
 
         let gate = Latch()
         let started = Latch()
