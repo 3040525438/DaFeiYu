@@ -16,6 +16,28 @@ private func decodeEnum<T: RawRepresentable>(
     return value
 }
 
+/// 可空列的读取。
+///
+/// 不用 `row.decodeIfPresent(_:forColumn:)`：`Row` 同时遵循 `Decoder`，
+/// 该方法会被解析到 `Decodable` 的同名重载上。这里直接读 `DatabaseValue`
+/// 再用 `fromDatabaseValue` 转换，既能区分 NULL 与缺失列，也不受重载解析影响。
+private extension Row {
+    func optionalString(_ column: String) -> String? {
+        guard hasColumn(column) else { return nil }
+        return String.fromDatabaseValue(self[column])
+    }
+
+    func optionalInt64(_ column: String) -> Int64? {
+        guard hasColumn(column) else { return nil }
+        return Int64.fromDatabaseValue(self[column])
+    }
+
+    func optionalInt(_ column: String) -> Int? {
+        guard hasColumn(column) else { return nil }
+        return Int.fromDatabaseValue(self[column])
+    }
+}
+
 extension Conversation: FetchableRecord, PersistableRecord {
     public static let databaseTableName = "conversations"
 }
@@ -40,18 +62,14 @@ extension Message: FetchableRecord, PersistableRecord {
         text = try row.decode(String.self, forColumn: "text")
         status = try decodeEnum(MessageStatus.self, "status", in: row)
         origin = try decodeEnum(MessageOrigin.self, "origin", in: row)
-        replyToID = try row.decodeIfPresent(String.self, forColumn: "reply_to_id")
+        replyToID = row.optionalString("reply_to_id")
         createdAt = try row.decode(Int64.self, forColumn: "created_at")
-        sentAt = try row.decodeIfPresent(Int64.self, forColumn: "sent_at")
-        modelConfigID = try row.decodeIfPresent(String.self, forColumn: "model_config_id")
-        emotionStateID = try row.decodeIfPresent(String.self, forColumn: "emotion_state_id")
-        deletedAt = try row.decodeIfPresent(Int64.self, forColumn: "deleted_at")
-        groupID = row.hasColumn("group_id")
-            ? try row.decodeIfPresent(String.self, forColumn: "group_id")
-            : nil
-        seqInGroup = row.hasColumn("seq_in_group")
-            ? try row.decodeIfPresent(Int.self, forColumn: "seq_in_group")
-            : nil
+        sentAt = row.optionalInt64("sent_at")
+        modelConfigID = row.optionalString("model_config_id")
+        emotionStateID = row.optionalString("emotion_state_id")
+        deletedAt = row.optionalInt64("deleted_at")
+        groupID = row.optionalString("group_id")
+        seqInGroup = row.optionalInt("seq_in_group")
     }
 }
 
