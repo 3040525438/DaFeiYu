@@ -155,6 +155,22 @@ public struct RestorePrecheck: Codable, Sendable, Equatable {
     public var itemCountsJSON: String
 
     public var canProceed: Bool { isCompatible && isSpaceOK }
+
+    public init(
+        backupID: String,
+        backupSchemaVersion: String,
+        currentSchemaVersion: String,
+        isCompatible: Bool,
+        isSpaceOK: Bool,
+        itemCountsJSON: String
+    ) {
+        self.backupID = backupID
+        self.backupSchemaVersion = backupSchemaVersion
+        self.currentSchemaVersion = currentSchemaVersion
+        self.isCompatible = isCompatible
+        self.isSpaceOK = isSpaceOK
+        self.itemCountsJSON = itemCountsJSON
+    }
 }
 
 public protocol BackupRepository: Sendable {

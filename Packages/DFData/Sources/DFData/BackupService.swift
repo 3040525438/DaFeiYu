@@ -356,7 +356,8 @@ public final class BackupService: @unchecked Sendable {
 
     private static func encode(row: Row, columns: [String]) -> [BackupValue] {
         columns.map { column in
-            switch row[column].storage {
+            let raw = row[column] as? DatabaseValue ?? .null
+            switch raw.storage {
             case .null: return .null
             case .int64(let value): return .integer(value)
             case .double(let value): return .real(value)
