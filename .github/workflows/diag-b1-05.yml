@@ -57,18 +57,18 @@ jobs:
           import os, re, signal, subprocess, time
 
           PKG = "Packages/DFData"
-          BUDGET = 780          # 矩阵总预算（秒）
+          BUDGET = 600          # 矩阵总预算（秒）
           started_all = time.time()
 
           groups = [
               ("1_reference_only",   "ChatOrchestratorReferenceTests", 60),
               ("2_recovery_only",    "ChatOrchestratorRecoveryTests", 60),
               ("3_recovery_ref",     "ChatOrchestratorRecoveryTests|ChatOrchestratorReferenceTests", 120),
-              ("4_lifecycle_ref",    "ChatOrchestratorLifecycleTests|ChatOrchestratorReferenceTests", 120),
-              ("5_failure_ref",      "ChatOrchestratorFailurePathTests|ChatOrchestratorReferenceTests", 60),
+              ("8_full_dfdata",      None, 180),
               ("6_recovery_s4extra", "ChatOrchestratorRecoveryTests|ChatOrchestratorS4ExtraTests", 60),
               ("7_all_orch",         "ChatOrchestrator", 120),
-              ("8_full_dfdata",      None, 180),
+              ("4_lifecycle_ref",    "ChatOrchestratorLifecycleTests|ChatOrchestratorReferenceTests", 120),
+              ("5_failure_ref",      "ChatOrchestratorFailurePathTests|ChatOrchestratorReferenceTests", 60),
           ]
 
           def descendants(pid):
