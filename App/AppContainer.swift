@@ -21,9 +21,17 @@ final class AppContainer: ObservableObject {
     let settings: SettingsRepository
     let integrityChecker: IntegrityChecker
 
+    /// 全局活跃轮次登记表（L2）：跨页面 / 恢复路径共享。
+    let activeTurns = ActiveTurnRegistry()
+
+    /// 会话级协调器缓存（L2）。每个 `conversationID` 唯一，容器持有，页面生命周期不影响。
+    /// 仅由 `@MainActor` 入口访问，因此无需额外加锁。
+    private var coordinators: [String: ConversationCoordinator] = [:]
+
     /// 编排层仓储。`groups` 用具体类型：它同时实现 `StaleTurnRecoveryRepository`，
     /// 恢复入口需要这个能力（协议类型会丢掉该 conformance）。
     let groups: GRDBMessageGroupRepository
+
     let turns: GRDBMessageTurnRepository
     let references: GRDBMessageReferenceRepository
     let contextUnits: GRDBContextUnitProvider
@@ -114,11 +122,34 @@ final class AppContainer: ObservableObject {
         )
     }
 
+    /// 取得（或创建）某会话的唯一协调器（L2）。
+    ///
+    /// 生成所有权从页面转移到容器：同一 `conversationID` 恒返回同一协调器，
+    /// 页面切 Tab / 离开 / 重建都不会中断正在进行的轮次。
+    @MainActor
+    func conversationCoordinator(for conversationID: String) -> ConversationCoordinator {
+        if let existing = coordinators[conversationID] {
+            return existing
+        }
+        let ownerToken = UUID()
+        let orchestrator = ChatOrchestratorImpl(
+            dependencies: makeOrchestratorDependencies(),
+            pageToken: ownerToken
+        )
+        let coordinator = ConversationCoordinator(
+            conversationID: conversationID,
+            orchestrator: orchestrator,
+            ownerToken: ownerToken,
+            registry: activeTurns
+        )
+        coordinators[conversationID] = coordinator
+        return coordinator
+    }
+
     /// 构造编排器依赖（S5-A）。
     ///
-    /// **不在这里创建编排器实例**：`ChatOrchestratorImpl` 的 `pageToken` 在 init 时固定，
-    /// 容器级单例会让所有页面共用同一个 owner token，`cancelActiveTurn(owner:)` 的归属校验
-    /// 就失去意义。实例与 token 一律由页面对应的 `ChatViewModel` 持有。
+    /// 编排器实例一律由 `conversationCoordinator(for:)` 创建并交由协调器持有；
+    /// 页面不再创建编排器，也不持有任何 owner token。
     ///
     /// 闭包只捕获 Sendable 的仓储/存储值，不捕获 `self`，避免把非 Sendable 的容器带进并发域。
     func makeOrchestratorDependencies() -> ChatOrchestratorDependencies {
