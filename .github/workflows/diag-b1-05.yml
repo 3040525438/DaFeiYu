@@ -1,7 +1,7 @@
 name: diag-b1-05
 
-# 仅用于定位 B1-05 挂起（临时诊断，不进入 p1.5/b1 主线）
-# 只手动触发，且只跑一条用例，避免触发全量测试。
+# 临时诊断：定位 ChatOrchestratorReferenceTests.testB1_05 挂起位置。
+# 仅手动触发；不配置 push / pull_request 等自动触发器。
 on:
   workflow_dispatch:
 
@@ -19,25 +19,66 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 记录 Swift 版本
-        run: swift --version
+      - name: 记录实际 checkout 的 SHA
+        run: |
+          git rev-parse HEAD
+          git log --oneline -1
+
+      - name: 记录 Swift 版本与测试参数支持情况
+        run: |
+          swift --version
+          swift test --help 2>&1 | grep -E -- '--filter|--num-workers|--list-tests|--parallel' || true
 
       - name: 构建测试目标
         run: swift build --package-path Packages/DFData --build-tests
 
-      - name: 定向运行 B1-05（10 次串行）
+      - name: 确认用例发现与执行参数（不猜测参数）
+        shell: bash
         run: |
-          for i in $(seq 1 10); do
-            echo "===== attempt $i ====="
-            timeout 60 swift test --package-path Packages/DFData \
-              --filter 'ChatOrchestratorReferenceTests/testB1_05' \
-              --num-workers 1 || echo "===== attempt $i failed/timed out with code $? ====="
-          done
-        continue-on-error: true
+          set -uo pipefail
+          echo "--- list-tests ---"
+          swift test --package-path Packages/DFData --list-tests 2>&1 | grep -i 'testB1_05' || echo "list-tests: 未匹配到 testB1_05"
+          echo "--- 能力探测：--num-workers 1 是否被接受（用 B1_04 快速验证）---"
+          if swift test --package-path Packages/DFData \
+              --filter 'ChatOrchestratorReferenceTests/testB1_04' \
+              --num-workers 1 > /tmp/probe_nw.log 2>&1; then
+            echo "确诊：--num-workers 1 可用"
+            echo "SWIFT_NW=--num-workers=1" >> "$GITHUB_ENV"
+          else
+            echo "确诊：--num-workers 1 不可用，退回默认串行（swift test 默认为串行）"
+            cat /tmp/probe_nw.log
+            echo "SWIFT_NW=" >> "$GITHUB_ENV"
+          fi
 
-      - name: 定向运行引用套件（1 次）
+      - name: 第一组：B1-05 独立执行 10 次
+        shell: bash
         run: |
-          timeout 120 swift test --package-path Packages/DFData \
-            --filter 'ChatOrchestratorReferenceTests' \
-            --num-workers 1 || echo "===== suite failed/timed out with code $? ====="
-        continue-on-error: true
+          set -uo pipefail
+          for i in $(seq 1 10); do
+            start=$(date -u +%H:%M:%S.%3N)
+            echo "===== ATTEMPT $i START $start (flags='${SWIFT_NW}') ====="
+            timeout 25 swift test --package-path Packages/DFData \
+              --filter 'ChatOrchestratorReferenceTests/testB1_05' ${SWIFT_NW:-} \
+              > "/tmp/b105_$i.log" 2>&1
+            code=$?
+            end=$(date -u +%H:%M:%S.%3N)
+            echo "===== ATTEMPT $i END $end exit=$code ====="
+            sed -n '1,400p' "/tmp/b105_$i.log"
+            if [ "$code" -eq 124 ]; then
+              echo "===== ATTEMPT $i 判定：超时（挂起复现） ====="
+            fi
+          done
+
+      - name: 第二组：完整 ChatOrchestratorReferenceTests 套件一次
+        shell: bash
+        run: |
+          set -uo pipefail
+          start=$(date -u +%H:%M:%S.%3N)
+          echo "===== SUITE START $start ====="
+          timeout 90 swift test --package-path Packages/DFData \
+            --filter 'ChatOrchestratorReferenceTests' ${SWIFT_NW:-} \
+            > /tmp/suite_reference.log 2>&1
+          code=$?
+          end=$(date -u +%H:%M:%S.%3N)
+          echo "===== SUITE END $end exit=$code ====="
+          sed -n '1,800p' /tmp/suite_reference.log
