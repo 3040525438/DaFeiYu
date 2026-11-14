@@ -11,7 +11,7 @@ import DFCore
 public enum Migrations {
     /// 生产入口：注册全部已发布迁移
     public static var migrator: DatabaseMigrator {
-        makeMigrator(upTo: .v7_meta_backup)
+        makeMigrator(upTo: .v5_autonomy)
     }
 
     /// 按规范顺序注册，最多注册到 `last`（测试用：`upTo: .v1_phase1` 可构造 v1 库）
@@ -222,6 +222,12 @@ public enum Migrations {
         if includes(.v4_persona, upTo: last) {
             migrator.registerMigration("v4_persona") { db in
                 try V4Persona.migrate(db)
+            }
+        }
+
+        if includes(.v5_autonomy, upTo: last) {
+            migrator.registerMigration("v5_autonomy") { db in
+                try V5Autonomy.migrate(db)
             }
         }
 

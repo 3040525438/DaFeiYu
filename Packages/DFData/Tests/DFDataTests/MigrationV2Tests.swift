@@ -69,13 +69,13 @@ final class MigrationV2Tests: XCTestCase {
     func testT01_FreshDatabaseMigratesToV2() throws {
         let database = try makeDatabase("t01")
 
-        XCTAssertEqual(database.currentSchemaVersion, "v4_persona")
+        XCTAssertEqual(database.currentSchemaVersion, MigrationLedger.canonicalIdentifiers.last)
         XCTAssertFalse(database.isReadOnly)
 
         let ledger = try database.dbQueue.read { db in
             try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations")
         }
-        XCTAssertEqual(Set(ledger), ["v1_phase1", "v2_memory", "v3_chat", "v4_persona"])
+        XCTAssertEqual(Set(ledger), Set(MigrationLedger.canonicalIdentifiers))
 
         let tableCount = try database.dbQueue.read { db in
             try Int.fetchOne(db, sql: "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='memory_scopes'") ?? 0
@@ -110,7 +110,7 @@ final class MigrationV2Tests: XCTestCase {
         try queue.read { db in
             XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM messages"), 3)
             XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM memories"), 2)
-            XCTAssertEqual(try String.fetchOne(db, sql: "SELECT max(identifier) FROM grdb_migrations"), "v4_persona")
+            XCTAssertEqual(try String.fetchOne(db, sql: "SELECT max(identifier) FROM grdb_migrations"), MigrationLedger.canonicalIdentifiers.last)
         }
     }
 
@@ -122,7 +122,7 @@ final class MigrationV2Tests: XCTestCase {
         try Migrations.migrator.migrate(queue)
 
         try queue.read { db in
-            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM grdb_migrations"), 4)
+            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM grdb_migrations"), MigrationLedger.canonicalIdentifiers.count)
         }
     }
 
@@ -349,7 +349,7 @@ final class MigrationV2Tests: XCTestCase {
         let b = try digest(second)
         XCTAssertEqual(a.count, 64)
         XCTAssertEqual(a, b)
-        XCTAssertEqual(a, MigrationLedger.digest(prefix: ["v1_phase1", "v2_memory", "v3_chat", "v4_persona"]))
+        XCTAssertEqual(a, MigrationLedger.digest(prefix: MigrationLedger.canonicalIdentifiers))
     }
 
     // MARK: - T11 顺序防护

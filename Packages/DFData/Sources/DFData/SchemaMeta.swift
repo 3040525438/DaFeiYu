@@ -122,12 +122,10 @@ public enum SchemaMeta {
         return metaVersion
     }
 
-    /// 升级后必须存在的对象（结构 + 必要索引）。
-    /// 只做存在性检查，不校验 DDL 细节；用于"迁移成功后能否恢复读写"的门禁。
-    /// v3 起由 10 项扩为 16 项；v4 起再扩 11 项（关系档案 3 表 + 指纹/导入 2 表 + 6 索引），共 27 项。
-    public static func verifyRequiredObjects(_ db: Database) throws {
-        let required = [
-            // v2 既有（保留）
+    /// 各迁移阶段新增的必需对象（按阶段分组，校验到目标版本为止）。
+    /// 名字全部来自本文件常量，不拼接外部输入。
+    private static let requiredObjectsByMigration: [(id: MigrationID, objects: [String])] = [
+        (.v2_memory, [
             "schema_meta",
             "memory_scopes",
             "memory_fts",
@@ -137,15 +135,17 @@ public enum SchemaMeta {
             "v_memory_stats",
             "ux_memories_dedupe",
             "ix_memories_scope_time",
-            "ix_persona_items_tier",
-            // v3 新增
+            "ix_persona_items_tier"
+        ]),
+        (.v3_chat, [
             "message_groups",
             "message_references",
             "ux_message_groups_turn",
             "ix_message_groups_status",
             "ux_messages_group_seq",
-            "ix_message_refs_ref",
-            // v4 新增
+            "ix_message_refs_ref"
+        ]),
+        (.v4_persona, [
             "relationship_profile",
             "relationship_stage_history",
             "relationship_milestones",
@@ -157,8 +157,42 @@ public enum SchemaMeta {
             "ix_relationship_milestones_kind",
             "ux_persona_fingerprints",
             "ix_persona_imports_time"
-        ]
-        // 名字全部来自本文件常量，不拼接外部输入
+        ]),
+        (.v5_autonomy, [
+            "conversation_topics",
+            "conversation_intents",
+            "autonomy_tasks",
+            "autonomy_runs",
+            "autonomy_controls",
+            "ix_conversation_topics_conv",
+            "ix_conversation_topics_status",
+            "ux_conversation_intents_group",
+            "ix_conversation_intents_status",
+            "ix_conversation_intents_topic",
+            "ux_autonomy_tasks_dedupe",
+            "ix_autonomy_tasks_due",
+            "ix_autonomy_tasks_kind",
+            "ix_autonomy_runs_time",
+            "ix_autonomy_runs_task",
+            "ux_autonomy_controls_kind"
+        ])
+    ]
+
+    /// 升级后必须存在的对象（结构 + 必要索引）。
+    /// 只做存在性检查，不校验 DDL 细节；用于"迁移成功后能否恢复读写"的门禁。
+    /// - Parameter last: 校验目标版本，默认生产最终版本；旧版本测试须显式传入，避免被新迁移牵连。
+    ///
+    /// 数量演进：v3 由 10 项扩为 16 项；v4 再扩 11 项（共 27）；v5 再扩 16 项（共 43）。
+    public static func verifyRequiredObjects(_ db: Database, upTo last: MigrationID = .v5_autonomy) throws {
+        let allCases = MigrationID.allCases
+        guard let boundary = allCases.firstIndex(of: last) else { return }
+        let required = requiredObjectsByMigration
+            .filter { entry in
+                guard let index = allCases.firstIndex(of: entry.id) else { return false }
+                return index <= boundary
+            }
+            .flatMap { $0.objects }
+
         let quoted = required.map { "'\($0)'" }.joined(separator: ",")
         let found = try String.fetchAll(
             db,

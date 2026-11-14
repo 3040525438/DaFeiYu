@@ -30,7 +30,11 @@ final class MigrationV4Tests: XCTestCase {
     }
 
     private func makeDatabase(_ name: String) throws -> AppDatabase {
-        try AppDatabase(paths: DatabasePaths(root: root.appendingPathComponent(name, isDirectory: true)))
+        // v5_autonomy 发布后，生产入口已包到 v5；本文件必须锁定在 v4 才能验证 v4 自身的门禁与摘要
+        try AppDatabase(
+            paths: DatabasePaths(root: root.appendingPathComponent(name, isDirectory: true)),
+            makeMigrator: { Migrations.makeMigrator(upTo: .v4_persona) }
+        )
     }
 
     /// 构造 v3 库：1 个核心人格 + 1 个外围人格 + 2 条**未标层级**的条目 + 1 条记忆
@@ -88,7 +92,7 @@ final class MigrationV4Tests: XCTestCase {
 
     func testV401_FreshV1DatabaseMigratesToV4() throws {
         let queue = try makeQueue("v401", upTo: .v1_phase1)
-        try Migrations.migrator.migrate(queue)
+        try Migrations.makeMigrator(upTo: .v4_persona).migrate(queue)
 
         try queue.read { db in
             let ledger = try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations")
@@ -102,7 +106,7 @@ final class MigrationV4Tests: XCTestCase {
                 sql: "SELECT name FROM sqlite_master WHERE type='table' AND name IN (\(quoted))"
             )
             XCTAssertEqual(Set(tables), Set(V4Persona.newTables))
-            try SchemaMeta.verifyRequiredObjects(db)
+            try SchemaMeta.verifyRequiredObjects(db, upTo: .v4_persona)
         }
     }
 
@@ -117,7 +121,7 @@ final class MigrationV4Tests: XCTestCase {
             try Int.fetchOne(db, sql: "SELECT count(*) FROM personas") ?? -1
         }
 
-        try Migrations.migrator.migrate(queue)
+        try Migrations.makeMigrator(upTo: .v4_persona).migrate(queue)
 
         try queue.read { db in
             XCTAssertEqual(try itemLines(db), itemsBefore, "人格条目内容必须逐字不变")
@@ -145,7 +149,7 @@ final class MigrationV4Tests: XCTestCase {
     func testV403_RepeatedV4Rejected() throws {
         let queue = try makeQueue("v403", upTo: .v3_chat)
         try seedV3(queue)
-        try Migrations.migrator.migrate(queue)
+        try Migrations.makeMigrator(upTo: .v4_persona).migrate(queue)
 
         let before = try queue.read { db in try itemLines(db) }
         XCTAssertThrowsError(try queue.write { db in try V4Persona.migrate(db) })
@@ -161,7 +165,7 @@ final class MigrationV4Tests: XCTestCase {
     func testV404_RelationshipTablesStayEmpty() throws {
         let queue = try makeQueue("v404", upTo: .v3_chat)
         try seedV3(queue)
-        try Migrations.migrator.migrate(queue)
+        try Migrations.makeMigrator(upTo: .v4_persona).migrate(queue)
 
         try queue.read { db in
             for table in ["relationship_profile", "relationship_stage_history", "relationship_milestones"] {
@@ -176,7 +180,7 @@ final class MigrationV4Tests: XCTestCase {
     func testV405_GrowthOnlyForOuterPersona() throws {
         let queue = try makeQueue("v405", upTo: .v3_chat)
         try seedV3(queue)
-        try Migrations.migrator.migrate(queue)
+        try Migrations.makeMigrator(upTo: .v4_persona).migrate(queue)
 
         try queue.read { db in
             XCTAssertEqual(
@@ -197,7 +201,7 @@ final class MigrationV4Tests: XCTestCase {
     func testV406_FingerprintBaselineIsRecomputable() throws {
         let queue = try makeQueue("v406", upTo: .v3_chat)
         try seedV3(queue)
-        try Migrations.migrator.migrate(queue)
+        try Migrations.makeMigrator(upTo: .v4_persona).migrate(queue)
 
         try queue.read { db in
             let rows = try Row.fetchAll(
@@ -248,7 +252,7 @@ final class MigrationV4Tests: XCTestCase {
         let database = try makeDatabase("v407")
 
         try database.dbQueue.read { db in
-            try SchemaMeta.verifyRequiredObjects(db)
+            try SchemaMeta.verifyRequiredObjects(db, upTo: .v4_persona)
 
             let names = V4Persona.newTables + V4Persona.newIndexes
             let quoted = names.map { "'\($0)'" }.joined(separator: ",")
@@ -298,7 +302,7 @@ final class MigrationV4Tests: XCTestCase {
         }
         XCTAssertEqual(previous.0, "v3_chat")
 
-        try Migrations.migrator.migrate(queue)
+        try Migrations.makeMigrator(upTo: .v4_persona).migrate(queue)
 
         try queue.read { db in
             XCTAssertEqual(
@@ -322,7 +326,7 @@ final class MigrationV4Tests: XCTestCase {
     func testV410_SentinelLeavesNoResidue() throws {
         let queue = try makeQueue("v410", upTo: .v3_chat)
         try seedV3(queue)
-        try Migrations.migrator.migrate(queue)
+        try Migrations.makeMigrator(upTo: .v4_persona).migrate(queue)
 
         try queue.read { db in
             let sentinels = try Int.fetchOne(
