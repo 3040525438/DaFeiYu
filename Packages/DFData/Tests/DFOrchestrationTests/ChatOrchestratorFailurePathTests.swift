@@ -76,9 +76,10 @@ final class ChatOrchestratorFailurePathTests: XCTestCase {
     }
 
     private func onlyGroup() async throws -> MessageGroup {
-        try await database.dbQueue.read { db in
-            try MessageGroup.order(Column("turn_index").asc).fetchOne(db)!
+        let group = try await database.dbQueue.read { db in
+            try MessageGroup.order(Column("turn_index").asc).fetchOne(db)
         }
+        return try XCTUnwrap(group, "数据库中没有任何消息组（openTurn 未提交或已失败）")
     }
 
     private func groupRows(in groupID: String) async throws -> [Message] {
@@ -117,7 +118,8 @@ final class ChatOrchestratorFailurePathTests: XCTestCase {
         let stream = orchestrator.send(text: "讲个故事", conversationID: conversationID)
         let recorder = EventRecorder()
         let collector = Task { await Self.consume(stream, into: recorder) }
-        await recorder.waitForFirstDelta()
+        let firstSignal = await recorder.waitForDeltaOrEnd()
+        XCTAssertEqual(firstSignal, .delta, "取消前必须已收到 assistantDelta，实际：\(firstSignal)")
 
         await orchestrator.cancelActiveTurn(owner: token)
         provider.release()
@@ -142,7 +144,10 @@ final class ChatOrchestratorFailurePathTests: XCTestCase {
         // 不得静默：诊断信息必须可读
         let diagnostic = await orchestrator.lastDiagnostic
         XCTAssertNotNil(diagnostic)
-        XCTAssertTrue(diagnostic?.contains("正文保存失败") == true, "实际诊断：\(diagnostic ?? "nil")")
+        XCTAssertTrue(
+            diagnostic?.contains("取消成功，但正文未完整保存") == true,
+            "必须命中「取消事务成功、正文未完整保存」这条路径，实际诊断：\(diagnostic ?? "nil")"
+        )
     }
 
     // MARK: - G2 取消事务失败且库仍 open
@@ -157,7 +162,8 @@ final class ChatOrchestratorFailurePathTests: XCTestCase {
         let stream = orchestrator.send(text: "讲个故事", conversationID: conversationID)
         let recorder = EventRecorder()
         let collector = Task { await Self.consume(stream, into: recorder) }
-        await recorder.waitForFirstDelta()
+        let firstSignal = await recorder.waitForDeltaOrEnd()
+        XCTAssertEqual(firstSignal, .delta, "取消前必须已收到 assistantDelta，实际：\(firstSignal)")
 
         await orchestrator.cancelActiveTurn(owner: token)
         provider.release()
@@ -199,7 +205,8 @@ final class ChatOrchestratorFailurePathTests: XCTestCase {
         let stream = orchestrator.send(text: "讲个故事", conversationID: conversationID)
         let recorder = EventRecorder()
         let collector = Task { await Self.consume(stream, into: recorder) }
-        await recorder.waitForFirstDelta()
+        let firstSignal = await recorder.waitForDeltaOrEnd()
+        XCTAssertEqual(firstSignal, .delta, "取消前必须已收到 assistantDelta，实际：\(firstSignal)")
 
         await orchestrator.cancelActiveTurn(owner: token)
         provider.release()
@@ -234,7 +241,8 @@ final class ChatOrchestratorFailurePathTests: XCTestCase {
         let stream = orchestrator.send(text: "讲个故事", conversationID: conversationID)
         let recorder = EventRecorder()
         let collector = Task { await Self.consume(stream, into: recorder) }
-        await recorder.waitForFirstDelta()
+        let firstSignal = await recorder.waitForDeltaOrEnd()
+        XCTAssertEqual(firstSignal, .delta, "取消前必须已收到 assistantDelta，实际：\(firstSignal)")
 
         // 错误 token 连续取消两次
         await orchestrator.cancelActiveTurn(owner: UUID())
@@ -355,7 +363,10 @@ final class ChatOrchestratorFailurePathTests: XCTestCase {
     func testG6A_RetryCreatesNewCopyWithFreshIdentifiers() async throws {
         let failing = ScriptedProvider(deltas: [.text("旧回复")], error: DFError.network("失败"))
         let first = makeOrchestrator(provider: failing)
-        _ = await collect(first.send(text: "原始提问", conversationID: conversationID))
+        let firstRound = await collect(first.send(text: "原始提问", conversationID: conversationID))
+        guard firstRound.error == nil else {
+            return XCTFail("首轮失败必须通过事件表达，实际流错误：\(String(describing: firstRound.error))")
+        }
 
         let oldGroup = try await onlyGroup()
         let oldRows = try await groupRows(in: oldGroup.id)
@@ -368,9 +379,10 @@ final class ChatOrchestratorFailurePathTests: XCTestCase {
         )
         XCTAssertNil(result.error)
 
-        let newGroup = try await database.dbQueue.read { db in
-            try MessageGroup.order(Column("turn_index").desc).fetchOne(db)!
+        let fetchedNew = try await database.dbQueue.read { db in
+            try MessageGroup.order(Column("turn_index").desc).fetchOne(db)
         }
+        let newGroup = try XCTUnwrap(fetchedNew, "重试必须创建新组")
         XCTAssertEqual(newGroup.turnIndex, oldGroup.turnIndex + 1, "新组必须为 N+1")
 
         let newRows = try await groupRows(in: newGroup.id)
@@ -399,9 +411,12 @@ final class ChatOrchestratorFailurePathTests: XCTestCase {
 
     func testG6B_RetryFailureTerminatesNewGroupOnly() async throws {
         let firstFail = ScriptedProvider(deltas: [.text("旧回复")], error: DFError.network("失败一"))
-        _ = await collect(
+        let firstRound = await collect(
             makeOrchestrator(provider: firstFail).send(text: "原始提问", conversationID: conversationID)
         )
+        guard firstRound.error == nil else {
+            return XCTFail("首轮失败必须通过事件表达，实际流错误：\(String(describing: firstRound.error))")
+        }
         let oldGroup = try await onlyGroup()
         let oldAssistantID = try await groupRows(in: oldGroup.id)[1].id
 
@@ -416,9 +431,10 @@ final class ChatOrchestratorFailurePathTests: XCTestCase {
         guard case .turnFailed = result.events.last else {
             return XCTFail("末事件应为 turnFailed，实际：\(String(describing: result.events.last))")
         }
-        let newGroup = try await database.dbQueue.read { db in
-            try MessageGroup.order(Column("turn_index").desc).fetchOne(db)!
+        let fetchedNew = try await database.dbQueue.read { db in
+            try MessageGroup.order(Column("turn_index").desc).fetchOne(db)
         }
+        let newGroup = try XCTUnwrap(fetchedNew, "重试必须创建新组")
         XCTAssertNotEqual(newGroup.id, oldGroup.id)
         XCTAssertEqual(newGroup.status, .failed, "新组必须正确终结")
         XCTAssertNotNil(newGroup.closedAt)
@@ -430,6 +446,56 @@ final class ChatOrchestratorFailurePathTests: XCTestCase {
         XCTAssertEqual(oldAfter.status, .failed)
         let oldRowsFinal = try await groupRows(in: oldGroup.id)
         XCTAssertEqual(oldRowsFinal[1].id, oldAssistantID, "旧组不受影响")
+    }
+
+    // MARK: - G7 opening 阶段取消（尚未收到任何增量）
+
+    func testG7_CancelInOpeningAbortsGroupWithoutRecoveryPending() async throws {
+        let token = UUID()
+        let gate = Gate()
+        let gated = GatedGroupRepository(base: groups, gate: gate)
+        let orchestrator = makeOrchestrator(
+            provider: GatedProvider(firstChunk: "不应出现"),
+            pageToken: token,
+            groupsRepo: gated
+        )
+        let stream = orchestrator.send(text: "讲个故事", conversationID: conversationID)
+        let recorder = EventRecorder()
+        let collector = Task { await Self.consume(stream, into: recorder) }
+
+        // openTurn 已进入但尚未提交，此时取消 → 落点为 opening 分支
+        await gate.waitForEntry()
+        await orchestrator.cancelActiveTurn(owner: token)
+        gate.release()
+        await collector.value
+
+        let events = recorder.all
+        XCTAssertNil(recorder.failure, "turnOpened 之前的基础设施错误才允许 throw")
+
+        // ① 未收到任何增量 → partialText 为空
+        let hasDelta = events.contains { if case .assistantDelta = $0 { return true }; return false }
+        XCTAssertFalse(hasDelta, "opening 阶段不得产生任何增量事件")
+
+        // ② 恰好一个终态，且必须是 turnCancelled
+        let terminals = events.filter(isTerminal)
+        XCTAssertEqual(terminals.count, 1, "必须恰好一个终态，实际事件：\(events)")
+        guard case .turnCancelled = terminals.last else {
+            return XCTFail("终态必须为 turnCancelled，实际：\(String(describing: terminals.last))")
+        }
+
+        // ③ 取消事务成功时不得再发 turnRecoveryPending
+        let recoveryPending = events.contains { if case .turnRecoveryPending = $0 { return true }; return false }
+        XCTAssertFalse(recoveryPending, "取消事务成功后不得发 turnRecoveryPending")
+
+        // ④ 库状态：组 aborted、assistant canceled、无 sent_at、正文为空
+        let group = try await onlyGroup()
+        XCTAssertEqual(group.status, .aborted)
+        XCTAssertNotNil(group.closedAt)
+        let rows = try await groupRows(in: group.id)
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertEqual(rows[1].status, .canceled)
+        XCTAssertNil(rows[1].sentAt, "取消不得写 sent_at")
+        XCTAssertEqual(rows[1].text, "", "opening 阶段取消不保留正文（生产行为保持不变）")
     }
 
     // MARK: - P2-A 定向正文更新的四种结果（真实 SQLite）
@@ -550,12 +616,20 @@ final class ChatOrchestratorFailurePathTests: XCTestCase {
 
 // MARK: - 测试替身
 
-/// 线程安全的事件记录器：支持"等到首个增量事件"的确定性同步点。
+/// 线程安全的事件记录器：支持"等到首个信号"的确定性同步点。
+/// 明确区分三种情况，避免"流提前结束"被误当作"已进入 streaming"。
+enum FirstSignal: Sendable, Equatable {
+    case delta
+    case ended
+    case failed(String)
+}
+
 final class EventRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var storage: [OrchestratorEvent] = []
     private var failureStorage: Error?
-    private let firstDelta = AsyncStreamSignal()
+    private var firstSignal: FirstSignal?
+    private var waiters: [CheckedContinuation<FirstSignal, Never>] = []
 
     var all: [OrchestratorEvent] {
         lock.lock(); defer { lock.unlock() }
@@ -571,18 +645,42 @@ final class EventRecorder: @unchecked Sendable {
         lock.lock()
         storage.append(event)
         lock.unlock()
-        if case .assistantDelta = event { firstDelta.signal() }
+        if case .assistantDelta = event { resolve(.delta) }
     }
 
     func finish(error: Error?) {
         lock.lock()
         failureStorage = error
         lock.unlock()
-        // 若整轮没有任何增量（如空回复），也要唤醒等待方
-        firstDelta.signal()
+        resolve(error.map { .failed(String(describing: $0)) } ?? .ended)
     }
 
-    func waitForFirstDelta() async { await firstDelta.wait() }
+    /// 等待首个信号：`.delta` 才算真正进入 streaming；`.ended` / `.failed` 必须由调用方判失败。
+    func waitForDeltaOrEnd() async -> FirstSignal {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if let firstSignal {
+                lock.unlock()
+                continuation.resume(returning: firstSignal)
+            } else {
+                waiters.append(continuation)
+                lock.unlock()
+            }
+        }
+    }
+
+    private func resolve(_ signal: FirstSignal) {
+        lock.lock()
+        guard firstSignal == nil else {
+            lock.unlock()
+            return
+        }
+        firstSignal = signal
+        let pending = waiters
+        waiters.removeAll()
+        lock.unlock()
+        pending.forEach { $0.resume(returning: signal) }
+    }
 }
 
 /// 可控 Provider：吐出首段后阻塞，直到测试放行；用于"已进入 streaming"的确定性时点。
