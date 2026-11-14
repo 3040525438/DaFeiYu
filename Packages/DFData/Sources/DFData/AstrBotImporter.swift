@@ -1194,11 +1194,11 @@ extension AstrBotImporter {
             switch value.storage {
             case .null:
                 dict[column] = NSNull()
-            case .integer(let value):
+            case .int64(let value):
                 dict[column] = value
-            case .real(let value):
+            case .double(let value):
                 dict[column] = value
-            case .text(let value):
+            case .string(let value):
                 dict[column] = value
             case .blob(let data):
                 dict[column] = data.base64EncodedString()
