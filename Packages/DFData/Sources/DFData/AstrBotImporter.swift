@@ -1187,7 +1187,11 @@ extension AstrBotImporter {
     private static func rawJSON(_ row: Row) -> String {
         var dict: [String: Any] = [:]
         for column in row.columnNames {
-            switch row[column].storage {
+            guard let value = row[column] as? DatabaseValue else {
+                dict[column] = NSNull()
+                continue
+            }
+            switch value.storage {
             case .null:
                 dict[column] = NSNull()
             case .integer(let value):
@@ -1210,6 +1214,17 @@ extension AstrBotImporter {
     }
 
     private static func int64(_ row: Row, _ column: String) -> Int64? {
+        guard row.hasColumn(column) else { return nil }
+        return Int64.fromDatabaseValue(row[column])
+    }
+
+    /// 可空文本列（避开 `Row.decodeIfPresent` 解析到 Decodable 重载的坑）
+    private static func optionalString(_ row: Row, _ column: String) -> String? {
+        guard row.hasColumn(column) else { return nil }
+        return String.fromDatabaseValue(row[column])
+    }
+
+    private static func optionalInt64(_ row: Row, _ column: String) -> Int64? {
         guard row.hasColumn(column) else { return nil }
         return Int64.fromDatabaseValue(row[column])
     }
@@ -1315,7 +1330,7 @@ extension AstrBotImporter {
                 continue
             }
             try insertMemory(
-                db,
+                db: db,
                 id: memory.id,
                 type: memory.type,
                 title: memory.title,
@@ -1351,7 +1366,7 @@ extension AstrBotImporter {
                 continue
             }
             try insertMemory(
-                db,
+                db: db,
                 id: document.id,
                 type: document.type,
                 title: document.title,
