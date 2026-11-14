@@ -72,6 +72,26 @@ public struct AttachmentTextRecord: Sendable, Equatable {
     public var confidence: Double?
     public var createdAt: Int64
     public var updatedAt: Int64
+
+    public init(
+        attachmentID: String,
+        kind: AttachmentTextKind,
+        text: String,
+        language: String?,
+        engine: String,
+        confidence: Double?,
+        createdAt: Int64,
+        updatedAt: Int64
+    ) {
+        self.attachmentID = attachmentID
+        self.kind = kind
+        self.text = text
+        self.language = language
+        self.engine = engine
+        self.confidence = confidence
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
 }
 
 public protocol AttachmentTextRepository: Sendable {
@@ -108,6 +128,30 @@ public struct ImageAnalysisRecord: Sendable, Equatable, Identifiable {
     public var status: String
     public var createdAt: Int64
     public var finishedAt: Int64?
+
+    public init(
+        id: String,
+        conversationID: String?,
+        messageID: String?,
+        attachmentIDs: [String],
+        prompt: String,
+        result: String,
+        modelConfigID: String?,
+        status: String,
+        createdAt: Int64,
+        finishedAt: Int64?
+    ) {
+        self.id = id
+        self.conversationID = conversationID
+        self.messageID = messageID
+        self.attachmentIDs = attachmentIDs
+        self.prompt = prompt
+        self.result = result
+        self.modelConfigID = modelConfigID
+        self.status = status
+        self.createdAt = createdAt
+        self.finishedAt = finishedAt
+    }
 }
 
 public protocol ImageAnalysisRepository: Sendable {

@@ -36,6 +36,10 @@ final class AppContainer: ObservableObject {
     let imageAnalyses: ImageAnalysisRepository
     /// W4：附件入库与设备端派生处理
     let media: AttachmentIngestService
+    /// W5：本地模型注册与事件
+    let localModels: LocalModelRepository
+    /// W6：每日日记
+    let diary: DiaryRepository
 
     /// 全局活跃轮次登记表（L2）：跨页面 / 恢复路径共享。
     let activeTurns = ActiveTurnRegistry()
@@ -106,6 +110,8 @@ final class AppContainer: ObservableObject {
             repository: GRDBAttachmentRepository(database: database),
             textRepository: GRDBAttachmentTextRepository(database: database)
         )
+        self.localModels = GRDBLocalModelRepository(database: database)
+        self.diary = GRDBDiaryRepository(database: database)
 
         self.groups = GRDBMessageGroupRepository(database: database)
         self.turns = GRDBMessageTurnRepository(database: database)

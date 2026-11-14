@@ -235,11 +235,11 @@ public struct GRDBAttachmentRepository: AttachmentRepository, Sendable {
             relPath: try row.decode(String.self, forColumn: "rel_path"),
             byteSize: try row.decode(Int64.self, forColumn: "byte_size"),
             mime: try row.decode(String.self, forColumn: "mime"),
+            createdAt: try row.decode(Int64.self, forColumn: "created_at"),
             width: Int.fromDatabaseValue(row["width"]),
             height: Int.fromDatabaseValue(row["height"]),
             durationMs: Int.fromDatabaseValue(row["duration_ms"]),
             thumbnailRelPath: String.fromDatabaseValue(row["thumbnail_rel_path"]),
-            createdAt: try row.decode(Int64.self, forColumn: "created_at"),
             deletedAt: Int64.fromDatabaseValue(row["deleted_at"])
         )
     }
