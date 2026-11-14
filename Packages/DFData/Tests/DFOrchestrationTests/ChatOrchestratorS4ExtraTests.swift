@@ -265,6 +265,13 @@ final class ChatOrchestratorS4ExtraTests: XCTestCase {
             try Int64.fetchOne(db, sql: "SELECT closed_at FROM message_groups WHERE id = ?", arguments: [groupID])
         }
         XCTAssertNotNil(closedAt)
+
+        // 幂等：重复恢复不得再次处理已终态组
+        let secondReport = try await makeOrchestrator(provider: StaticTextProvider())
+            .recoverStaleTurns(conversationID: conversationID)
+        XCTAssertEqual(secondReport.closedGroups, 0, "终态组不得被重复关闭")
+        let statusAfterSecond = try await groupStatus(groupID)
+        XCTAssertEqual(statusAfterSecond, "failed", "重复恢复不得改变既有终态")
     }
 
     // MARK: - S4-C-1 分页 hasMore 与末页
@@ -355,15 +362,15 @@ final class ChatOrchestratorS4ExtraTests: XCTestCase {
     func testS4D_1_CancelDuringRetry() async throws {
         let sourceGroup = try await seedGroup(userStatus: .sent, assistantStatus: .failed)
         try await write("UPDATE message_groups SET status = 'failed', closed_at = 9 WHERE id = ?", [sourceGroup])
-        let sourceUserIDText = try await scalarString(
-            "SELECT id FROM messages WHERE group_id = ? AND role = 'user'", [sourceGroup]
+        let sourceAssistantIDText = try await scalarString(
+            "SELECT id FROM messages WHERE group_id = ? AND role = 'assistant'", [sourceGroup]
         )
-        let sourceUserID = try XCTUnwrap(sourceUserIDText)
+        let sourceAssistantID = try XCTUnwrap(sourceAssistantIDText)
 
         let gate = Latch()
         let started = Latch()
         let orchestrator = makeOrchestrator(provider: RetryBlockingProvider(gate: gate, started: started))
-        let stream = orchestrator.retry(messageID: sourceUserID, conversationID: conversationID)
+        let stream = orchestrator.retry(messageID: sourceAssistantID, conversationID: conversationID)
         let consumer = Task { await Self.collect(stream) }
 
         // 确定性同步：Provider 一旦被调用，说明 turnOpened 已产出、组已提交
@@ -408,15 +415,15 @@ final class ChatOrchestratorS4ExtraTests: XCTestCase {
     func testS4D_2_DoubleRetryRejected() async throws {
         let sourceGroup = try await seedGroup(userStatus: .sent, assistantStatus: .failed)
         try await write("UPDATE message_groups SET status = 'failed', closed_at = 9 WHERE id = ?", [sourceGroup])
-        let sourceUserIDText = try await scalarString(
-            "SELECT id FROM messages WHERE group_id = ? AND role = 'user'", [sourceGroup]
+        let sourceAssistantIDText = try await scalarString(
+            "SELECT id FROM messages WHERE group_id = ? AND role = 'assistant'", [sourceGroup]
         )
-        let sourceUserID = try XCTUnwrap(sourceUserIDText)
+        let sourceAssistantID = try XCTUnwrap(sourceAssistantIDText)
 
         let gate = Latch()
         let started = Latch()
         let orchestrator = makeOrchestrator(provider: RetryBlockingProvider(gate: gate, started: started))
-        let firstStream = orchestrator.retry(messageID: sourceUserID, conversationID: conversationID)
+        let firstStream = orchestrator.retry(messageID: sourceAssistantID, conversationID: conversationID)
         let firstConsumer = Task { await Self.collect(firstStream) }
 
         await started.wait()
@@ -424,7 +431,7 @@ final class ChatOrchestratorS4ExtraTests: XCTestCase {
         XCTAssertTrue(active, "首轮重试必须进入活跃轮次")
 
         let before = try await scalarInt("SELECT count(*) FROM message_groups")
-        let second = await Self.collect(orchestrator.retry(messageID: sourceUserID, conversationID: conversationID))
+        let second = await Self.collect(orchestrator.retry(messageID: sourceAssistantID, conversationID: conversationID))
         XCTAssertNotNil(second.error, "并发第二次重试必须在首个事件前失败")
         XCTAssertTrue(second.events.isEmpty, "被拒的重试不得发出任何事件")
         let after = try await scalarInt("SELECT count(*) FROM message_groups")

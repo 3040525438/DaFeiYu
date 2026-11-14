@@ -282,8 +282,11 @@ public struct GRDBMessageGroupRepository: MessageGroupRepository, StaleTurnRecov
                     SELECT g.id AS gid,
                            (SELECT m.status FROM messages m
                              WHERE m.group_id = g.id AND m.role = 'assistant'
+                             ORDER BY m.seq_in_group ASC LIMIT 1) AS ast_any,
+                           (SELECT m.status FROM messages m
+                             WHERE m.group_id = g.id AND m.role = 'assistant'
                                AND m.deleted_at IS NULL
-                             ORDER BY m.seq_in_group ASC LIMIT 1) AS ast
+                             ORDER BY m.seq_in_group ASC LIMIT 1) AS ast_visible
                     FROM message_groups g
                     WHERE g.conversation_id = ? AND g.status = 'open'
                       AND (? IS NULL OR g.id <> ?)
@@ -292,17 +295,27 @@ public struct GRDBMessageGroupRepository: MessageGroupRepository, StaleTurnRecov
                 )
                 for row in orphans {
                     let groupID = try row.decode(String.self, forColumn: "gid")
-                    let assistantStatus = String.fromDatabaseValue(row["ast"])
+                    // ast_any：不过滤软删，用于区分"根本没有 assistant 行"
+                    let anyStatus = String.fromDatabaseValue(row["ast_any"])
+                    // ast_visible：只看可见 assistant，用于判定可恢复内容
+                    let visibleStatus = String.fromDatabaseValue(row["ast_visible"])
                     let target: String
-                    switch assistantStatus {
-                    case "canceled":
-                        target = "aborted"   // B2：取消已在消息上落地，组未收尾
-                    case "sent":
-                        target = "complete"  // B3：assistant 已定稿，组缺收尾
-                    case "sending", nil:
-                        continue             // 已在上面按消息处理（或并发生成中）
-                    default:
-                        target = "failed"    // B4/B5：failed / draft / 无 assistant
+                    if visibleStatus == nil {
+                        if anyStatus == nil {
+                            continue  // 无 assistant 行：可能仍在生成中，按消息级规则处理
+                        }
+                        target = "failed"  // B6：assistant 行存在但全部软删，无可见内容可恢复
+                    } else {
+                        switch visibleStatus {
+                        case "canceled":
+                            target = "aborted"   // B2：取消已在消息上落地，组未收尾
+                        case "sent":
+                            target = "complete"  // B3：assistant 已定稿，组缺收尾
+                        case "sending":
+                            continue             // 并发生成中，不误伤
+                        default:
+                            target = "failed"    // B4/B5：failed / draft 等异常状态
+                        }
                     }
                     try db.execute(
                         sql: "UPDATE message_groups SET status = ?, closed_at = ? WHERE id = ? AND status = 'open'",
@@ -310,8 +323,8 @@ public struct GRDBMessageGroupRepository: MessageGroupRepository, StaleTurnRecov
                     )
                     guard db.changesCount == 1 else { continue }
                     closed += 1
-                    // B5：没有 assistant 时，残留的 user sending 一并转 failed，保证组合合法
-                    if assistantStatus == nil {
+                    // B5：没有可见 assistant 时，残留的 user sending 一并转 failed，保证组合合法
+                    if visibleStatus == nil {
                         try db.execute(
                             sql: """
                             UPDATE messages SET status = 'failed'
