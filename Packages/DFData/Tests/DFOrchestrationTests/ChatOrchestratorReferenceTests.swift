@@ -74,9 +74,10 @@ final class ChatOrchestratorReferenceTests: XCTestCase {
     }
 
     private func lastGroup() async throws -> MessageGroup {
-        try await database.dbQueue.read { db in
-            try MessageGroup.order(Column("turn_index").desc).fetchOne(db)!
+        let fetched = try await database.dbQueue.read { db in
+            try MessageGroup.order(Column("turn_index").desc).fetchOne(db)
         }
+        return try XCTUnwrap(fetched, "数据库中没有消息组：openTurn 未提交或未被执行")
     }
 
     // MARK: - B1-04 无尾注：可见文本与原始输出逐字符一致

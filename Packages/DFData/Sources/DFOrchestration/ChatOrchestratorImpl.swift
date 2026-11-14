@@ -134,11 +134,10 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         conversationID: String
     ) -> AsyncThrowingStream<OrchestratorEvent, Error> {
         AsyncThrowingStream { continuation in
-            let task = Task { [weak self] in
-                guard let self else {
-                    continuation.finish()
-                    return
-                }
+            // 必须强持有 self：`send` 返回后若调用方不保留编排器实例，
+            // 弱引用会让已在进行的轮次**静默消失**（无事件、无错误、不建组）。
+            // 生命周期由 `onTermination` 保证：消费方丢弃流时取消 Task，run 结束即释放。
+            let task = Task {
                 await self.run(
                     text: text,
                     retryMessageID: retryMessageID,
