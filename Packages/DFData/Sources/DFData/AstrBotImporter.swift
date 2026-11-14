@@ -1187,19 +1187,22 @@ extension AstrBotImporter {
     private static func rawJSON(_ row: Row) -> String {
         var dict: [String: Any] = [:]
         for column in row.columnNames {
-            let value = row[column]
-            if value == nil {
+            guard let convertible = row[column] else {
                 dict[column] = NSNull()
-            } else if let number = Int64.fromDatabaseValue(value) {
+                continue
+            }
+            let value = convertible.databaseValue
+            switch value.storage {
+            case .null:
+                dict[column] = NSNull()
+            case .int64(let number):
                 dict[column] = number
-            } else if let real = Double.fromDatabaseValue(value) {
+            case .double(let real):
                 dict[column] = real
-            } else if let text = String.fromDatabaseValue(value) {
+            case .string(let text):
                 dict[column] = text
-            } else if let data = Data.fromDatabaseValue(value) {
+            case .blob(let data):
                 dict[column] = data.base64EncodedString()
-            } else {
-                dict[column] = NSNull()
             }
         }
         return (try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]))
