@@ -25,6 +25,7 @@ struct SettingsView: View {
                 environmentSection
                 modelSection
                 personaSection
+                privacySection
                 maintenanceSection
                 aboutSection
             }
@@ -232,6 +233,25 @@ struct SettingsView: View {
         }
     }
 
+    private var privacySection: some View {
+        Section {
+            NavigationLink {
+                PrivacySettingsView()
+            } label: {
+                Label("隐私与安全", systemImage: "lock.shield")
+            }
+            NavigationLink {
+                BackupCenterView()
+            } label: {
+                Label("备份与恢复", systemImage: "externaldrive.badge.timemachine")
+            }
+        } header: {
+            sectionHeader("隐私与数据", icon: "shield.lefthalf.filled")
+        } footer: {
+            Text("备份默认加密；删除全部数据需要逐字确认，并会销毁本地密钥。")
+        }
+    }
+
     private var maintenanceSection: some View {
         Section {
             Button("运行完整性检查") {
@@ -249,10 +269,10 @@ struct SettingsView: View {
 
     private var aboutSection: some View {
         Section {
-            Text("大肥鱼 · 第一阶段（本地聊天与数据基础）")
+            Text("大肥鱼 · V2.0 实验版")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            Text("本版本不包含主动行为、记忆检索与备份恢复，这些在后续阶段实现。")
+            Text("本地聊天、七层记忆、人格与关系、自主陪伴、加密备份与隐私门禁；本地模型推理仍需真机下载后启用。")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         } header: {

@@ -52,5 +52,7 @@
 	<string>用于录制语音消息，录音只保存在本机。</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>用于把语音转成文字，优先在本机完成。</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>用于解锁大肥鱼；Face ID 数据由系统处理，不会离开设备。</string>
 </dict>
 </plist>

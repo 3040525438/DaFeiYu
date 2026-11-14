@@ -45,6 +45,27 @@ final class AppContainer: ObservableObject {
     /// W9：备份清单与恢复日志
     let backups: BackupRepository
 
+    // MARK: - W6~W9 服务层
+
+    /// W7：自主调度（策略 / 任务队列 / 闸门 / 补算）
+    let autonomy: AutonomyService
+    /// W7：主动消息治理
+    let proactive: ProactiveMessageService
+    /// W6：人格成长（提案 → 审批 → 版本回退）
+    let personaGrowth: PersonaGrowthService
+    /// W6：关系档案与阶段确认
+    let relationships: RelationshipService
+    /// W8：L1–L7 记忆加工
+    let memoryProcessing: MemoryProcessingService
+    /// W9：备份加解密与恢复
+    let backupService: BackupService
+    /// W9：隐私门禁与删除清单
+    let privacy: PrivacyGateService
+    /// W9：AstrBot 全量导入
+    let astrbotImporter: AstrBotImporter
+    /// W9：备份密钥（Keychain）
+    let backupKeys: KeychainBackupKeyStore
+
     /// 全局活跃轮次登记表（L2）：跨页面 / 恢复路径共享。
     let activeTurns = ActiveTurnRegistry()
 
@@ -118,6 +139,22 @@ final class AppContainer: ObservableObject {
         self.diary = GRDBDiaryRepository(database: database)
         self.memories = GRDBMemoryRepository(database: database)
         self.backups = GRDBBackupRepository(database: database)
+
+        self.autonomy = AutonomyService(database: database)
+        self.proactive = ProactiveMessageService(database: database)
+        self.personaGrowth = PersonaGrowthService(database: database)
+        self.relationships = RelationshipService(database: database)
+        self.memoryProcessing = MemoryProcessingService(database: database)
+        self.privacy = PrivacyGateService(database: database)
+        self.astrbotImporter = AstrBotImporter(database: database)
+
+        let backupKeys = KeychainBackupKeyStore(store: KeychainStore(service: identity.environment.keychainService))
+        self.backupKeys = backupKeys
+        self.backupService = BackupService(
+            database: database,
+            keyStore: backupKeys,
+            appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
+        )
 
         self.groups = GRDBMessageGroupRepository(database: database)
         self.turns = GRDBMessageTurnRepository(database: database)

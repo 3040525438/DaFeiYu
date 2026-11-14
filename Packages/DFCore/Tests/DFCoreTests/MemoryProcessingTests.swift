@@ -69,7 +69,7 @@ final class MemoryProcessingTests: XCTestCase {
         let source = "她说她最近喜欢上了桂花味的一切，还买了一瓶香水"
         let result = policy.screen(
             [
-                candidate(),
+                candidate(evidence: "喜欢上了桂花味"),
                 candidate(title: "讨厌桂花", content: "用户讨厌桂花", evidence: "我讨厌桂花")
             ],
             sourceText: source
@@ -232,8 +232,7 @@ final class MemoryProcessingTests: XCTestCase {
             WorkingMemoryItem(id: "t1", kind: .recentTurn, text: "上一轮", estimatedTokens: 5),
             WorkingMemoryItem(id: "m1", kind: .retrievedMemory, text: "旧记忆", estimatedTokens: 100),
             WorkingMemoryItem(id: "p1", kind: .pinnedFact, text: "她今天生病", estimatedTokens: 5),
-            WorkingMemoryItem(id: "u1", kind: .currentUserMessage, text: "在吗", estimatedTokens: 30),
-            WorkingMemoryItem(id: "t2", kind: .openTopic, text: "上一轮", estimatedTokens: 5)
+            WorkingMemoryItem(id: "u1", kind: .currentUserMessage, text: "在吗", estimatedTokens: 30)
         ]
         let package = WorkingMemoryAssembler.assemble(
             conversationID: "c1",
@@ -243,9 +242,24 @@ final class MemoryProcessingTests: XCTestCase {
         )
         XCTAssertEqual(package.items.map(\.id), ["u1", "p1", "t1"], "按优先级装载，且预算内")
         XCTAssertEqual(package.estimatedTokens, 40)
-        XCTAssertEqual(package.dropped.count, 2)
-        XCTAssertTrue(package.dropped.contains { $0.id == "t2" && $0.reason == .duplicate })
+        XCTAssertEqual(package.dropped.count, 1)
         XCTAssertTrue(package.dropped.contains { $0.id == "m1" && $0.reason == .budgetExceeded })
+    }
+
+    func testWorkingMemoryDropsDuplicateText() {
+        let items = [
+            WorkingMemoryItem(id: "a", kind: .pinnedFact, text: "她今天生病", estimatedTokens: 5),
+            WorkingMemoryItem(id: "b", kind: .recentTurn, text: "她今天生病。", estimatedTokens: 5)
+        ]
+        let package = WorkingMemoryAssembler.assemble(
+            conversationID: "c1",
+            items: items,
+            budget: .default,
+            at: 1
+        )
+        XCTAssertEqual(package.items.map(\.id), ["a"])
+        XCTAssertEqual(package.dropped.map(\.id), ["b"])
+        XCTAssertEqual(package.dropped.first?.reason, .duplicate)
     }
 
     func testWorkingMemoryKeepsCurrentMessageEvenOverBudget() {
