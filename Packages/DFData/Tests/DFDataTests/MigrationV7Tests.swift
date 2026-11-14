@@ -175,11 +175,12 @@ final class MigrationV7Tests: XCTestCase {
         try Migrations.makeMigrator(upTo: .v7_meta_backup).migrate(queue)
 
         try queue.read { db in
-            let row = try XCTUnwrap(
-                Row.fetchOne(db, sql: "SELECT * FROM attachments WHERE id = 'a1'")
+            XCTAssertNil(
+                try Int64.fetchOne(db, sql: "SELECT deleted_at FROM attachments WHERE id = 'a1'")
             )
-            XCTAssertEqual(try row.decodeNil(forColumn: "deleted_at"), true)
-            XCTAssertEqual(try row.decodeNil(forColumn: "deleted_reason"), true)
+            XCTAssertNil(
+                try String.fetchOne(db, sql: "SELECT deleted_reason FROM attachments WHERE id = 'a1'")
+            )
 
             let columns = try Row.fetchAll(db, sql: "PRAGMA table_info(attachments)").map {
                 try $0.decode(String.self, forColumn: "name")
@@ -213,17 +214,11 @@ final class MigrationV7Tests: XCTestCase {
 
         try queue.read { db in
             XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM restore_logs"), 1, "恢复记录不得被级联删除")
-            XCTAssertEqual(
-                try rowNil(db, sql: "SELECT backup_id FROM restore_logs WHERE id = 'r1'"),
-                true,
+            XCTAssertNil(
+                try String.fetchOne(db, sql: "SELECT backup_id FROM restore_logs WHERE id = 'r1'"),
                 "备份被删除后 backup_id 应置空，保留历史事实"
             )
         }
-    }
-
-    private func rowNil(_ db: Database, sql: String) throws -> Bool {
-        let row = try XCTUnwrap(Row.fetchOne(db, sql: sql))
-        return try row.decodeNil(forColumnIndex: 0)
     }
 
     // MARK: - V7-07 必需对象门禁（61 项）
