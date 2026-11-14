@@ -1,0 +1,62 @@
+name: app-build-check
+
+# 临时诊断 workflow：只做"不签名编译"，用于验证 App target 能否通过 Swift 编译。
+# - 仅手动触发，不参与日常 CI
+# - 不归档、不导出、不签名、不打包 IPA、不安装、不启动模拟器/真机
+# - S5-B 验收后可直接删除本文件撤销
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: app-build-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 记录编译环境
+        run: |
+          xcodebuild -version
+          sw_vers
+          grep -n "IPHONEOS_DEPLOYMENT_TARGET" project.yml || true
+
+      - name: 安装 XcodeGen
+        run: brew install xcodegen
+
+      - name: 生成 Xcode 工程
+        run: xcodegen generate
+
+      - name: 编译正式版（Debug · 不签名）
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project DaFeiYu.xcodeproj \
+            -scheme DaFeiYu \
+            -configuration Debug \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build-check \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: 编译实验版（Debug · 不签名）
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project DaFeiYu.xcodeproj \
+            -scheme DaFeiYuLab \
+            -configuration Debug \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build-check-lab \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
