@@ -324,9 +324,9 @@ final class AstrBotImporterTests: XCTestCase {
         )
         XCTAssertEqual(importedOrigin, 6)
 
-        // 记忆：全部 shared + pending 分类 + 原始 ID
+        // 记忆：2 条 AstrBot 记忆 + 2 条文档（信件/读书笔记），全部 shared
         let memories = try await count(database, "SELECT count(*) FROM memories")
-        XCTAssertEqual(memories, 2)
+        XCTAssertEqual(memories, 4)
         let scope = try await string(database, "SELECT scope FROM memories WHERE type = 'fact'")
         XCTAssertEqual(scope, "shared")
         let classification = try await string(
