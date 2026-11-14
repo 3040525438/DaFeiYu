@@ -376,11 +376,13 @@ final class MessageTurnRepositoryTests: XCTestCase {
         try await repository.insertBatch(batch)
         try await repository.insertBatch(batch)
 
+        // 3 条引用的复合主键 (message_id, ref_message_id, relation) 互不相同；
+        // 重复写同一批次必须幂等，行数稳定在 3 而不是累加到 6。
         let stored = try await repository.references(for: [assistantID])
-        XCTAssertEqual(stored.count, 2, "复合主键冲突必须幂等忽略，重复批次不得膨胀")
+        XCTAssertEqual(stored.count, 3, "重复批次不得膨胀")
 
         try await database.dbQueue.read { db in
-            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM message_references"), 2)
+            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM message_references"), 3)
         }
     }
 
