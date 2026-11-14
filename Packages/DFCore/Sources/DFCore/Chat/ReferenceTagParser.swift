@@ -115,13 +115,19 @@ public struct StreamingReferenceParser: Sendable {
         return json.hasPrefix("[") && json.hasSuffix("]")
     }
 
-    /// 在尾部片段中找可能是 `<<refs:` 前缀的起始位置
+    /// 在尾部片段中找可能是 `<<refs:` 前缀的起始位置。
+    /// 必须遍历所有 `<` 并取**最早**的合法起点：
+    /// 若只取最后一个 `<`，当增量边界切在 `<<ref` 时会取到第二个 `<`，
+    /// 得到 `"<ref"` 而误判"不是前缀"，导致 `<<ref` 泄漏到正文。
     private static func partialTagStart(in tail: String) -> Int? {
-        guard let lt = tail.lastIndex(of: "<") else { return nil }
-        let candidate = String(tail[lt...])
-        guard candidate.utf8.count <= maxProbeBytes else { return nil }
-        if tagOpen.hasPrefix(candidate) || candidate.hasPrefix(tagOpen) {
-            return tail.distance(from: tail.startIndex, to: lt)
+        var searchStart = tail.startIndex
+        while let lt = tail[searchStart...].firstIndex(of: "<") {
+            let candidate = String(tail[lt...])
+            if candidate.utf8.count <= maxProbeBytes,
+               tagOpen.hasPrefix(candidate) || candidate.hasPrefix(tagOpen) {
+                return tail.distance(from: tail.startIndex, to: lt)
+            }
+            searchStart = tail.index(after: lt)
         }
         return nil
     }
