@@ -37,7 +37,11 @@ final class MigrationV6Tests: XCTestCase {
     }
 
     private func makeDatabase(_ name: String) throws -> AppDatabase {
-        try AppDatabase(paths: DatabasePaths(root: root.appendingPathComponent(name, isDirectory: true)))
+        // 锁定 v6：后续迁移发布后，v6 的门禁与摘要断言不应被牵连
+        try AppDatabase(
+            paths: DatabasePaths(root: root.appendingPathComponent(name, isDirectory: true)),
+            makeMigrator: { Migrations.makeMigrator(upTo: .v6_character) }
+        )
     }
 
     /// 构造 v5 库：会话/消息/记忆/人格条目各一条 + 一条历史主动消息
@@ -253,7 +257,7 @@ final class MigrationV6Tests: XCTestCase {
         let database = try makeDatabase("v607")
 
         try database.dbQueue.read { db in
-            try SchemaMeta.verifyRequiredObjects(db)
+            try SchemaMeta.verifyRequiredObjects(db, upTo: .v6_character)
 
             let names = V6Character.newTables + V6Character.newIndexes
             XCTAssertEqual(try objectNames(db, names: names), Set(names))

@@ -38,7 +38,11 @@ final class MigrationV5Tests: XCTestCase {
     }
 
     private func makeDatabase(_ name: String) throws -> AppDatabase {
-        try AppDatabase(paths: DatabasePaths(root: root.appendingPathComponent(name, isDirectory: true)))
+        // 生产入口会随已发布版本推进，v5 的门禁与摘要必须锁定在 v5 才能独立验证
+        try AppDatabase(
+            paths: DatabasePaths(root: root.appendingPathComponent(name, isDirectory: true)),
+            makeMigrator: { Migrations.makeMigrator(upTo: .v5_autonomy) }
+        )
     }
 
     /// 构造 v4 库：1 个会话 + 1 条消息 + 1 条记忆 + 1 个人格与其条目
@@ -95,7 +99,7 @@ final class MigrationV5Tests: XCTestCase {
                 try objectNames(db, names: V5Autonomy.newTables),
                 Set(V5Autonomy.newTables)
             )
-            try SchemaMeta.verifyRequiredObjects(db)
+            try SchemaMeta.verifyRequiredObjects(db, upTo: .v5_autonomy)
         }
     }
 
@@ -265,7 +269,7 @@ final class MigrationV5Tests: XCTestCase {
         let database = try makeDatabase("v507")
 
         try database.dbQueue.read { db in
-            try SchemaMeta.verifyRequiredObjects(db)
+            try SchemaMeta.verifyRequiredObjects(db, upTo: .v5_autonomy)
 
             let names = V5Autonomy.newTables + V5Autonomy.newIndexes
             XCTAssertEqual(try objectNames(db, names: names), Set(names))
