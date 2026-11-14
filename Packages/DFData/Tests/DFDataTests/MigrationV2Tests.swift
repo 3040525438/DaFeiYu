@@ -110,7 +110,9 @@ final class MigrationV2Tests: XCTestCase {
         try queue.read { db in
             XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM messages"), 3)
             XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM memories"), 2)
-            XCTAssertEqual(try String.fetchOne(db, sql: "SELECT max(identifier) FROM grdb_migrations"), Migrations.latest.rawValue)
+            // 不能按 identifier 字符串排序：v10 会排在 v9 之前
+            let ledger = try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations ORDER BY rowid")
+            XCTAssertEqual(try MigrationLedger.validatedPrefix(applied: ledger).last, Migrations.latest.rawValue)
         }
     }
 

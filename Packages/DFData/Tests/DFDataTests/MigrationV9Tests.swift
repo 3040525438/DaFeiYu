@@ -93,7 +93,7 @@ final class MigrationV9Tests: XCTestCase {
             XCTAssertEqual(try SchemaMeta.value(db, key: SchemaMetaKey.schemaVersion), "v9_astrbot")
             XCTAssertEqual(try SchemaMeta.value(db, key: SchemaMetaKey.expectedMigrations), "9")
             XCTAssertEqual(try objectNames(db, names: V9AstrBot.newTables), Set(V9AstrBot.newTables))
-            try SchemaMeta.verifyRequiredObjects(db)
+            try SchemaMeta.verifyRequiredObjects(db, upTo: .v9_astrbot)
         }
     }
 

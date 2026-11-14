@@ -30,6 +30,12 @@ final class AppContainer: ObservableObject {
     let chatTheme: ChatThemeStoring
     /// W3：多会话管理（建 / 改名 / 置顶 / 归档 / 排序 / 未读 / 删除保留记忆）
     let conversationAdmin: ConversationAdminRepository
+    /// W4：附件元数据 / OCR 与转写文本 / 多图分析
+    let attachmentRecords: AttachmentRepository
+    let attachmentTexts: AttachmentTextRepository
+    let imageAnalyses: ImageAnalysisRepository
+    /// W4：附件入库与设备端派生处理
+    let media: AttachmentIngestService
 
     /// 全局活跃轮次登记表（L2）：跨页面 / 恢复路径共享。
     let activeTurns = ActiveTurnRegistry()
@@ -92,6 +98,14 @@ final class AppContainer: ObservableObject {
         self.chatSearch = GRDBChatSearchRepository(database: database)
         self.chatTheme = GRDBChatThemeStore(settings: GRDBSettingsRepository(database: database))
         self.conversationAdmin = GRDBConversationAdminRepository(database: database)
+        self.attachmentRecords = GRDBAttachmentRepository(database: database)
+        self.attachmentTexts = GRDBAttachmentTextRepository(database: database)
+        self.imageAnalyses = GRDBImageAnalysisRepository(database: database)
+        self.media = AttachmentIngestService(
+            store: attachments,
+            repository: GRDBAttachmentRepository(database: database),
+            textRepository: GRDBAttachmentTextRepository(database: database)
+        )
 
         self.groups = GRDBMessageGroupRepository(database: database)
         self.turns = GRDBMessageTurnRepository(database: database)
