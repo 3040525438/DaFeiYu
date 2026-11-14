@@ -2,55 +2,7 @@ import Foundation
 
 // MARK: - 附件（W4）
 
-/// 附件行。文件本体由 `AttachmentStore` 内容寻址存储，这里只描述元数据。
-public struct AttachmentRecord: Sendable, Equatable, Identifiable {
-    public var id: String
-    public var sha256: String
-    public var kind: String
-    public var relPath: String
-    public var byteSize: Int64
-    public var mime: String
-    /// 图片像素宽；非图片或未解析为 nil
-    public var width: Int?
-    /// 图片像素高；非图片或未解析为 nil
-    public var height: Int?
-    /// 音频/视频时长（毫秒）；未解析为 nil
-    public var durationMs: Int?
-    /// 缩略图相对路径；仅图片使用，未生成为 nil
-    public var thumbnailRelPath: String?
-    public var createdAt: Int64
-    public var deletedAt: Int64?
-
-    public var isDeleted: Bool { deletedAt != nil }
-
-    public init(
-        id: String,
-        sha256: String,
-        kind: String,
-        relPath: String,
-        byteSize: Int64,
-        mime: String,
-        width: Int? = nil,
-        height: Int? = nil,
-        durationMs: Int? = nil,
-        thumbnailRelPath: String? = nil,
-        createdAt: Int64,
-        deletedAt: Int64? = nil
-    ) {
-        self.id = id
-        self.sha256 = sha256
-        self.kind = kind
-        self.relPath = relPath
-        self.byteSize = byteSize
-        self.mime = mime
-        self.width = width
-        self.height = height
-        self.durationMs = durationMs
-        self.thumbnailRelPath = thumbnailRelPath
-        self.createdAt = createdAt
-        self.deletedAt = deletedAt
-    }
-}
+// 附件记录类型复用 `Models/Attachment.swift` 的 `AttachmentRecord`（v10 已扩展媒体指标字段）。
 
 /// 新建附件的输入。`sha256` 是去重键：同一内容只保留一行。
 public struct NewAttachment: Sendable, Equatable {

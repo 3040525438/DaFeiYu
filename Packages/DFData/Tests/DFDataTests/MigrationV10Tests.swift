@@ -76,11 +76,13 @@ final class MigrationV10Tests: XCTestCase {
 
     func testV1001_FreshDatabaseMigratesToV10() throws {
         let queue = try makeQueue("v1001", upTo: .v1_phase1)
-        try Migrations.migrator.migrate(queue)
+        // 锁定 v10：生产 migrator 会随新版本前移
+        try Migrations.makeMigrator(upTo: .v10_multimodal).migrate(queue)
 
         try queue.read { db in
             let ledger = try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations")
-            XCTAssertEqual(Set(ledger), Set(MigrationLedger.canonicalIdentifiers))
+            XCTAssertEqual(ledger.count, 10)
+            XCTAssertEqual(Set(ledger), Set(MigrationLedger.expectedPrefix(count: 10)))
             XCTAssertEqual(
                 try MigrationLedger.validatedPrefix(applied: ledger).last,
                 MigrationID.v10_multimodal.rawValue
@@ -88,7 +90,7 @@ final class MigrationV10Tests: XCTestCase {
             XCTAssertEqual(try SchemaMeta.value(db, key: SchemaMetaKey.schemaVersion), "v10_multimodal")
             XCTAssertEqual(try SchemaMeta.value(db, key: SchemaMetaKey.expectedMigrations), "10")
             XCTAssertEqual(try objectNames(db, names: V10Multimodal.newTables), Set(V10Multimodal.newTables))
-            try SchemaMeta.verifyRequiredObjects(db)
+            try SchemaMeta.verifyRequiredObjects(db, upTo: .v10_multimodal)
         }
     }
 
