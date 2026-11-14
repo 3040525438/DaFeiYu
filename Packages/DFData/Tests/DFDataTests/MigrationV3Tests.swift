@@ -338,7 +338,7 @@ final class MigrationV3Tests: XCTestCase {
         XCTAssertEqual(database.currentSchemaVersion, "v2_memory")
 
         // v3 结构不得半途留下
-        try database.dbQueue.read { db in
+        try await database.dbQueue.read { db in
             let created = try Int.fetchOne(
                 db,
                 sql: "SELECT count(*) FROM sqlite_master WHERE name IN ('message_groups','message_references')"
