@@ -421,7 +421,7 @@ public struct GRDBMessageTurnRepository: MessageTurnRepository, Sendable {
                         )
                         try message.insert(db)
                         try MessageIndexer.index(
-                    db: db,
+                            db: db,
                             messageID: message.id,
                             conversationID: conversationID,
                             text: trimmed
