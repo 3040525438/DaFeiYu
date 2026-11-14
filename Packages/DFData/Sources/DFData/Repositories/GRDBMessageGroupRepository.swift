@@ -126,11 +126,11 @@ public struct GRDBMessageGroupRepository: MessageGroupRepository, Sendable {
         }
         do {
             try await database.write { db in
-                let updated = try db.execute(
+                try db.execute(
                     sql: "UPDATE message_groups SET status = ?, closed_at = ? WHERE id = ? AND status = 'open'",
                     arguments: [status.rawValue, closedAt, id]
                 )
-                guard updated == 1 else {
+                guard db.changesCount == 1 else {
                     throw DFError.database("消息组不存在或已是终态，无法关闭：\(id)")
                 }
             }
@@ -155,22 +155,22 @@ public struct GRDBMessageGroupRepository: MessageGroupRepository, Sendable {
                 }
 
                 // assistant 保留已生成正文，不写 sent_at
-                let updated = try db.execute(
+                try db.execute(
                     sql: """
                     UPDATE messages SET status = ?
                     WHERE id = ? AND status = 'sending' AND group_id = ?
                     """,
                     arguments: [MessageStatus.canceled.rawValue, assistantMessageID, groupID]
                 )
-                guard updated == 1 else {
+                guard db.changesCount == 1 else {
                     throw DFError.database("assistant 消息不在可取消状态：\(assistantMessageID)")
                 }
 
-                let closed = try db.execute(
+                try db.execute(
                     sql: "UPDATE message_groups SET status = ?, closed_at = ? WHERE id = ? AND status = 'open'",
                     arguments: [MessageGroupStatus.aborted.rawValue, closedAt, groupID]
                 )
-                guard closed == 1 else {
+                guard db.changesCount == 1 else {
                     throw DFError.database("消息组状态已变化，取消失败：\(groupID)")
                 }
 
@@ -202,13 +202,13 @@ public struct GRDBMessageGroupRepository: MessageGroupRepository, Sendable {
                 var repaired = 0
                 for row in rows {
                     let messageID = try row.decode(String.self, forColumn: "id")
-                    let groupID = try row.decodeIfPresent(String.self, forColumn: "group_id")
+                    let groupID = String.fromDatabaseValue(row["group_id"])
 
-                    let updated = try db.execute(
+                    try db.execute(
                         sql: "UPDATE messages SET status = 'failed' WHERE id = ? AND status = 'sending'",
                         arguments: [messageID]
                     )
-                    guard updated == 1 else { continue }
+                    guard db.changesCount == 1 else { continue }
 
                     // 仅 open 组跟随转为 failed；complete / failed / aborted 一律不动
                     if let groupID {
@@ -246,7 +246,7 @@ public struct GRDBMessageTurnRepository: MessageTurnRepository, Sendable {
         do {
             try await database.write { db in
                 // ① assistant 定稿：只允许从 sending 出发，避免重复定稿
-                let updated = try db.execute(
+                try db.execute(
                     sql: """
                     UPDATE messages SET text = ?, status = ?, sent_at = ?
                     WHERE id = ? AND status = 'sending'
@@ -258,7 +258,7 @@ public struct GRDBMessageTurnRepository: MessageTurnRepository, Sendable {
                         request.assistantMessageID
                     ]
                 )
-                guard updated == 1 else {
+                guard db.changesCount == 1 else {
                     // 影响 0 行：助理行不存在或不是 sending → 整个事务回滚
                     throw ChatOrchestrationError.assistantMessageMissing
                 }
@@ -277,14 +277,14 @@ public struct GRDBMessageTurnRepository: MessageTurnRepository, Sendable {
                 }
 
                 // ④⑤ 组状态 + closed_at：仅 open 组可定稿
-                let closed = try db.execute(
+                try db.execute(
                     sql: """
                     UPDATE message_groups SET status = ?, closed_at = ?
                     WHERE id = ? AND status = 'open'
                     """,
                     arguments: [request.groupStatus.rawValue, request.closedAt, request.groupID]
                 )
-                guard closed == 1 else {
+                guard db.changesCount == 1 else {
                     throw DFError.database("消息组不在 open 状态，无法定稿：\(request.groupID)")
                 }
 
