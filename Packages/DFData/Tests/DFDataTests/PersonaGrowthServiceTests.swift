@@ -208,7 +208,10 @@ final class PersonaGrowthServiceTests: XCTestCase {
         XCTAssertEqual(restored.changedBy, "user")
         XCTAssertTrue(restored.changeReason.contains("回退到版本 1"))
 
-        let value = try await string("SELECT value FROM persona_items WHERE id = 'i-outer'")
+        // 回退会重建条目（新 ID），因此按 persona_id + key 查
+        let value = try await string(
+            "SELECT value FROM persona_items WHERE persona_id = 'p-outer' AND key = 'drink'"
+        )
         XCTAssertEqual(value, "奶茶")
         let version = try await int("SELECT current_version FROM personas WHERE id = 'p-outer'")
         XCTAssertEqual(version, 3)
