@@ -53,23 +53,26 @@ extension Conversation: FetchableRecord, PersistableRecord {
 extension Message: FetchableRecord, PersistableRecord {
     public static let databaseTableName = "messages"
 
+    /// 结构体扩展中的初始化器不能直接给存储属性赋值，必须委托给类型自身的初始化器。
     public init(row: Row) throws {
-        id = try row.decode(String.self, forColumn: "id")
-        clientUUID = try row.decode(String.self, forColumn: "client_uuid")
-        conversationID = try row.decode(String.self, forColumn: "conversation_id")
-        role = try decodeEnum(MessageRole.self, "role", in: row)
-        kind = try decodeEnum(MessageKind.self, "kind", in: row)
-        text = try row.decode(String.self, forColumn: "text")
-        status = try decodeEnum(MessageStatus.self, "status", in: row)
-        origin = try decodeEnum(MessageOrigin.self, "origin", in: row)
-        replyToID = row.optionalString("reply_to_id")
-        createdAt = try row.decode(Int64.self, forColumn: "created_at")
-        sentAt = row.optionalInt64("sent_at")
-        modelConfigID = row.optionalString("model_config_id")
-        emotionStateID = row.optionalString("emotion_state_id")
-        deletedAt = row.optionalInt64("deleted_at")
-        groupID = row.optionalString("group_id")
-        seqInGroup = row.optionalInt("seq_in_group")
+        try self.init(
+            id: row.decode(String.self, forColumn: "id"),
+            clientUUID: row.decode(String.self, forColumn: "client_uuid"),
+            conversationID: row.decode(String.self, forColumn: "conversation_id"),
+            role: decodeEnum(MessageRole.self, "role", in: row),
+            kind: decodeEnum(MessageKind.self, "kind", in: row),
+            text: row.decode(String.self, forColumn: "text"),
+            status: decodeEnum(MessageStatus.self, "status", in: row),
+            origin: decodeEnum(MessageOrigin.self, "origin", in: row),
+            replyToID: row.optionalString("reply_to_id"),
+            createdAt: row.decode(Int64.self, forColumn: "created_at"),
+            sentAt: row.optionalInt64("sent_at"),
+            modelConfigID: row.optionalString("model_config_id"),
+            emotionStateID: row.optionalString("emotion_state_id"),
+            deletedAt: row.optionalInt64("deleted_at"),
+            groupID: row.optionalString("group_id"),
+            seqInGroup: row.optionalInt("seq_in_group")
+        )
     }
 }
 
