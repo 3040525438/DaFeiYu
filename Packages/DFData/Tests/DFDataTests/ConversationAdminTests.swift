@@ -30,8 +30,8 @@ final class ConversationAdminTests: XCTestCase {
         try await database.write { db in
             let rows: [(String, String, String, Int64)] = [
                 ("c1", "主会话", "main", 1000),
-                ("c2", "摄影", "main", 2000),
-                ("c3", "工作", "main", 3000)
+                ("c2", "摄影", "chat", 2000),
+                ("c3", "工作", "chat", 3000)
             ]
             for (id, title, kind, millis) in rows {
                 try db.execute(
@@ -59,11 +59,12 @@ final class ConversationAdminTests: XCTestCase {
             }
             try db.execute(sql: """
                 INSERT INTO memories (id, type, title, content, importance, first_seen_at, scope)
-                VALUES ('mem1', 'event', '看过摄影展', '用户去了摄影展', 'normal', 1000, 'shared')
+                VALUES ('mem1', 'event', '看过摄影笔记', '用户提到摄影笔记', 'normal', 1000, 'shared')
                 """)
+            // 记忆来源指向 c2 里的 m3：删除会话后必须仍能读到这条记忆
             try db.execute(sql: """
                 INSERT INTO memory_sources (id, memory_id, source_type, source_id, excerpt, at, created_at)
-                VALUES ('s1', 'mem1', 'message', 'm1', '今天去看了摄影展', 1000, 1000)
+                VALUES ('s1', 'mem1', 'message', 'm3', '摄影笔记第二篇', 3000, 3000)
                 """)
         }
         let search = GRDBChatSearchRepository(database: database)
@@ -224,24 +225,24 @@ final class ConversationAdminTests: XCTestCase {
     // MARK: - 删除
 
     func testDeleteRemovesMessagesAndIndexButKeepsMemories() async throws {
-        let result = try await repo.delete(id: "c1")
+        let result = try await repo.delete(id: "c2")
         XCTAssertEqual(result.deletedConversations, 1)
-        XCTAssertEqual(result.deletedMessages, 2)
+        XCTAssertEqual(result.deletedMessages, 1)
         XCTAssertEqual(result.skippedProtected, 0)
 
-        let removed = try await repo.summary(id: "c1")
+        let removed = try await repo.summary(id: "c2")
         XCTAssertNil(removed)
-        let remainingMessages = try count("messages", where: "conversation_id = ?", ["c1"])
+        let remainingMessages = try count("messages", where: "conversation_id = ?", ["c2"])
         XCTAssertEqual(remainingMessages, 0)
-        let remainingIndex = try count("message_fts", where: "conversation_id = ?", ["c1"])
+        let remainingIndex = try count("message_fts", where: "conversation_id = ?", ["c2"])
         XCTAssertEqual(remainingIndex, 0)
         let keptMemories = try count("memories", where: "id = ?", ["mem1"])
         XCTAssertEqual(keptMemories, 1, "删除会话不得删除记忆")
-        let keptSources = try count("memory_sources", where: "source_id = ?", ["m1"])
+        let keptSources = try count("memory_sources", where: "source_id = ?", ["m3"])
         XCTAssertEqual(keptSources, 1, "来源记录保留")
 
         let search = GRDBChatSearchRepository(database: database)
-        let hits = try await search.search(query: "摄影展", conversationID: nil, limit: 10)
+        let hits = try await search.search(query: "摄影笔记", conversationID: nil, limit: 10)
         XCTAssertTrue(hits.isEmpty, "已删除会话的消息不得再被搜索命中")
     }
 

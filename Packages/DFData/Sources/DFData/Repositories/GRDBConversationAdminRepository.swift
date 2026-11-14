@@ -124,7 +124,7 @@ public struct GRDBConversationAdminRepository: ConversationAdminRepository, Send
             try await database.write { db in
                 let current = try String.fetchAll(
                     db,
-                    sql: "SELECT id FROM conversations \(Self.summaryOrder)"
+                    sql: "SELECT c.id FROM conversations c \(Self.summaryOrder)"
                 )
                 let known = Set(current)
                 var ordered: [String] = []
@@ -222,15 +222,22 @@ public struct GRDBConversationAdminRepository: ConversationAdminRepository, Send
     public func markAllRead(at millis: Int64) async throws -> Int {
         do {
             return try await database.write { db in
+                // 返回值只统计"原本有未读"的会话数；last_read_at 对所有会话都落一次，
+                // 保证列表里每条会话都有明确的已读时间（没有未读的会话也刷新为本次阅读时间）
+                let affected = try Int.fetchOne(
+                    db,
+                    sql: "SELECT count(*) FROM conversations WHERE unread_count > 0"
+                ) ?? 0
                 try db.execute(
                     sql: """
                     UPDATE conversations
-                    SET unread_count = 0, last_read_at = ?, updated_at = ?
-                    WHERE unread_count > 0
+                    SET unread_count = 0,
+                        last_read_at = ?,
+                        updated_at = CASE WHEN unread_count > 0 THEN ? ELSE updated_at END
                     """,
                     arguments: [millis, millis]
                 )
-                return db.changesCount
+                return affected
             }
         } catch {
             throw GRDBErrorMapper.map(error)
