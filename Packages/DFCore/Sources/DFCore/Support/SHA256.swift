@@ -99,4 +99,120 @@ public enum SHA256 {
     public static func hash(_ string: String) -> String {
         hash(Data(string.utf8))
     }
+
+    /// 增量哈希：大文件（本地模型）必须边读边算，不能整个读进内存。
+    /// 用法：`var hasher = SHA256.Hasher(); hasher.update(chunk); hasher.finalize()`
+    public struct Hasher: Sendable {
+        private var state: [UInt32] = [
+            0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+            0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+        ]
+        private var buffer: [UInt8] = []
+        private var totalBytes: UInt64 = 0
+        private var finalized = false
+
+        public init() {}
+
+        public mutating func update(_ data: Data) {
+            update([UInt8](data))
+        }
+
+        public mutating func update(_ bytes: [UInt8]) {
+            precondition(!finalized, "SHA256.Hasher 已完成，不能继续写入")
+            guard !bytes.isEmpty else { return }
+            totalBytes &+= UInt64(bytes.count)
+            var rest = bytes
+
+            if !buffer.isEmpty {
+                let need = 64 - buffer.count
+                if rest.count >= need {
+                    buffer.append(contentsOf: rest.prefix(need))
+                    compress(buffer)
+                    buffer.removeAll(keepingCapacity: true)
+                    rest.removeFirst(need)
+                } else {
+                    buffer.append(contentsOf: rest)
+                    return
+                }
+            }
+
+            var index = 0
+            while index + 64 <= rest.count {
+                compress(Array(rest[index..<(index + 64)]))
+                index += 64
+            }
+            if index < rest.count {
+                buffer = Array(rest[index...])
+            }
+        }
+
+        /// 收尾并返回 64 位十六进制摘要；只能调用一次。
+        public mutating func finalize() -> String {
+            precondition(!finalized, "SHA256.Hasher.finalize 只能调用一次")
+            finalized = true
+
+            let bitLength = totalBytes &* 8
+            var tail = buffer
+            tail.append(0x80)
+            while tail.count % 64 != 56 {
+                tail.append(0x00)
+            }
+            for shift in stride(from: 56, through: 0, by: -8) {
+                tail.append(UInt8((bitLength >> UInt64(shift)) & 0xff))
+            }
+            var index = 0
+            while index + 64 <= tail.count {
+                compress(Array(tail[index..<(index + 64)]))
+                index += 64
+            }
+            buffer.removeAll()
+            return state.map { String(format: "%08x", $0) }.joined()
+        }
+
+        private mutating func compress(_ block: [UInt8]) {
+            var w = [UInt32](repeating: 0, count: 64)
+            for i in 0..<16 {
+                let base = i * 4
+                w[i] = (UInt32(block[base]) << 24)
+                    | (UInt32(block[base + 1]) << 16)
+                    | (UInt32(block[base + 2]) << 8)
+                    | UInt32(block[base + 3])
+            }
+            for i in 16..<64 {
+                let s0 = SHA256.rotateRight(w[i - 15], 7) ^ SHA256.rotateRight(w[i - 15], 18) ^ (w[i - 15] >> 3)
+                let s1 = SHA256.rotateRight(w[i - 2], 17) ^ SHA256.rotateRight(w[i - 2], 19) ^ (w[i - 2] >> 10)
+                w[i] = w[i - 16] &+ s0 &+ w[i - 7] &+ s1
+            }
+
+            var a = state[0], b = state[1], c = state[2], d = state[3]
+            var e = state[4], f = state[5], g = state[6], h = state[7]
+
+            for i in 0..<64 {
+                let s1 = SHA256.rotateRight(e, 6) ^ SHA256.rotateRight(e, 11) ^ SHA256.rotateRight(e, 25)
+                let ch = (e & f) ^ (~e & g)
+                let temp1 = h &+ s1 &+ ch &+ SHA256.k[i] &+ w[i]
+                let s0 = SHA256.rotateRight(a, 2) ^ SHA256.rotateRight(a, 13) ^ SHA256.rotateRight(a, 22)
+                let maj = (a & b) ^ (a & c) ^ (b & c)
+                let temp2 = s0 &+ maj
+
+                h = g
+                g = f
+                f = e
+                e = d &+ temp1
+                d = c
+                c = b
+                b = a
+                a = temp1 &+ temp2
+            }
+
+            state[0] = state[0] &+ a
+            state[1] = state[1] &+ b
+            state[2] = state[2] &+ c
+            state[3] = state[3] &+ d
+            state[4] = state[4] &+ e
+            state[5] = state[5] &+ f
+            state[6] = state[6] &+ g
+            state[7] = state[7] &+ h
+        }
+    }
 }

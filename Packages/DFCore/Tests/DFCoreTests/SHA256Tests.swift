@@ -30,4 +30,37 @@ final class SHA256Tests: XCTestCase {
         XCTAssertEqual(first, second)
         XCTAssertEqual(first.count, 64)
     }
+
+    // MARK: - 增量哈希（本地模型大文件校验）
+
+    func testHasherMatchesOneShotForAllBoundaryLengths() {
+        for length in 0...140 {
+            let data = Data((0..<length).map { UInt8(($0 &* 37) & 0xff) })
+            var hasher = SHA256.Hasher()
+            hasher.update(data)
+            XCTAssertEqual(hasher.finalize(), SHA256.hash(data), "长度 \(length) 的增量哈希不一致")
+        }
+    }
+
+    func testHasherMatchesOneShotWithUnevenChunks() {
+        let data = Data((0..<10_000).map { UInt8(($0 &* 17) & 0xff) })
+        var hasher = SHA256.Hasher()
+        var index = 0
+        var step = 1
+        while index < data.count {
+            let end = min(index + step, data.count)
+            hasher.update(data.subdata(in: index..<end))
+            index = end
+            step = step % 997 + 1
+        }
+        XCTAssertEqual(hasher.finalize(), SHA256.hash(data))
+    }
+
+    func testHasherEmptyInput() {
+        var hasher = SHA256.Hasher()
+        XCTAssertEqual(
+            hasher.finalize(),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        )
+    }
 }
