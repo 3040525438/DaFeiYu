@@ -151,7 +151,7 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         case .opening, .streaming:
             // 幂等：重复取消只重复置位，不会产生第二次状态转换
             cancelRequested = true
-            taskBox.value?.cancel()
+            taskBox.cancelAll()
         }
     }
 
@@ -269,15 +269,17 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
             // 必须强持有 self：`send` 返回后若调用方不保留编排器实例，
             // 弱引用会让已在进行的轮次**静默消失**（无事件、无错误、不建组）。
             // 生命周期由 `onTermination` 保证：消费方丢弃流时取消 Task，run 结束即释放。
+            let token = UUID()
             let task = Task {
                 await self.run(
                     text: text,
                     retryMessageID: retryMessageID,
                     conversationID: conversationID,
+                    token: token,
                     continuation: continuation
                 )
             }
-            taskBox.set(task)
+            taskBox.register(token: token, task: task)
             continuation.onTermination = { _ in task.cancel() }
         }
     }
@@ -288,12 +290,14 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         text: String?,
         retryMessageID: String?,
         conversationID: String,
+        token: UUID,
         continuation: AsyncThrowingStream<OrchestratorEvent, Error>.Continuation
     ) async {
         defer {
             phase = .idle
             cancelRequested = false
-            taskBox.set(nil)
+            // 只注销自己：被拒绝的轮次不得清掉活跃轮次的任务句柄
+            taskBox.unregister(token: token)
         }
 
         lastDiagnostic = nil
@@ -788,21 +792,48 @@ private final class ObserverBox: @unchecked Sendable {
     var value: ChatLifecycleObserver?
 }
 
-/// 轮次 Task 的同步存放处（`makeStream` 是 nonisolated，不能直接写 actor 状态）。
+/// 活跃轮次任务登记表（按轮次 token 登记）。
+///
+/// 为什么不能单槽：一次活跃轮次期间可能再发起 `send`/`retry`，被拒绝的轮次同样会创建 Task。
+/// 单槽语义下，"被拒轮次注册 → 覆盖活跃轮次句柄 → 被拒轮次结束 → 清空槽位"会让
+/// `cancelActiveTurn` 取不到活跃任务，用户点"停止生成"变成 no-op，活跃轮次永久等待。
+///
+/// `@unchecked Sendable` 的依据：全部可变状态由 `NSLock` 保护。
 private final class TaskBox: @unchecked Sendable {
     private let lock = NSLock()
-    private var storage: Task<Void, Never>?
+    private var storage: [UUID: Task<Void, Never>] = [:]
+    /// 任务可能在 `register` 之前就结束（被拒轮次极快返回）。此时 `unregister` 先到，
+    /// 记下 token，注册晚到时直接丢弃，避免留下永不释放的僵尸条目。
+    private var finishedBeforeRegister: Set<UUID> = []
 
-    var value: Task<Void, Never>? {
+    func register(token: UUID, task: Task<Void, Never>) {
         lock.lock()
-        defer { lock.unlock() }
-        return storage
+        if finishedBeforeRegister.remove(token) != nil {
+            lock.unlock()
+            return
+        }
+        storage[token] = task
+        lock.unlock()
     }
 
-    func set(_ task: Task<Void, Never>?) {
+    func unregister(token: UUID) {
         lock.lock()
-        storage = task
+        if storage.removeValue(forKey: token) == nil {
+            finishedBeforeRegister.insert(token)
+        }
         lock.unlock()
+    }
+
+    /// 取消全部登记任务。
+    ///
+    /// 与 `register` 的线性化：二者共用同一把锁，因此对任一 token 只有两种结果——
+    /// 本次取消已覆盖它，或它属于本次取消之后的轮次（不应被取消）。
+    /// 被拒轮次的任务已结束，`cancel()` 无副作用。
+    func cancelAll() {
+        lock.lock()
+        let tasks = Array(storage.values)
+        lock.unlock()
+        for task in tasks { task.cancel() }
     }
 }
 
