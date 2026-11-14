@@ -192,7 +192,7 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
                 report.closedGroups = outcome.closedGroups
             } else if activeGroupID == nil {
                 let repaired = try await detachPersistence {
-                    try await deps.groups.repairStaleSending(in: conversationID)
+                    try await self.deps.groups.repairStaleSending(in: conversationID)
                 }
                 report.repairedMessages = repaired
                 // 旧接口不返回关闭组数：如实标注，不按预期值填写
