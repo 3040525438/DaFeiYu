@@ -14,6 +14,8 @@ public enum MigrationID: String, CaseIterable, Sendable {
     case v5_autonomy
     case v6_character
     case v7_meta_backup
+    case v8_chat_v2
+    case v9_astrbot
 }
 
 public enum MigrationOrderError: Error, Equatable, CustomStringConvertible {
