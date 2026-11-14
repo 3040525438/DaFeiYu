@@ -85,7 +85,10 @@ final class MigrationV5Tests: XCTestCase {
         try queue.read { db in
             let ledger = try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations")
             XCTAssertEqual(Set(ledger), Set(MigrationLedger.expectedPrefix(count: 5)))
-            XCTAssertEqual(MigrationLedger.validatedPrefix(applied: ledger).last, MigrationID.v5_autonomy.rawValue)
+            XCTAssertEqual(
+                try MigrationLedger.validatedPrefix(applied: ledger).last,
+                MigrationID.v5_autonomy.rawValue
+            )
             XCTAssertEqual(try SchemaMeta.value(db, key: SchemaMetaKey.schemaVersion), "v5_autonomy")
             XCTAssertEqual(try SchemaMeta.value(db, key: SchemaMetaKey.expectedMigrations), "5")
             XCTAssertEqual(
