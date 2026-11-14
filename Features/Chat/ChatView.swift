@@ -12,11 +12,15 @@ struct ChatView: View {
     @State private var showKeywordDelete = false
     @State private var deleteKeyword = ""
     @State private var showConversations = false
+    @State private var showVoiceInput = false
+    @State private var showImageUnderstanding = false
+    private let container: AppContainer
     private let onOpenSettings: () -> Void
 
     @MainActor
     init(container: AppContainer, onOpenSettings: @escaping () -> Void) {
         _viewModel = StateObject(wrappedValue: ChatViewModel(container: container))
+        self.container = container
         self.onOpenSettings = onOpenSettings
     }
 
@@ -157,6 +161,18 @@ struct ChatView: View {
                 onCancel: { viewModel.cancelEdit() },
                 onSave: { Task { await viewModel.commitEdit() } }
             )
+        }
+        .sheet(isPresented: $showVoiceInput) {
+            VoiceInputSheet { text in
+                viewModel.draft = text
+            }
+            .environmentObject(container)
+        }
+        .sheet(isPresented: $showImageUnderstanding) {
+            ImageUnderstandingSheet { text in
+                viewModel.draft = text
+            }
+            .environmentObject(container)
         }
     }
 
@@ -380,6 +396,25 @@ struct ChatView: View {
 
     private var composer: some View {
         HStack(alignment: .bottom, spacing: 8) {
+            Menu {
+                Button {
+                    showVoiceInput = true
+                } label: {
+                    Label("语音输入", systemImage: "mic")
+                }
+                Button {
+                    showImageUnderstanding = true
+                } label: {
+                    Label("图片理解", systemImage: "photo")
+                }
+            } label: {
+                Image(systemName: "plus.circle")
+                    .font(.system(size: 22))
+                    .foregroundStyle(DFColor.primary)
+                    .padding(.bottom, 4)
+            }
+            .accessibilityLabel("添加语音或图片")
+
             TextField("说点什么…", text: $viewModel.draft, axis: .vertical)
                 .lineLimit(1...4)
                 .font(DFFont.body)

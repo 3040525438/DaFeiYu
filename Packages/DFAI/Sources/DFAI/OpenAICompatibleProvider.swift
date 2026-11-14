@@ -133,7 +133,38 @@ public struct OpenAICompatibleProvider: ChatModelProvider, Pingable, Sendable {
 
     private struct WireMessage: Encodable {
         let role: String
-        let content: String
+        let text: String
+        let images: [ChatImage]
+
+        private enum CodingKeys: String, CodingKey {
+            case role, content
+        }
+
+        private enum PartKeys: String, CodingKey {
+            case type, text, image_url
+        }
+
+        private struct ImageURL: Encodable {
+            let url: String
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(role, forKey: .role)
+            guard !images.isEmpty else {
+                try container.encode(text, forKey: .content)
+                return
+            }
+            var parts = container.nestedUnkeyedContainer(forKey: .content)
+            var textPart = parts.nestedContainer(keyedBy: PartKeys.self)
+            try textPart.encode("text", forKey: .type)
+            try textPart.encode(text, forKey: .text)
+            for image in images {
+                var imagePart = parts.nestedContainer(keyedBy: PartKeys.self)
+                try imagePart.encode("image_url", forKey: .type)
+                try imagePart.encode(ImageURL(url: image.dataURL), forKey: .image_url)
+            }
+        }
     }
 
     private struct RequestBody: Encodable {
@@ -147,10 +178,10 @@ public struct OpenAICompatibleProvider: ChatModelProvider, Pingable, Sendable {
     private static func makeBody(_ request: ChatRequest) throws -> Data {
         var messages: [WireMessage] = []
         if !request.systemPrompt.isEmpty {
-            messages.append(WireMessage(role: "system", content: request.systemPrompt))
+            messages.append(WireMessage(role: "system", text: request.systemPrompt, images: []))
         }
         messages.append(contentsOf: request.messages.map {
-            WireMessage(role: $0.role.rawValue, content: $0.text)
+            WireMessage(role: $0.role.rawValue, text: $0.text, images: $0.images)
         })
 
         let body = RequestBody(

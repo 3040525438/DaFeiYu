@@ -17,13 +17,44 @@ public enum ChatTurnRole: String, Codable, Sendable {
     case system
 }
 
+/// 随消息一起发送的图片（D71）：OpenAI 兼容协议用 data URL。
+public struct ChatImage: Codable, Hashable, Sendable {
+    public var mimeType: String
+    /// Base64（不含前缀）
+    public var base64: String
+
+    public init(mimeType: String, base64: String) {
+        self.mimeType = mimeType
+        self.base64 = base64
+    }
+
+    public var dataURL: String {
+        "data:\(mimeType);base64,\(base64)"
+    }
+}
+
 public struct ChatTurn: Codable, Hashable, Sendable {
     public var role: ChatTurnRole
     public var text: String
+    /// 仅用户轮次允许带图；空数组时按纯文本编码
+    public var images: [ChatImage]
 
-    public init(role: ChatTurnRole, text: String) {
+    public init(role: ChatTurnRole, text: String, images: [ChatImage] = []) {
         self.role = role
         self.text = text
+        self.images = images
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case role, text, images
+    }
+
+    /// 容忍旧数据没有 `images` 字段
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        role = try container.decode(ChatTurnRole.self, forKey: .role)
+        text = try container.decode(String.self, forKey: .text)
+        images = try container.decodeIfPresent([ChatImage].self, forKey: .images) ?? []
     }
 }
 
