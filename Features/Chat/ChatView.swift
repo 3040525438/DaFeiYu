@@ -46,6 +46,9 @@ struct ChatView: View {
         .task {
             await viewModel.onAppear()
         }
+        .onDisappear {
+            viewModel.onDisappear()
+        }
         .alert("提示", isPresented: errorBinding) {
             Button("知道了", role: .cancel) {
                 viewModel.errorText = nil
@@ -99,6 +102,7 @@ struct ChatView: View {
                         MessageRow(
                             message: message,
                             isStreaming: isStreaming(message),
+                            isPendingRecovery: viewModel.isPendingRecovery(message),
                             onRetry: { viewModel.retry(message) },
                             onDelete: { viewModel.delete(message) }
                         )
@@ -185,17 +189,21 @@ struct ChatView: View {
                 )
 
             Button {
-                viewModel.send()
+                if viewModel.isStreaming {
+                    viewModel.stop()
+                } else {
+                    viewModel.send()
+                }
             } label: {
-                Image(systemName: "arrow.up")
+                Image(systemName: viewModel.isStreaming ? "stop.fill" : "arrow.up")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(.white)
                     .frame(width: 32, height: 32)
                     .background(DFColor.bubbleMe, in: Circle())
-                    .opacity(canSend ? 1 : 0.4)
+                    .opacity(canTrigger ? 1 : 0.4)
             }
-            .disabled(!canSend)
-            .accessibilityLabel("发送")
+            .disabled(!canTrigger)
+            .accessibilityLabel(viewModel.isStreaming ? "停止生成" : "发送")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -207,9 +215,10 @@ struct ChatView: View {
         }
     }
 
-    private var canSend: Bool {
-        !viewModel.isStreaming
-            && !viewModel.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    /// 生成中按钮变为"停止"，其余情况按草稿是否为空决定可用性
+    private var canTrigger: Bool {
+        if viewModel.isStreaming { return true }
+        return !viewModel.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
@@ -217,11 +226,18 @@ struct ChatView: View {
 struct MessageRow: View {
     let message: Message
     var isStreaming: Bool = false
+    /// 该轮次还没收尾（库里组仍 open）：显示"待恢复"，不得显示为成功/失败/取消
+    var isPendingRecovery: Bool = false
     let onRetry: () -> Void
     let onDelete: () -> Void
 
     private var isUser: Bool {
         message.role == .user
+    }
+
+    /// 只有失败的 assistant 才提供重试入口（重试会新建组，不是删了重发）
+    private var canRetry: Bool {
+        message.role == .assistant && message.status == .failed
     }
 
     var body: some View {
@@ -242,7 +258,7 @@ struct MessageRow: View {
                     } label: {
                         Label("复制", systemImage: "doc.on.doc")
                     }
-                    if message.status == .failed {
+                    if canRetry {
                         Button(action: onRetry) {
                             Label("重试", systemImage: "arrow.clockwise")
                         }
@@ -252,7 +268,9 @@ struct MessageRow: View {
                     }
                 }
 
-                if message.status == .failed {
+                if isPendingRecovery {
+                    pendingRow
+                } else if canRetry {
                     FailedRetryRow(onRetry: onRetry)
                 } else {
                     footer
@@ -266,7 +284,23 @@ struct MessageRow: View {
     }
 
     private var displayText: String {
-        message.text.isEmpty && message.status == .sending ? "…" : message.text
+        if !message.text.isEmpty { return message.text }
+        if isPendingRecovery { return "上一轮尚未完成" }
+        if message.status == .sending { return "…" }
+        if message.status == .canceled { return "已停止" }
+        return message.text
+    }
+
+    /// 待恢复：正式的提示行，不是失败、不是取消、也不是成功
+    private var pendingRow: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(DFColor.inkMuted)
+            Text("待恢复 · 重启后自动收尾")
+                .font(DFFont.timestamp)
+                .foregroundStyle(DFColor.inkMuted)
+        }
     }
 
     @ViewBuilder
@@ -302,6 +336,12 @@ struct MessageRow: View {
 
             if message.status == .sending {
                 Text("发送中…")
+                    .font(DFFont.timestamp)
+                    .foregroundStyle(DFColor.inkMuted)
+            }
+
+            if message.status == .canceled {
+                Text("已停止")
                     .font(DFFont.timestamp)
                     .foregroundStyle(DFColor.inkMuted)
             }
