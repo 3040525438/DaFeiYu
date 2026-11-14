@@ -13,6 +13,7 @@ enum GRDBErrorMapper {
         if let error = error as? DiaryError { return error }
         if let error = error as? MemoryError { return error }
         if let error = error as? BackupError { return error }
+        if let error = error as? AstrBotImportError { return error }
         if let error = error as? DatabaseError {
             return DFError.database(error.message ?? "数据库操作失败")
         }
