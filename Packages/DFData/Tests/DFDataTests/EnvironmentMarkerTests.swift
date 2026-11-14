@@ -1,4 +1,5 @@
 import XCTest
+import Foundation
 import DFCore
 @testable import DFData
 
@@ -48,7 +49,7 @@ final class EnvironmentMarkerTests: XCTestCase {
         )
         let json = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
         XCTAssertEqual(json?["environment"] as? String, "production")
-        XCTAssertEqual(json?["schema"] as? Int, 1)
+        XCTAssertEqual((json?["schema"] as? NSNumber)?.intValue, 1)
     }
 
     // MARK: - E11 无标记但已有数据 → 拒绝，且不写标记

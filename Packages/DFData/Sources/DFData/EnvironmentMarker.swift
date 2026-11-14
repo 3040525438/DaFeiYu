@@ -1,6 +1,12 @@
 import Foundation
 import DFCore
 
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
+
 /// 数据目录归属标记。
 /// 用于回答一个必须明确的问题：这个目录属于哪个环境。
 public struct EnvironmentMarker: Codable, Sendable, Equatable {
@@ -117,11 +123,15 @@ public enum EnvironmentMarkerStore {
                 try? handle.synchronize()
                 try? handle.close()
             }
-            if fm.fileExists(atPath: url.path) {
-                _ = try fm.replaceItemAt(url, withItemAt: tmp)
-            } else {
-                try fm.moveItem(at: tmp, to: url)
+            // 用 POSIX rename 覆盖：同卷原子替换，且 Linux / Darwin 行为一致
+            // （Foundation 的 replaceItemAt 在 Linux 上不可用）
+            guard rename(tmp.path, url.path) == 0 else {
+                let code = errno
+                try? fm.removeItem(at: tmp)
+                throw EnvironmentMarkerError.writeFailed("rename 失败（errno \(code)）")
             }
+        } catch let error as EnvironmentMarkerError {
+            throw error
         } catch {
             try? fm.removeItem(at: tmp)
             throw EnvironmentMarkerError.writeFailed(error.localizedDescription)
