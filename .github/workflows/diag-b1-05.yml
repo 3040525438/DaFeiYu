@@ -16,14 +16,19 @@ jobs:
           apt-get update
           apt-get install -y libsqlite3-dev python3 coreutils
 
-      - name: 检出并记录版本
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 记录版本与 TaskBox 标记
+        shell: bash
         run: |
           echo "GITHUB_SHA=$GITHUB_SHA"; echo "GITHUB_REF=$GITHUB_REF"
           git config --global --add safe.directory "$GITHUB_WORKSPACE" || true
           git rev-parse HEAD; swift --version
           echo "--- TaskBox 版本标记（应有 token/register）---"
           grep -n "func register(token" Packages/DFData/Sources/DFOrchestration/ChatOrchestratorImpl.swift || true
-          grep -c "\[orch " Packages/DFData/Sources/DFOrchestration/ChatOrchestratorImpl.swift || true
+          echo "--- 生产探针条数（应为 0）---"
+          grep -c "\[orch " Packages/DFData/Sources/DFOrchestration/ChatOrchestratorImpl.swift || echo 0
 
       - name: 构建测试目标
         run: swift build --package-path Packages/DFData --build-tests
