@@ -40,9 +40,12 @@ jobs:
           run_one () {
             name="$1"; filt="$2"; cap="$3"
             echo "===== PART1 $name START $(date -u +%H:%M:%S) ====="
+            set +e
             stdbuf -o0 -e0 timeout "$cap" swift test --package-path Packages/DFData \
               --filter "$filt" 2>&1 | tail -40
-            echo "===== PART1 $name END exit=${PIPESTATUS[0]} ====="
+            code=${PIPESTATUS[0]}
+            set -e
+            echo "===== PART1 $name END exit=$code ====="
           }
           run_one s4d1 'ChatOrchestratorS4ExtraTests/testS4D_1_CancelDuringRetry' 60
           run_one s4d2 'ChatOrchestratorS4ExtraTests/testS4D_2_DoubleRetryRejected' 60
