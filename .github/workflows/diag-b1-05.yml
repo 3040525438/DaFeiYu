@@ -21,8 +21,10 @@ jobs:
 
       - name: 记录实际 checkout 的 SHA
         run: |
-          git rev-parse HEAD
-          git log --oneline -1
+          echo "GITHUB_SHA=$GITHUB_SHA"
+          echo "GITHUB_REF=$GITHUB_REF"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE" || true
+          git rev-parse HEAD || true
 
       - name: 记录 Swift 版本与测试参数支持情况
         run: |
