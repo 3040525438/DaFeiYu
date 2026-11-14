@@ -293,9 +293,15 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         token: UUID,
         continuation: AsyncThrowingStream<OrchestratorEvent, Error>.Continuation
     ) async {
+        // 轮次所有权：只有真正进入 `.opening` 的 run 才拥有 phase。
+        // 被前置检查拒绝的 run（例如生成中第二次 send/retry）不得回收 phase 与 cancelRequested，
+        // 否则会把活跃轮次的状态清成 idle，导致 cancelActiveTurn 直接 return、活跃轮次永不终止。
+        var ownsTurn = false
         defer {
-            phase = .idle
-            cancelRequested = false
+            if ownsTurn {
+                phase = .idle
+                cancelRequested = false
+            }
             // 只注销自己：被拒绝的轮次不得清掉活跃轮次的任务句柄
             taskBox.unregister(token: token)
         }
@@ -402,6 +408,8 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
             createdAt: now
         )
 
+        // 从这里开始本 run 拥有本轮次：之后必须由本 run 回收 phase
+        ownsTurn = true
         phase = .opening(groupID: nil, assistantMessageID: nil)
         let opened: MessageGroup
         let openRepo = deps.groups
