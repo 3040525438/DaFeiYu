@@ -1,4 +1,5 @@
 import Foundation
+import DFData
 import DFCore
 
 /// 附件入库与派生处理（W4）。
