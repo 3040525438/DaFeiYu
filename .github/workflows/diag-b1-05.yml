@@ -1,0 +1,43 @@
+name: diag-b1-05
+
+# 仅用于定位 B1-05 挂起（临时诊断，不进入 p1.5/b1 主线）
+# 只手动触发，且只跑一条用例，避免触发全量测试。
+on:
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    container: swift:6.2
+    timeout-minutes: 15
+    steps:
+      - name: 安装系统依赖
+        run: |
+          apt-get update
+          apt-get install -y libsqlite3-dev
+
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 记录 Swift 版本
+        run: swift --version
+
+      - name: 构建测试目标
+        run: swift build --package-path Packages/DFData --build-tests
+
+      - name: 定向运行 B1-05（10 次串行）
+        run: |
+          for i in $(seq 1 10); do
+            echo "===== attempt $i ====="
+            timeout 60 swift test --package-path Packages/DFData \
+              --filter 'ChatOrchestratorReferenceTests/testB1_05' \
+              --num-workers 1 || echo "===== attempt $i failed/timed out with code $? ====="
+          done
+        continue-on-error: true
+
+      - name: 定向运行引用套件（1 次）
+        run: |
+          timeout 120 swift test --package-path Packages/DFData \
+            --filter 'ChatOrchestratorReferenceTests' \
+            --num-workers 1 || echo "===== suite failed/timed out with code $? ====="
+        continue-on-error: true

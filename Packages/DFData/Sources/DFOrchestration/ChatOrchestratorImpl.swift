@@ -282,6 +282,15 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         }
     }
 
+    // MARK: - 临时诊断探针（仅用于定位 B1-05 挂起，取证后整段删除）
+
+    /// 同步写 stderr：不参与控制流、不新增 await/Task/continuation。
+    /// `i=` 标识编排器实例（测试中每次 send 都是新实例），`t=` 标识轮次（groupID）。
+    private func probe(_ step: String, _ tag: String = "-") {
+        let inst = UInt(bitPattern: ObjectIdentifier(self)) % 100_000
+        FileHandle.standardError.write(Data("[orch i=\(inst) t=\(tag)] \(step)\n".utf8))
+    }
+
     // MARK: - 主流程
 
     private func run(
@@ -297,6 +306,7 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         }
 
         lastDiagnostic = nil
+        probe("run.enter mode=\(retryMessageID == nil ? "send" : "retry")")
 
         // ---- 前置检查：全部在"首个事件之前"，失败允许 throw，且不产生任何新行 ----
         guard case .idle = phase else {
@@ -311,6 +321,7 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
             case .idle:
                 groupID = ""
             }
+            probe("finish.phaseBusy")
             continuation.finish(throwing: ChatOrchestrationError.groupAlreadyOpen(groupID: groupID))
             return
         }
@@ -321,6 +332,7 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
                 trimmed = try await retrySourceText(messageID: retryMessageID)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
             } catch {
+                probe("finish.retrySourceFailed")
                 continuation.finish(throwing: ChatOrchestrationError.assistantMessageMissing)
                 return
             }
@@ -328,38 +340,50 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
             trimmed = (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         }
         guard !trimmed.isEmpty else {
+            probe("finish.emptyInput")
             continuation.finish(throwing: ChatOrchestrationError.emptyInput)
             return
         }
 
         // 恢复屏障（S4-A）：恢复进行中不得越过它执行 openTurn，
         // 否则可能把"刚开出来的组"当成陈旧组修掉。
+        probe("barrier.enter")
         await waitForRecoveryBarrier()
+        probe("barrier.exit")
         if shouldStop() {
+            probe("finish.shouldStop.afterBarrier")
             continuation.finish()
             return
         }
 
         // 库里已有 open 组：不允许并发开组（P1.5 恒 createNew）
+        probe("openGroup.enter")
         do {
             if let existing = try await deps.groups.openGroup(in: conversationID) {
+                probe("openGroup.exit existing=\(existing.id)")
                 continuation.finish(throwing: ChatOrchestrationError.groupAlreadyOpen(groupID: existing.id))
                 return
             }
+            probe("openGroup.exit existing=nil")
         } catch {
+            probe("finish.openGroupFailed")
             continuation.finish(throwing: ChatOrchestrationError.persistenceFailed(reason: describe(error)))
             return
         }
 
         // ---- 组装上下文与提示词 ----
         let composed: ContextComposer.Result
+        probe("units.enter")
         do {
             let units = try await deps.units.recentUnits(
                 conversationID: conversationID,
                 limitGroups: deps.limitGroups
             )
+            probe("units.exit n=\(units.count)")
             composed = ContextComposer.compose(units: units, budget: deps.budget)
+            probe("compose.exit allowed=\(composed.allowedMessageIDs.count)")
         } catch {
+            probe("finish.unitsFailed")
             continuation.finish(throwing: ChatOrchestrationError.persistenceFailed(reason: describe(error)))
             return
         }
@@ -373,6 +397,7 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
 
         // 取消发生在 openTurn 之前：不得创建消息组（时序 A）
         if shouldStop() {
+            probe("finish.shouldStop.beforeOpenTurn")
             continuation.finish()
             return
         }
@@ -401,6 +426,7 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         phase = .opening(groupID: nil, assistantMessageID: nil)
         let opened: MessageGroup
         let openRepo = deps.groups
+        probe("openTurn.enter")
         do {
             // 事务 A 必须不受"生成 Task 被取消"的影响：取消可能恰好落在事务执行期间。
             opened = try await detachPersistence {
@@ -410,10 +436,12 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
             }
         } catch {
             // 事务 A 失败：不发模型请求，库里不留新行
+            probe("finish.openTurnFailed")
             continuation.finish(throwing: ChatOrchestrationError.persistenceFailed(reason: describe(error)))
             return
         }
 
+        probe("openTurn.exit gid=\(opened.id)", opened.id)
         let groupID = opened.id
         let assistantID = opened.assistantMessageID ?? assistantMessage.id
         phase = .opening(groupID: groupID, assistantMessageID: assistantID)
@@ -424,6 +452,8 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
                 assistantMessageID: assistantID
             )
         )
+
+        probe("turnOpened gid=\(groupID)", groupID)
 
         // opening 期间收到取消：组已提交，必须先终结它（r3 §6.3-①）
         if shouldStop() {
@@ -440,7 +470,9 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         phase = .streaming(groupID: groupID, assistantMessageID: assistantID)
         var parser = StreamingReferenceParser()
         var visibleAccumulated = ""
+        var deltaCount = 0
 
+        probe("provider.enter", groupID)
         do {
             let provider = try await deps.makeProvider()
             let request = try await deps.makeRequest(systemPrompt, prompt.messages)
@@ -452,10 +484,12 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
                     let visible = parser.feed(chunk)
                     if !visible.isEmpty {
                         visibleAccumulated += visible
+                        deltaCount += 1
                         continuation.yield(.assistantDelta(visible))
                     }
                 }
             }
+            probe("provider.exit deltas=\(deltaCount)", groupID)
         } catch {
             if shouldStop() || isCancellation(error) {
                 await cancelPath(
@@ -503,11 +537,13 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         continuation.yield(.assistantReplaced(finalText))
 
         // ---- 事务 B：正文 + reply_to_id + 引用 + 组状态，一次原子提交 ----
+        probe("validate.enter citations=\(output.citations.count)", groupID)
         let kept = await validate(
             citations: output.citations,
             allowed: composed.allowedMessageIDs,
             conversationID: conversationID
         )
+        probe("validate.exit kept=\(kept.count)", groupID)
         let references = kept.enumerated().map { index, refID in
             MessageReference(
                 messageID: assistantID,
@@ -517,6 +553,7 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         }
 
         phase = .closing(groupID: groupID, assistantMessageID: assistantID)
+        probe("finalize.enter", groupID)
         do {
             try await deps.turns.finalizeTurn(
                 FinalizeTurnRequest(
@@ -531,9 +568,11 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
                     closedAt: Clock.nowMillis()
                 )
             )
+            probe("finalize.exit", groupID)
             continuation.yield(
                 .turnCompleted(groupID: groupID, assistantMessageID: assistantID, citations: kept)
             )
+            probe("finish.completed", groupID)
             continuation.finish()
         } catch {
             // 事务 B 失败：走补偿；若组已被取消方终结则以库内真实状态为准
@@ -562,6 +601,7 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         var textSaveError: String?
         if let partialText, !partialText.isEmpty {
             let messagesRepo = deps.messages
+            probe("saveText.enter len=\(partialText.count)", groupID)
             do {
                 let outcome = try await detachPersistence {
                     try await messagesRepo.updateAssistantText(
@@ -584,6 +624,7 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
                 textSaveError = describe(error)
                 lastDiagnostic = "正文保存失败：" + describe(error)
             }
+            probe("saveText.exit err=\(textSaveError ?? "nil")", groupID)
         }
 
         // ② 取消事务：成功才是唯一的 turnCancelled 来源。
@@ -624,6 +665,7 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
                 )
             }
         }
+        probe("finish.cancelPath", groupID)
         continuation.finish()
     }
 
@@ -667,6 +709,7 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
                 )
             }
         }
+        probe("finish.failPath", groupID)
         continuation.finish()
     }
 
@@ -690,9 +733,12 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
     ) async -> OrchestratorEvent? {
         let groupsRepo = deps.groups
         let referencesRepo = deps.references
+        probe("terminalFromDB.enter", groupID)
         guard let group = try? await detachPersistence({ try await groupsRepo.group(id: groupID) }) else {
+            probe("terminalFromDB.exit group=nil", groupID)
             return nil
         }
+        probe("terminalFromDB.exit status=\(group.status.rawValue)", groupID)
         switch group.status {
         case .open:
             return nil
