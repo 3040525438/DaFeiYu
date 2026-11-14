@@ -9,12 +9,12 @@ final class PersonaGrowthServiceTests: XCTestCase {
     private var database: AppDatabase!
     private var service: PersonaGrowthService!
 
-    override func setUpWithError() throws {
+    override func setUp() async throws {
         root = FileManager.default.temporaryDirectory
             .appendingPathComponent("DFPersona-\(UUID().uuidString)", isDirectory: true)
         database = try AppDatabase(paths: DatabasePaths(root: root))
         service = PersonaGrowthService(database: database, now: { 2_000 })
-        try seed()
+        try await seed()
     }
 
     override func tearDownWithError() throws {
@@ -23,8 +23,8 @@ final class PersonaGrowthServiceTests: XCTestCase {
         }
     }
 
-    private func seed() throws {
-        try database.write { db in
+    private func seed() async throws {
+        try await database.write { db in
             try db.execute(sql: """
             INSERT INTO personas (id, kind, name, is_locked, current_version, created_at, updated_at, fingerprint_scope, growth_enabled)
             VALUES ('p-core', 'core', '大肥鱼', 1, 1, 1, 1, 'core', 0)
