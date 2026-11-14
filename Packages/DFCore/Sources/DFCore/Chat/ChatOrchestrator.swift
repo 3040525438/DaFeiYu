@@ -8,10 +8,13 @@ public protocol ChatLifecycleObserver: Sendable {
 
 /// 编排过程中向 UI 推送的事件。
 ///
-/// 契约（B1-S1 定稿）：
+/// 契约（B1-S1 定稿，B1-S3 修复轮补充 `turnRecoveryPending`）：
 /// - `turnOpened` 是分水岭：该事件一旦 yield，流**永不再 throw**；
-/// - `turnOpened` 之后的所有运行期结局只通过 `turnCompleted` / `turnFailed` / `turnCancelled` 表达，
-///   三者互斥且必有其一，流随后正常 `finish()`；
+/// - `turnOpened` 之后的结局只有四种，互斥且流随后正常 `finish()`：
+///   `turnCompleted` / `turnFailed` / `turnCancelled` 三个**终态**，
+///   以及 `turnRecoveryPending`（**非终态**，表示库里仍未终结、等待启动恢复）；
+/// - 终态事件必须晚于对应事务成功；事务失败且回查仍为 `open` 时，
+///   只能发 `turnRecoveryPending`，不得伪造任何一个终态；
 /// - `turnOpened` 之前的基础设施级失败（空输入、已有 open 组、找不到 assistant、事务 A 失败）
 ///   通过 `finish(throwing:)` 抛出，库里不产生新行；
 /// - 禁止同一轮的同一错误既发事件又 throw。
@@ -28,6 +31,14 @@ public enum OrchestratorEvent: Sendable, Equatable {
     case turnFailed(groupID: String, assistantMessageID: String, reason: String)
     /// 用户或生命周期取消：组 aborted / assistant canceled（属正常终止，不是错误）
     case turnCancelled(groupID: String, assistantMessageID: String)
+    /// **非终态**：终结事务与其补偿均失败，库里组仍为 `open`。
+    ///
+    /// 语义约束：
+    /// - 不是 completed / failed / cancelled，UI **不得**据此断言本轮已收尾；
+    /// - UI 应把该轮显示为"待恢复"（例如灰化 + 重试入口），并在下次启动时依赖启动恢复收尾；
+    /// - 该事件之后流仍正常 `finish()`，且不会再有第二个终态事件；
+    /// - 库内保留可恢复信息（组 open、assistant 仍 `sending`，正文可能已部分落库）。
+    case turnRecoveryPending(groupID: String, assistantMessageID: String, reason: String)
 }
 
 /// 对话编排契约：读取历史 → 组装上下文 → 请求模型 → 落库 → 解析引用 → 关组。

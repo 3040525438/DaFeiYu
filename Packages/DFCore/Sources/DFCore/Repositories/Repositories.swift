@@ -19,6 +19,29 @@ public protocol MessageRepository: Sendable {
     func page(in conversationID: String, before: PageCursor?, limit: Int) async throws -> MessagePage
     /// 组内消息，按 `created_at ASC, rowid ASC` 升序（含软删，由调用方决定是否过滤）
     func messages(inGroup groupID: String) async throws -> [Message]
+
+    /// 定向正文更新：**只改 `text` 一列**，不得整行覆盖 `Message`。
+    ///
+    /// 安全条件（缺一不可）：
+    /// - 记录存在；
+    /// - 当前状态等于 `expectedStatus`（默认 `sending`）；
+    /// - 未被软删。
+    ///
+    /// 用于"取消时保留已生成正文"等场景，避免把已定稿的 `status/sent_at/reply_to_id` 写回旧值。
+    /// - Returns: `.updated` / `.statusMismatch` / `.notFound`
+    /// - Throws: 仅数据库错误
+    func updateAssistantText(
+        _ text: String,
+        for messageID: String,
+        expectedStatus: MessageStatus = .sending
+    ) async throws -> AssistantTextUpdateResult
+}
+
+/// 定向正文更新的结果，用于区分"写成功 / 状态不符 / 记录不存在"。
+public enum AssistantTextUpdateResult: String, Sendable, Equatable {
+    case updated
+    case statusMismatch
+    case notFound
 }
 
 /// 分页游标：`created_at` 主键 + `rowid` 次级键，保证同一毫秒内不重不漏。

@@ -192,4 +192,38 @@ public struct GRDBMessageRepository: MessageRepository, Sendable {
             throw GRDBErrorMapper.map(error)
         }
     }
+
+    // MARK: - 定向正文更新（取消保留正文用）
+
+    public func updateAssistantText(
+        _ text: String,
+        for messageID: String,
+        expectedStatus: MessageStatus = .sending
+    ) async throws -> AssistantTextUpdateResult {
+        do {
+            return try await database.write { db in
+                // 单事务内完成"存在性 + 状态校验 + 写入"，避免读后写之间的覆盖窗口
+                guard let currentStatus = try String.fetchOne(
+                    db,
+                    sql: "SELECT status FROM messages WHERE id = ?",
+                    arguments: [messageID]
+                ) else {
+                    return .notFound
+                }
+                guard currentStatus == expectedStatus.rawValue else {
+                    return .statusMismatch
+                }
+                try db.execute(
+                    sql: """
+                    UPDATE messages SET text = ?
+                    WHERE id = ? AND status = ? AND deleted_at IS NULL
+                    """,
+                    arguments: [text, messageID, expectedStatus.rawValue]
+                )
+                return db.changesCount == 1 ? .updated : .statusMismatch
+            }
+        } catch {
+            throw GRDBErrorMapper.map(error)
+        }
+    }
 }
