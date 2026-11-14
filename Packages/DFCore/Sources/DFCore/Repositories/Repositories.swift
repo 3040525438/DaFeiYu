@@ -24,16 +24,17 @@ public protocol MessageRepository: Sendable {
     ///
     /// 安全条件（缺一不可）：
     /// - 记录存在；
-    /// - 当前状态等于 `expectedStatus`（默认 `sending`）；
+    /// - 当前状态等于 `expectedStatus`（取消场景传 `.sending`）；
     /// - 未被软删。
     ///
     /// 用于"取消时保留已生成正文"等场景，避免把已定稿的 `status/sent_at/reply_to_id` 写回旧值。
+    /// - Note: 协议要求不允许默认参数，调用方必须显式传入 `expectedStatus`
     /// - Returns: `.updated` / `.statusMismatch` / `.notFound`
     /// - Throws: 仅数据库错误
     func updateAssistantText(
         _ text: String,
         for messageID: String,
-        expectedStatus: MessageStatus = .sending
+        expectedStatus: MessageStatus
     ) async throws -> AssistantTextUpdateResult
 }
 
