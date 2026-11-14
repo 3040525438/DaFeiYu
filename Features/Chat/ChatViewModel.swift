@@ -30,6 +30,15 @@ final class ChatViewModel: ObservableObject {
     @Published var editingMessage: Message?
     @Published var editDraft: String = ""
 
+    // MARK: - W3 多会话
+
+    /// 未归档会话（含置顶排序），顺序由数据层统一决定
+    @Published private(set) var conversations: [ConversationSummary] = []
+    /// 已归档会话（仍可进入、可检索）
+    @Published private(set) var archivedConversations: [ConversationSummary] = []
+    /// 全部会话未读总数
+    @Published private(set) var unreadTotal: Int = 0
+
     /// 待恢复轮次（`turnRecoveryPending` 产生）：库里组仍为 `open`，属非终态。
     /// 仅保存编排器明确告知的 groupID，**绝不伪造**。
     @Published private(set) var pendingRecovery: PendingRecovery?
@@ -82,26 +91,50 @@ final class ChatViewModel: ObservableObject {
     func onAppear() async {
         do {
             let conversation = try await container.conversations.ensureMainConversation(title: "大肥鱼")
-            conversationID = conversation.id
-            let coordinator = container.conversationCoordinator(for: conversation.id)
-            self.coordinator = coordinator
-
-            await recoverIfNeeded(coordinator: coordinator)
-
-            // S5-B 仍保持原有可见历史范围（300 条）；分页接口与分页 UI 延后到 S5-D
-            messages = try await container.messages.recentMessages(in: conversation.id, limit: 300)
-
-            subscribe(coordinator)
-            // 快照优先：正在生成的那条文本以协调器内存为准（库内可能尚为空或滞后）
-            applySnapshot(coordinator.snapshot())
-
-            // D1：`hasRecovered` 只代表"历史上恢复过"，不代表"现在没有残留"。
-            await recoverStaleAfterLoad(coordinator: coordinator)
+            // 已切换过会话时保留当前会话，避免每次回到页面都被拉回主会话
+            let target = conversationID.isEmpty ? conversation.id : conversationID
+            try await activate(conversationID: target)
             hasModel = (try await container.modelConfigs.defaultConfig()) != nil
             theme = (try? await container.chatTheme.load()) ?? .default
         } catch {
             errorText = error.localizedDescription
         }
+    }
+
+    /// 激活会话：退订旧会话 → 重置会话级状态 → 装载历史 → 订阅 → 补偿恢复 → 标已读 → 刷新列表。
+    ///
+    /// 只在该会话**没有活跃轮次**时被调用（生成中禁止切换）。
+    private func activate(conversationID id: String) async throws {
+        unsubscribeCurrent()
+        conversationID = id
+        let coordinator = container.conversationCoordinator(for: id)
+        self.coordinator = coordinator
+
+        hasRecovered = false
+        pendingRecovery = nil
+        currentTurn = nil
+        currentTurnToken = nil
+        lastOutcome = .other
+        isStreaming = false
+        scrollTargetID = nil
+        draftSnapshot = nil
+        clearSearch()
+        cancelEdit()
+
+        await recoverIfNeeded(coordinator: coordinator)
+
+        // 与 V1 一致：首屏只显示最近 300 条，更早的历史靠分页
+        messages = try await container.messages.recentMessages(in: id, limit: 300)
+
+        subscribe(coordinator)
+        // 快照优先：正在生成的那条文本以协调器内存为准（库内可能尚为空或滞后）
+        applySnapshot(coordinator.snapshot())
+
+        await recoverStaleAfterLoad(coordinator: coordinator)
+
+        // 进入会话即视为已读；随后刷新列表让未读徽标同步
+        try? await container.conversationAdmin.markRead(id: id, at: Clock.nowMillis())
+        await refreshConversationList()
     }
 
     /// 页面离开：只退订，**不取消生成**（任务所有权在协调器）。
@@ -322,7 +355,118 @@ final class ChatViewModel: ObservableObject {
 
     private static func interactionMessage(_ error: Error) -> String {
         if let interaction = error as? MessageInteractionError { return interaction.description }
+        if let admin = error as? ConversationAdminError { return admin.description }
         return error.localizedDescription
+    }
+
+    // MARK: - W3 多会话操作
+
+    /// 当前会话 id（供列表高亮）
+    var activeConversationID: String { conversationID }
+
+    /// 从数据层重载会话列表与未读总数
+    func refreshConversationList() async {
+        conversations = (try? await container.conversationAdmin.list(.active)) ?? conversations
+        archivedConversations = (try? await container.conversationAdmin.list(.archived)) ?? archivedConversations
+        unreadTotal = (try? await container.conversationAdmin.unreadTotal()) ?? unreadTotal
+    }
+
+    /// 切换会话。生成中禁止切换，避免把"另一个会话的轮次"绑到当前视图。
+    func switchConversation(to id: String) async {
+        guard id != conversationID else { return }
+        guard !isStreaming else {
+            errorText = "正在生成中，请先停止或等待完成再切换会话"
+            return
+        }
+        do {
+            try await activate(conversationID: id)
+            draft = ""
+        } catch {
+            errorText = error.localizedDescription
+        }
+    }
+
+    /// 手动新建会话并立即进入
+    func createConversation(title: String) async {
+        guard !isStreaming else {
+            errorText = "正在生成中，请先停止或等待完成再新建会话"
+            return
+        }
+        do {
+            let created = try await container.conversationAdmin.create(
+                title: title,
+                kind: "chat",
+                at: Clock.nowMillis()
+            )
+            try await activate(conversationID: created.id)
+            draft = ""
+        } catch {
+            errorText = Self.interactionMessage(error)
+        }
+    }
+
+    func renameConversation(id: String, title: String) async {
+        do {
+            try await container.conversationAdmin.rename(id: id, title: title)
+            await refreshConversationList()
+        } catch {
+            errorText = Self.interactionMessage(error)
+        }
+    }
+
+    func togglePin(_ summary: ConversationSummary) async {
+        do {
+            try await container.conversationAdmin.setPinned(
+                id: summary.id,
+                pinned: !summary.isPinned,
+                at: Clock.nowMillis()
+            )
+            await refreshConversationList()
+        } catch {
+            errorText = Self.interactionMessage(error)
+        }
+    }
+
+    func toggleArchive(_ summary: ConversationSummary) async {
+        do {
+            try await container.conversationAdmin.setArchived(
+                id: summary.id,
+                archived: !summary.isArchived,
+                at: Clock.nowMillis()
+            )
+            await refreshConversationList()
+            // 当前会话被归档：列表里已隐藏，但页面仍停留在该会话，不强行跳走
+        } catch {
+            errorText = Self.interactionMessage(error)
+        }
+    }
+
+    /// 删除会话（只删消息，不删记忆）。删除当前会话时自动回到主会话。
+    func deleteConversations(ids: [String]) async {
+        guard !isStreaming else {
+            errorText = "正在生成中，请先停止或等待完成再删除会话"
+            return
+        }
+        do {
+            let result = try await container.conversationAdmin.deleteBatch(ids: ids)
+            if result.skippedProtected > 0 {
+                errorText = "主会话不可删除，已跳过"
+            }
+            if ids.contains(conversationID) {
+                let main = try await container.conversations.ensureMainConversation(title: "大肥鱼")
+                try await activate(conversationID: main.id)
+                draft = ""
+            } else {
+                await refreshConversationList()
+            }
+        } catch {
+            errorText = Self.interactionMessage(error)
+        }
+    }
+
+    func markAllConversationsRead() async {
+        _ = try? await container.conversationAdmin.markAllRead(at: Clock.nowMillis())
+        await refreshConversationList()
     }
 
     // MARK: - 订阅

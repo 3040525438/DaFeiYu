@@ -28,6 +28,8 @@ final class AppContainer: ObservableObject {
     let chatSearch: ChatSearchRepository
     /// W2：主题与气泡个性化
     let chatTheme: ChatThemeStoring
+    /// W3：多会话管理（建 / 改名 / 置顶 / 归档 / 排序 / 未读 / 删除保留记忆）
+    let conversationAdmin: ConversationAdminRepository
 
     /// 全局活跃轮次登记表（L2）：跨页面 / 恢复路径共享。
     let activeTurns = ActiveTurnRegistry()
@@ -89,6 +91,7 @@ final class AppContainer: ObservableObject {
         self.deletion = GRDBMessageDeletionRepository(database: database)
         self.chatSearch = GRDBChatSearchRepository(database: database)
         self.chatTheme = GRDBChatThemeStore(settings: GRDBSettingsRepository(database: database))
+        self.conversationAdmin = GRDBConversationAdminRepository(database: database)
 
         self.groups = GRDBMessageGroupRepository(database: database)
         self.turns = GRDBMessageTurnRepository(database: database)

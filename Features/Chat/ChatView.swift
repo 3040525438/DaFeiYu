@@ -11,6 +11,7 @@ struct ChatView: View {
     @State private var showClearConfirm = false
     @State private var showKeywordDelete = false
     @State private var deleteKeyword = ""
+    @State private var showConversations = false
     private let onOpenSettings: () -> Void
 
     @MainActor
@@ -38,13 +39,31 @@ struct ChatView: View {
             .toolbar {
                 ToolbarItem(placement: .principal) { headerTitle }
                 ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        isSearching.toggle()
-                        if !isSearching { viewModel.clearSearch() }
-                    } label: {
-                        Image(systemName: "magnifyingglass")
+                    HStack(spacing: 14) {
+                        Button {
+                            showConversations = true
+                        } label: {
+                            Image(systemName: "list.bullet")
+                                .overlay(alignment: .topTrailing) {
+                                    if viewModel.unreadTotal > 0 {
+                                        Text("\(min(viewModel.unreadTotal, 99))")
+                                            .font(.system(size: 9, weight: .bold))
+                                            .padding(.horizontal, 3)
+                                            .background(Capsule().fill(Color.red))
+                                            .foregroundStyle(.white)
+                                            .offset(x: 8, y: -8)
+                                    }
+                                }
+                        }
+                        .accessibilityLabel("会话列表")
+                        Button {
+                            isSearching.toggle()
+                            if !isSearching { viewModel.clearSearch() }
+                        } label: {
+                            Image(systemName: "magnifyingglass")
+                        }
+                        .accessibilityLabel("搜索会话")
                     }
-                    .accessibilityLabel("搜索会话")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
@@ -127,6 +146,9 @@ struct ChatView: View {
                     Task { await viewModel.resetTheme() }
                 }
             )
+        }
+        .sheet(isPresented: $showConversations) {
+            ConversationListView(viewModel: viewModel)
         }
         .sheet(item: $viewModel.editingMessage) { message in
             EditMessageSheet(
