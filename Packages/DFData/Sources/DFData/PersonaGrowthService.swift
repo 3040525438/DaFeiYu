@@ -123,6 +123,7 @@ public final class PersonaGrowthService: @unchecked Sendable {
                 throw PersonaGrowthError.proposalNotFound(id)
             }
             let status = try row.decode(String.self, forColumn: "status")
+            let evidenceJSON = try row.decode(String.self, forColumn: "evidence_json")
             guard status == "pending" else {
                 throw PersonaGrowthError.proposalResolved(status)
             }
@@ -155,9 +156,9 @@ public final class PersonaGrowthService: @unchecked Sendable {
                     INSERT INTO persona_item_tier_history
                         (id, item_id, from_tier, to_tier, from_status, to_status, reason,
                          evidence_json, decided_by, created_at)
-                    VALUES (?, ?, 'outer', 'outer', 'active', 'active', ?, ?, 'user', ?)
+                    VALUES (?, ?, 'outer', 'outer', 'outer', 'outer', ?, ?, 'user', ?)
                     """,
-                    arguments: [UUID().uuidString, itemID, "成长提案审批：\(payload.key)", payload.evidenceJSON, at]
+                    arguments: [UUID().uuidString, itemID, "成长提案审批：\(payload.key)", evidenceJSON, at]
                 )
             } else {
                 try self.insertItem(
