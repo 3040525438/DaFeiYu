@@ -417,6 +417,11 @@ final class ChatOrchestratorFailurePathTests: XCTestCase {
         guard firstRound.error == nil else {
             return XCTFail("首轮失败必须通过事件表达，实际流错误：\(String(describing: firstRound.error))")
         }
+        let didOpen = firstRound.events.contains { if case .turnOpened = $0 { return true }; return false }
+        XCTAssertTrue(
+            didOpen,
+            "首轮必须产生 turnOpened（证明 openTurn 已执行）；实际事件数=\(firstRound.events.count)，内容=\(firstRound.events)"
+        )
         let oldGroup = try await onlyGroup()
         let oldAssistantID = try await groupRows(in: oldGroup.id)[1].id
 
@@ -496,6 +501,53 @@ final class ChatOrchestratorFailurePathTests: XCTestCase {
         XCTAssertEqual(rows[1].status, .canceled)
         XCTAssertNil(rows[1].sentAt, "取消不得写 sent_at")
         XCTAssertEqual(rows[1].text, "", "opening 阶段取消不保留正文（生产行为保持不变）")
+    }
+
+    // MARK: - G8 openTurn 已提交、turnOpened 尚未 yield 时取消（时序 C）
+
+    func testG8_CancelAfterOpenTurnCommitYieldsOpenedThenCancelled() async throws {
+        let token = UUID()
+        let gate = Gate()
+        let gated = GatedAfterOpenGroupRepository(base: groups, gate: gate)
+        let orchestrator = makeOrchestrator(
+            provider: GatedProvider(firstChunk: "不应出现"),
+            pageToken: token,
+            groupsRepo: gated
+        )
+        let stream = orchestrator.send(text: "讲个故事", conversationID: conversationID)
+        let recorder = EventRecorder()
+        let collector = Task { await Self.consume(stream, into: recorder) }
+
+        // 组已提交，但 openTurn 尚未返回 → turnOpened 还没 yield
+        await gate.waitForEntry()
+        await orchestrator.cancelActiveTurn(owner: token)
+        gate.release()
+        await collector.value
+
+        let events = recorder.all
+        XCTAssertNil(recorder.failure, "turnOpened 之前的基础设施错误才允许 throw")
+
+        // 契约：先 turnOpened，再恰好一个 turnCancelled
+        guard case .turnOpened = events.first else {
+            return XCTFail("首事件必须为 turnOpened，实际：\(events)")
+        }
+        let terminals = events.filter(isTerminal)
+        XCTAssertEqual(terminals.count, 1, "必须恰好一个终态，实际事件：\(events)")
+        guard case .turnCancelled = terminals.last else {
+            return XCTFail("终态必须为 turnCancelled，实际：\(String(describing: terminals.last))")
+        }
+        let hasDelta = events.contains { if case .assistantDelta = $0 { return true }; return false }
+        XCTAssertFalse(hasDelta, "opening 阶段不得产生任何增量事件")
+
+        // 组必须被终结，不得留下 open 组
+        let group = try await onlyGroup()
+        XCTAssertEqual(group.status, .aborted)
+        XCTAssertNotNil(group.closedAt)
+        let rows = try await groupRows(in: group.id)
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertEqual(rows[1].status, .canceled)
+        XCTAssertNil(rows[1].sentAt)
+        XCTAssertEqual(rows[1].text, "")
     }
 
     // MARK: - P2-A 定向正文更新的四种结果（真实 SQLite）
@@ -771,6 +823,42 @@ struct FailingCancelGroupRepository: MessageGroupRepository {
     }
     func cancelTurn(groupID: String, assistantMessageID: String, closedAt: Int64) async throws {
         throw DFError.database("模拟取消失败")
+    }
+    func repairStaleSending(in conversationID: String) async throws -> Int {
+        try await base.repairStaleSending(in: conversationID)
+    }
+}
+
+/// 门控组仓储（提交后）：`openTurn` 已落库但尚未返回时阻塞，
+/// 用于覆盖"openTurn 已提交、turnOpened 还没 yield"这一时序。
+struct GatedAfterOpenGroupRepository: MessageGroupRepository {
+    let base: GRDBMessageGroupRepository
+    let gate: Gate
+
+    func openTurn(_ request: OpenTurnRequest) async throws -> MessageGroup {
+        let opened = try await base.openTurn(request)
+        await gate.holdUntilReleased()
+        return opened
+    }
+    func group(id: String) async throws -> MessageGroup? { try await base.group(id: id) }
+    func openGroup(in conversationID: String) async throws -> MessageGroup? {
+        try await base.openGroup(in: conversationID)
+    }
+    func maxTurnIndex(in conversationID: String) async throws -> Int? {
+        try await base.maxTurnIndex(in: conversationID)
+    }
+    func maxSeq(inGroup groupID: String) async throws -> Int? {
+        try await base.maxSeq(inGroup: groupID)
+    }
+    func closeGroup(id: String, status: MessageGroupStatus, closedAt: Int64) async throws {
+        try await base.closeGroup(id: id, status: status, closedAt: closedAt)
+    }
+    func cancelTurn(groupID: String, assistantMessageID: String, closedAt: Int64) async throws {
+        try await base.cancelTurn(
+            groupID: groupID,
+            assistantMessageID: assistantMessageID,
+            closedAt: closedAt
+        )
     }
     func repairStaleSending(in conversationID: String) async throws -> Int {
         try await base.repairStaleSending(in: conversationID)

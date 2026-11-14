@@ -232,6 +232,12 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         )
         let systemPrompt = prompt.system + "\n\n" + ReferenceProtocol.systemFragment
 
+        // 取消发生在 openTurn 之前：不得创建消息组（时序 A）
+        if shouldStop() {
+            continuation.finish()
+            return
+        }
+
         // ---- 事务 A：openTurn（成功后才允许请求模型）----
         let now = Clock.nowMillis()
         let group = MessageGroup(conversationID: conversationID, turnIndex: 1, openedAt: now)
@@ -255,10 +261,14 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
 
         phase = .opening(groupID: nil, assistantMessageID: nil)
         let opened: MessageGroup
+        let openRepo = deps.groups
         do {
-            opened = try await deps.groups.openTurn(
-                OpenTurnRequest(group: group, userMessage: userMessage, assistantMessage: assistantMessage)
-            )
+            // 事务 A 必须不受"生成 Task 被取消"的影响：取消可能恰好落在事务执行期间。
+            opened = try await detachPersistence {
+                try await openRepo.openTurn(
+                    OpenTurnRequest(group: group, userMessage: userMessage, assistantMessage: assistantMessage)
+                )
+            }
         } catch {
             // 事务 A 失败：不发模型请求，库里不留新行
             continuation.finish(throwing: ChatOrchestrationError.persistenceFailed(reason: describe(error)))
@@ -412,12 +422,15 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         //    用定向接口只改 text 一列，且仅在 sending 状态可写，避免覆盖已定稿内容。
         var textSaveError: String?
         if let partialText, !partialText.isEmpty {
+            let messagesRepo = deps.messages
             do {
-                let outcome = try await deps.messages.updateAssistantText(
-                    partialText,
-                    for: assistantMessageID,
-                    expectedStatus: .sending
-                )
+                let outcome = try await detachPersistence {
+                    try await messagesRepo.updateAssistantText(
+                        partialText,
+                        for: assistantMessageID,
+                        expectedStatus: .sending
+                    )
+                }
                 switch outcome {
                 case .updated:
                     break
@@ -435,12 +448,15 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         }
 
         // ② 取消事务：成功才是唯一的 turnCancelled 来源。
+        let groupsRepo = deps.groups
         do {
-            try await deps.groups.cancelTurn(
-                groupID: groupID,
-                assistantMessageID: assistantMessageID,
-                closedAt: Clock.nowMillis()
-            )
+            try await detachPersistence {
+                try await groupsRepo.cancelTurn(
+                    groupID: groupID,
+                    assistantMessageID: assistantMessageID,
+                    closedAt: Clock.nowMillis()
+                )
+            }
             if let textSaveError {
                 lastDiagnostic = "取消成功，但正文未完整保存：" + textSaveError
             }
@@ -480,13 +496,16 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         continuation: AsyncThrowingStream<OrchestratorEvent, Error>.Continuation
     ) async {
         phase = .closing(groupID: groupID, assistantMessageID: assistantMessageID)
+        let turnsRepo = deps.turns
         do {
-            try await deps.turns.failTurn(
-                groupID: groupID,
-                assistantMessageID: assistantMessageID,
-                text: text,
-                closedAt: Clock.nowMillis()
-            )
+            try await detachPersistence {
+                try await turnsRepo.failTurn(
+                    groupID: groupID,
+                    assistantMessageID: assistantMessageID,
+                    text: text,
+                    closedAt: Clock.nowMillis()
+                )
+            }
             continuation.yield(
                 .turnFailed(groupID: groupID, assistantMessageID: assistantMessageID, reason: reason)
             )
@@ -514,16 +533,34 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
 
     // MARK: - 辅助
 
+    /// 持久化执行边界：不继承"生成 Task"的取消状态。
+    ///
+    /// `cancelActiveTurn` 取消的是生成 Task，而 GRDB 的 async 写入检测到取消会直接抛
+    /// `CancellationError`，导致取消/失败补偿事务根本无法提交（组会永久停在 open）。
+    /// 这里只隔离"必须完成"的持久化操作，并在原地 await 结果；
+    /// 生成流程本身仍留在原 Task 内，取消对模型流仍然即时生效。
+    private func detachPersistence<T: Sendable>(
+        _ operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        try await Task.detached(priority: .userInitiated, operation: operation).value
+    }
+
     private func terminalEventFromDB(
         groupID: String,
         assistantMessageID: String
     ) async -> OrchestratorEvent? {
-        guard let group = try? await deps.groups.group(id: groupID) else { return nil }
+        let groupsRepo = deps.groups
+        let referencesRepo = deps.references
+        guard let group = try? await detachPersistence({ try await groupsRepo.group(id: groupID) }) else {
+            return nil
+        }
         switch group.status {
         case .open:
             return nil
         case .complete:
-            let refs = (try? await deps.references.references(for: [assistantMessageID])) ?? []
+            let refs = (try? await detachPersistence {
+                try await referencesRepo.references(for: [assistantMessageID])
+            }) ?? []
             return .turnCompleted(
                 groupID: groupID,
                 assistantMessageID: assistantMessageID,
