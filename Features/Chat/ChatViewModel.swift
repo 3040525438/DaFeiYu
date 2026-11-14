@@ -286,13 +286,23 @@ final class ChatViewModel: ObservableObject {
             return .other
 
         case let .turnCompleted(_, assistantMessageID, _),
-             let .turnFailed(_, assistantMessageID, _),
              let .turnCancelled(_, assistantMessageID):
             // 终态以库内真值为准：取消路径不保证发 assistantReplaced，
             // 正文必须重读数据库；状态也不得由本地猜测。
             await reloadMessage(id: assistantMessageID, taskID: taskID)
             guard isCurrentTask(taskID) else { return .terminal }
             pendingRecovery = nil
+            return .terminal
+
+        case let .turnFailed(_, assistantMessageID, reason):
+            // F1：失败原因必须先脱敏再截断，再分类成可行动文案。
+            // 原始 reason 可能携带上游响应体，禁止直接上屏或原样写入日志。
+            await reloadMessage(id: assistantMessageID, taskID: taskID)
+            guard isCurrentTask(taskID) else { return .terminal }
+            pendingRecovery = nil
+            let safe = Self.sanitizedFailure(reason)
+            errorText = Self.userFacingFailure(safe)
+            NSLog("[chat] 轮次失败 assistant=\(assistantMessageID) reason=\(safe)")
             return .terminal
 
         case let .turnRecoveryPending(groupID, assistantMessageID, reason):
@@ -401,6 +411,58 @@ final class ChatViewModel: ObservableObject {
             messages.removeAll { $0.id == message.id }
         } catch {
             errorText = error.localizedDescription
+        }
+    }
+
+    // MARK: - 失败原因（F1）
+
+    /// 失败原因脱敏。
+    ///
+    /// `reason` 可能来自上游响应体，必须先去掉凭据形态的片段，再截断。
+    /// 顺序固定：**先脱敏、后截断**，避免截断把密钥切一半导致正则失效。
+    private static func sanitizedFailure(_ text: String) -> String {
+        var result = text
+        let rules: [(pattern: String, replacement: String)] = [
+            (#"(?i)bearer\s+\S+"#, "Bearer ***"),
+            (#"sk-[A-Za-z0-9_\-]{8,}"#, "sk-***"),
+            (#"(?i)api[_-]?key["'\s:=]+\S{4,}"#, "api_key=***")
+        ]
+        for rule in rules {
+            result = result.replacingOccurrences(
+                of: rule.pattern,
+                with: rule.replacement,
+                options: .regularExpression
+            )
+        }
+        return String(result.prefix(200))
+    }
+
+    /// 把（已脱敏的）失败原因映射为可行动的用户文案。
+    ///
+    /// 判定依据是 `DFError.errorDescription` 的真实文案结构，不做模糊猜测：
+    /// - 编排器内部令牌：`empty_reply` / `persistence`
+    /// - `DFError.http`：`服务返回 <status>：<body>`
+    /// - 其余为固定前缀。
+    private static func userFacingFailure(_ safe: String) -> String {
+        switch true {
+        case safe == "empty_reply":
+            return "模型没有返回内容，请点按重发"
+        case safe == "persistence":
+            return "本地保存失败，请重启应用后重试"
+        case safe.contains("服务返回 401"), safe.contains("服务返回 403"):
+            return "密钥无效或无权限，请到设置检查"
+        case safe.contains("服务返回 429"):
+            return "请求过于频繁或额度不足，请稍后重试"
+        case safe.contains("服务返回 5"):
+            return "模型服务暂时不可用，请稍后重试"
+        case safe.contains("网络错误"):
+            return "网络连接失败，请检查网络后重发"
+        case safe.contains("数据解析失败"):
+            return "返回内容无法解析，请重发"
+        case safe.contains("尚未配置"):
+            return safe
+        default:
+            return "生成失败，请稍后重试"
         }
     }
 }
