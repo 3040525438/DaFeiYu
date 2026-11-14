@@ -3,6 +3,7 @@ import Combine
 import DFCore
 import DFData
 import DFAI
+import DFOrchestration
 
 /// 依赖装配：整个应用只在这里创建具体实现。
 /// 刻意不加 @MainActor：它是纯依赖容器，不含 UI 状态；
@@ -19,6 +20,13 @@ final class AppContainer: ObservableObject {
     let modelConfigs: ModelConfigRepository
     let settings: SettingsRepository
     let integrityChecker: IntegrityChecker
+
+    /// 编排层仓储。`groups` 用具体类型：它同时实现 `StaleTurnRecoveryRepository`，
+    /// 恢复入口需要这个能力（协议类型会丢掉该 conformance）。
+    let groups: GRDBMessageGroupRepository
+    let turns: GRDBMessageTurnRepository
+    let references: GRDBMessageReferenceRepository
+    let contextUnits: GRDBContextUnitProvider
 
     init(identity: EnvironmentIdentity) throws {
         self.environment = identity.environment
@@ -61,6 +69,11 @@ final class AppContainer: ObservableObject {
         self.modelConfigs = GRDBModelConfigRepository(database: database)
         self.settings = GRDBSettingsRepository(database: database)
         self.integrityChecker = IntegrityChecker(database: database, attachments: attachments)
+
+        self.groups = GRDBMessageGroupRepository(database: database)
+        self.turns = GRDBMessageTurnRepository(database: database)
+        self.references = GRDBMessageReferenceRepository(database: database)
+        self.contextUnits = GRDBContextUnitProvider(database: database)
     }
 
     var dataRootPath: String {
@@ -99,6 +112,72 @@ final class AppContainer: ObservableObject {
             apiKey: try apiKey(for: config),
             modelID: config.modelID
         )
+    }
+
+    /// 构造编排器依赖（S5-A）。
+    ///
+    /// **不在这里创建编排器实例**：`ChatOrchestratorImpl` 的 `pageToken` 在 init 时固定，
+    /// 容器级单例会让所有页面共用同一个 owner token，`cancelActiveTurn(owner:)` 的归属校验
+    /// 就失去意义。实例与 token 一律由页面对应的 `ChatViewModel` 持有。
+    ///
+    /// 闭包只捕获 Sendable 的仓储/存储值，不捕获 `self`，避免把非 Sendable 的容器带进并发域。
+    func makeOrchestratorDependencies() -> ChatOrchestratorDependencies {
+        let modelConfigs = self.modelConfigs
+        let personas = self.personas
+        let secureStore = self.secureStore
+
+        return ChatOrchestratorDependencies(
+            groups: groups,
+            turns: turns,
+            messages: messages,
+            references: references,
+            units: contextUnits,
+            recovery: groups,
+            makeProvider: {
+                let config = try await Self.requireDefaultConfig(modelConfigs)
+                return try Self.makeProvider(config: config, secureStore: secureStore)
+            },
+            makeRequest: { systemPrompt, history in
+                let config = try await Self.requireDefaultConfig(modelConfigs)
+                return ChatRequest(
+                    model: config.modelID,
+                    systemPrompt: systemPrompt,
+                    messages: history.isEmpty
+                        ? [ChatTurn(role: .user, text: "（继续）")]
+                        : history,
+                    temperature: 0.85
+                )
+            },
+            corePersona: {
+                (try await personas.coreSystemPrompt()) ?? ""
+            },
+            rules: PromptComposer.defaultRules,
+            limitGroups: 20,
+            budget: PromptBudget(totalTokens: 6000)
+        )
+    }
+
+    /// 取默认模型配置，缺失时给出与旧链路一致的错误文案。
+    private static func requireDefaultConfig(
+        _ modelConfigs: ModelConfigRepository
+    ) async throws -> ModelConfig {
+        guard let config = try await modelConfigs.defaultConfig() else {
+            throw DFError.notConfigured("默认模型（请到设置页添加）")
+        }
+        return config
+    }
+
+    private static func makeProvider(
+        config: ModelConfig,
+        secureStore: KeychainStore
+    ) throws -> ChatModelProvider {
+        guard let url = URL(string: config.baseURL), url.scheme?.hasPrefix("http") == true else {
+            throw DFError.invalidURL(config.baseURL)
+        }
+        guard let key = try secureStore.get(config.keyRef), !key.isEmpty else {
+            throw DFError.notConfigured("模型密钥（\(config.name)）")
+        }
+        return OpenAICompatibleProvider(baseURL: url, apiKey: key, modelID: config.modelID)
     }
 
     /// 阶段一占位人格。阶段二会以 AstrBot 的真实设定建立新版本，而不是覆盖历史。

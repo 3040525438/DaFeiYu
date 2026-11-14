@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import DFCore
 import DFAI
+import DFOrchestration
 
 @MainActor
 final class ChatViewModel: ObservableObject {
@@ -15,8 +16,21 @@ final class ChatViewModel: ObservableObject {
     private var conversationID: String = ""
     private var streamingTask: Task<Void, Never>?
 
+    /// 编排器实例（S5-A 只用于启动恢复，发送链路仍是旧实现）。
+    /// 每个页面持有自己的实例与 `pageToken`：归属令牌每页唯一，陈旧页面无法取消新轮次。
+    private let orchestrator: ChatOrchestratorImpl
+    private let pageToken: UUID
+    /// 本 VM 是否已成功完成一次启动恢复。失败不置位，允许下次 `onAppear` 重试。
+    private var hasRecovered = false
+
     init(container: AppContainer) {
         self.container = container
+        let token = UUID()
+        self.pageToken = token
+        self.orchestrator = ChatOrchestratorImpl(
+            dependencies: container.makeOrchestratorDependencies(),
+            pageToken: token
+        )
     }
 
     func onAppear() async {
@@ -24,8 +38,9 @@ final class ChatViewModel: ObservableObject {
             let conversation = try await container.conversations.ensureMainConversation(title: "大肥鱼")
             conversationID = conversation.id
 
-            try await repairStaleSendingMessages()
+            await recoverIfNeeded(conversationID: conversation.id)
 
+            // S5-A 保持原有可见历史范围（300 条）；分页接口与分页 UI 统一延后到 S5-D
             messages = try await container.messages.recentMessages(in: conversation.id, limit: 300)
             hasModel = (try await container.modelConfigs.defaultConfig()) != nil
         } catch {
@@ -39,6 +54,7 @@ final class ChatViewModel: ObservableObject {
         draft = ""
         streamingTask = Task {
             await performSend(text: text)
+            streamingTask = nil
         }
     }
 
@@ -51,6 +67,7 @@ final class ChatViewModel: ObservableObject {
             } else {
                 await requestReply()
             }
+            streamingTask = nil
         }
     }
 
@@ -63,13 +80,27 @@ final class ChatViewModel: ObservableObject {
 
     // MARK: - 内部流程
 
-    /// 上次进程被系统杀掉时，可能残留 sending 状态的消息。
-    /// 启动时统一标记为 failed，避免出现永远"发送中"的假状态。
-    private func repairStaleSendingMessages() async throws {
-        let recent = try await container.messages.recentMessages(in: conversationID, limit: 300)
-        for var message in recent where message.status == .sending {
-            message.status = .failed
-            try await container.messages.update(message)
+    /// 启动恢复（S4-A 屏障在编排器内部生效）。
+    ///
+    /// 守卫规则：
+    /// 1. 本 VM 已成功恢复过 → 不重复恢复；
+    /// 2. 旧发送链路仍在生成（`streamingTask != nil`）→ 跳过恢复，
+    ///    否则会把正在生成的消息误改成 `failed`（旧链路不经过编排器，
+    ///    编排器拿不到活跃组 id，无法自行排除）；
+    /// 3. 跳过恢复时不影响后续的消息装载；
+    /// 4. 恢复失败不置成功标志，允许下次 `onAppear` 重试。
+    private func recoverIfNeeded(conversationID: String) async {
+        guard !hasRecovered, streamingTask == nil else { return }
+        do {
+            let report = try await orchestrator.recoverStaleTurns(conversationID: conversationID)
+            hasRecovered = true
+            if !report.failures.isEmpty {
+                NSLog("启动恢复存在未完成项：\(report.failures.joined(separator: "；"))")
+            }
+        } catch {
+            // 不阻断进入页面：保留错误信息，且不置 hasRecovered，下次可重试
+            NSLog("启动恢复失败：\(error.localizedDescription)")
+            errorText = error.localizedDescription
         }
     }
 
