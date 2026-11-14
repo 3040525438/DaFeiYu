@@ -9,9 +9,19 @@ import DFCore
 /// 3. 事务由 GRDB 的 DatabaseMigrator 保证。
 /// 4. 注册顺序必须与 `MigrationID` 的规范顺序一致，不允许提前注册未到阶段的迁移。
 public enum Migrations {
+    /// 当前**已发布**的最终迁移版本（唯一事实源）。
+    /// `MigrationID` 里可能有尚未发布的后续阶段，因此判定"库应为哪个版本"必须看这里，而不是 `allCases.last`。
+    public static let latest: MigrationID = .v5_autonomy
+
+    /// 已发布版本对应的规范台账前缀（按 `MigrationID` 规范顺序截断）
+    public static var releasedPrefix: [String] {
+        let count = (MigrationID.allCases.firstIndex(of: latest) ?? 0) + 1
+        return MigrationLedger.expectedPrefix(count: count)
+    }
+
     /// 生产入口：注册全部已发布迁移
     public static var migrator: DatabaseMigrator {
-        makeMigrator(upTo: .v5_autonomy)
+        makeMigrator(upTo: latest)
     }
 
     /// 按规范顺序注册，最多注册到 `last`（测试用：`upTo: .v1_phase1` 可构造 v1 库）

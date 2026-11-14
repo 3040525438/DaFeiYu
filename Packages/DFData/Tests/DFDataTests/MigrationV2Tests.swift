@@ -69,13 +69,13 @@ final class MigrationV2Tests: XCTestCase {
     func testT01_FreshDatabaseMigratesToV2() throws {
         let database = try makeDatabase("t01")
 
-        XCTAssertEqual(database.currentSchemaVersion, MigrationLedger.canonicalIdentifiers.last)
+        XCTAssertEqual(database.currentSchemaVersion, Migrations.latest.rawValue)
         XCTAssertFalse(database.isReadOnly)
 
         let ledger = try database.dbQueue.read { db in
             try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations")
         }
-        XCTAssertEqual(Set(ledger), Set(MigrationLedger.canonicalIdentifiers))
+        XCTAssertEqual(Set(ledger), Set(Migrations.releasedPrefix))
 
         let tableCount = try database.dbQueue.read { db in
             try Int.fetchOne(db, sql: "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='memory_scopes'") ?? 0
@@ -110,7 +110,7 @@ final class MigrationV2Tests: XCTestCase {
         try queue.read { db in
             XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM messages"), 3)
             XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM memories"), 2)
-            XCTAssertEqual(try String.fetchOne(db, sql: "SELECT max(identifier) FROM grdb_migrations"), MigrationLedger.canonicalIdentifiers.last)
+            XCTAssertEqual(try String.fetchOne(db, sql: "SELECT max(identifier) FROM grdb_migrations"), Migrations.latest.rawValue)
         }
     }
 
@@ -122,7 +122,7 @@ final class MigrationV2Tests: XCTestCase {
         try Migrations.migrator.migrate(queue)
 
         try queue.read { db in
-            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM grdb_migrations"), MigrationLedger.canonicalIdentifiers.count)
+            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM grdb_migrations"), Migrations.releasedPrefix.count)
         }
     }
 
@@ -349,7 +349,7 @@ final class MigrationV2Tests: XCTestCase {
         let b = try digest(second)
         XCTAssertEqual(a.count, 64)
         XCTAssertEqual(a, b)
-        XCTAssertEqual(a, MigrationLedger.digest(prefix: MigrationLedger.canonicalIdentifiers))
+        XCTAssertEqual(a, MigrationLedger.digest(prefix: Migrations.releasedPrefix))
     }
 
     // MARK: - T11 顺序防护

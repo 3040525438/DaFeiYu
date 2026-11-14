@@ -32,7 +32,7 @@ final class DatabaseTests: XCTestCase {
 
         XCTAssertTrue(report.isHealthy)
         XCTAssertEqual(report.databaseCheck.lowercased(), "ok")
-        XCTAssertEqual(report.schemaVersion, MigrationLedger.canonicalIdentifiers.last)
+        XCTAssertEqual(report.schemaVersion, Migrations.latest.rawValue)
         XCTAssertEqual(report.messageCount, 0)
     }
 
