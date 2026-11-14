@@ -34,7 +34,7 @@ final class DiaryTests: XCTestCase {
     ) -> DiaryUpsert {
         DiaryUpsert(
             entryDate: date, title: title, content: content,
-            source: "manual", changedBy: changedBy, changeReason: reason
+            source: "manual", changeReason: reason, changedBy: changedBy
         )
     }
 
@@ -52,7 +52,12 @@ final class DiaryTests: XCTestCase {
     func testUpdateAppendsVersionAndKeepsHistory() async throws {
         let entry = try await repo.upsert(request("2026-11-15"), at: 1000)
         _ = try await repo.upsert(
-            request("2026-11-15", content: "改成了新的内容", reason: "补充细节", changedBy: "ai"),
+            request(
+                "2026-11-15",
+                content: "改成了新的内容",
+                changedBy: "ai",
+                reason: "补充细节"
+            ),
             at: 2000
         )
 
