@@ -12,6 +12,7 @@ enum GRDBErrorMapper {
         if let error = error as? LocalModelError { return error }
         if let error = error as? DiaryError { return error }
         if let error = error as? MemoryError { return error }
+        if let error = error as? MemoryProcessingError { return error }
         if let error = error as? BackupError { return error }
         if let error = error as? AstrBotImportError { return error }
         if let error = error as? DatabaseError {

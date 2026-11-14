@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - 记忆（W8）
 
-public enum MemoryScope: String, Codable, Sendable, CaseIterable {
+public enum MemoryScope: String, Codable, Sendable, Hashable, CaseIterable {
     case user
     case shared
     /// 键值仍是 `self`（与 v2 迁移的 CHECK 口径一致），只是 Swift 里不能用关键字作 case 名
