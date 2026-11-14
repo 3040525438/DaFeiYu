@@ -146,7 +146,7 @@ public enum BackupError: Error, Equatable, CustomStringConvertible {
 }
 
 /// 恢复前的检查结果：必须三项都过才允许落地（D42）。
-public struct RestorePrecheck: Sendable, Equatable {
+public struct RestorePrecheck: Codable, Sendable, Equatable {
     public var backupID: String
     public var backupSchemaVersion: String
     public var currentSchemaVersion: String

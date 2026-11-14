@@ -498,10 +498,10 @@ public enum MemoryConsolidationPlanner {
                 return true
             }
             guard group.count > 1 else { continue }
-            let survivor = group.max { lhs, rhs in
+            guard let survivor = group.max(by: { lhs, rhs in
                 if lhs.content.count == rhs.content.count { return lhs.id > rhs.id }
                 return lhs.content.count < rhs.content.count
-            }
+            }) else { continue }
             let ordered = [survivor] + group.filter { $0.id != survivor.id }
             groups.append(ordered.map(\.id))
         }
