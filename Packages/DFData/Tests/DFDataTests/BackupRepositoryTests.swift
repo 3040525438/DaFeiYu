@@ -100,8 +100,10 @@ final class BackupRepositoryTests: XCTestCase {
         try await repo.markFinished(id: safety.id, byteSize: 1, sha256: nil, itemCountsJSON: "{}", at: 4100)
 
         let prunable = try await repo.prunable(keepCount: 1, at: 5000)
-        // 5 份 completed 中 ids[4] 已验证被排除，剩 4 份保留最近 1 份（ids[2]），可清理 ids[0]、ids[1]
-        XCTAssertEqual(Set(prunable.map(\.id)), Set([ids[0], ids[1]]))
+        // 5 份 completed 中 ids[4] 已验证被排除，剩 4 份保留最近 1 份（ids[3]），
+        // 可清理 ids[0]、ids[1]、ids[2]；safety 永不清理
+        XCTAssertEqual(Set(prunable.map(\.id)), Set([ids[0], ids[1], ids[2]]))
+        XCTAssertFalse(prunable.contains { $0.id == safety.id })
     }
 
     func testStartRestoreRejectsRunningTask() async throws {

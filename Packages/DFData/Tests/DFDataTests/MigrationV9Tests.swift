@@ -269,15 +269,16 @@ final class MigrationV9Tests: XCTestCase {
     // MARK: - V9-09 台账摘要独立复算
 
     func testV909_LedgerDigestRecomputedIndependently() throws {
-        let database = try makeDatabase("v909")
+        // 锁定 v9：生产 migrator 已前移到 v11，本用例只验 v9 自己的台账
+        let queue = try makeQueue("v909", upTo: .v9_astrbot)
 
-        try database.dbQueue.read { db in
-            let canonical = MigrationLedger.canonicalIdentifiers
+        try queue.read { db in
+            let expected = MigrationLedger.expectedPrefix(count: 9)
             let applied = try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations")
-            XCTAssertEqual(Set(applied), Set(canonical))
+            XCTAssertEqual(Set(applied), Set(expected))
             XCTAssertEqual(
                 try SchemaMeta.value(db, key: SchemaMetaKey.ledgerDigest),
-                SHA256.hash("migrations-v1\n" + canonical.joined(separator: "\n"))
+                SHA256.hash("migrations-v1\n" + expected.joined(separator: "\n"))
             )
             XCTAssertEqual(try SchemaMeta.value(db, key: SchemaMetaKey.appliedPhase), "V2-P8")
         }

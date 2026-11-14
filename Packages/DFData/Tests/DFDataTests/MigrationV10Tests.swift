@@ -242,7 +242,7 @@ final class MigrationV10Tests: XCTestCase {
             XCTAssertNotNil(try SchemaMeta.value(db, key: SchemaMetaKey.previousMigrationBatch))
             XCTAssertNotNil(try SchemaMeta.value(db, key: SchemaMetaKey.previousMigratedAt))
             XCTAssertEqual(try SchemaMeta.value(db, key: SchemaMetaKey.ledgerDigest),
-                           MigrationLedger.digest(prefix: MigrationLedger.canonicalIdentifiers))
+                           MigrationLedger.digest(prefix: MigrationLedger.expectedPrefix(count: 10)))
         }
     }
 

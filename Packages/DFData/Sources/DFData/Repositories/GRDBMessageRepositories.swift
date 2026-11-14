@@ -8,6 +8,11 @@ enum GRDBErrorMapper {
         // 业务型错误必须原样抛出：被包成 DFError.database 后调用方再也认不出错误语义
         if let error = error as? ConversationAdminError { return error }
         if let error = error as? MessageInteractionError { return error }
+        if let error = error as? MultimodalError { return error }
+        if let error = error as? LocalModelError { return error }
+        if let error = error as? DiaryError { return error }
+        if let error = error as? MemoryError { return error }
+        if let error = error as? BackupError { return error }
         if let error = error as? DatabaseError {
             return DFError.database(error.message ?? "数据库操作失败")
         }
