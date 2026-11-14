@@ -79,11 +79,13 @@ final class MigrationV9Tests: XCTestCase {
 
     func testV901_FreshV1DatabaseMigratesToV9() throws {
         let queue = try makeQueue("v901", upTo: .v1_phase1)
-        try Migrations.migrator.migrate(queue)
+        // 锁定 v9：生产 migrator 会随新版本前移，本用例只验证 v9 自身
+        try Migrations.makeMigrator(upTo: .v9_astrbot).migrate(queue)
 
         try queue.read { db in
             let ledger = try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations")
-            XCTAssertEqual(Set(ledger), Set(MigrationLedger.canonicalIdentifiers))
+            XCTAssertEqual(ledger.count, 9)
+            XCTAssertEqual(Set(ledger), Set(MigrationLedger.expectedPrefix(count: 9)))
             XCTAssertEqual(
                 try MigrationLedger.validatedPrefix(applied: ledger).last,
                 MigrationID.v9_astrbot.rawValue
