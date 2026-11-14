@@ -77,7 +77,7 @@ final class MigrationSafetyTests: XCTestCase {
             ledgerBefore,
             "探测不得改变迁移台账"
         )
-        XCTAssertEqual(database.currentSchemaVersion, "v3_chat")
+        XCTAssertEqual(database.currentSchemaVersion, "v4_persona")
         XCTAssertFalse(database.isReadOnly)
     }
 
@@ -186,7 +186,7 @@ final class MigrationSafetyTests: XCTestCase {
 
         XCTAssertFalse(database.isReadOnly)
         XCTAssertNil(database.migrationFailureReason)
-        XCTAssertEqual(database.currentSchemaVersion, "v3_chat")
+        XCTAssertEqual(database.currentSchemaVersion, "v4_persona")
         XCTAssertEqual(counter.value, 2, "重试只执行一次")
 
         // 重试成功后恢复读写
@@ -195,7 +195,7 @@ final class MigrationSafetyTests: XCTestCase {
         }
         try await database.dbQueue.read { db in
             XCTAssertEqual(try String.fetchOne(db, sql: "SELECT value FROM settings WHERE key = 'probe'"), "ok")
-            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM grdb_migrations"), 3)
+            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT count(*) FROM grdb_migrations"), 4)
             XCTAssertEqual(
                 try Int.fetchOne(db, sql: "SELECT count(*) FROM sqlite_master WHERE name = 'schema_meta'"),
                 1
@@ -216,7 +216,7 @@ final class MigrationSafetyTests: XCTestCase {
         XCTAssertEqual(counter.value, 1)
         try await database.retryMigration()
         XCTAssertEqual(counter.value, 1, "健康状态下的重试不得再次执行迁移")
-        XCTAssertEqual(database.currentSchemaVersion, "v3_chat")
+        XCTAssertEqual(database.currentSchemaVersion, "v4_persona")
     }
 
     // MARK: - T23 结构与必要索引门禁

@@ -124,7 +124,7 @@ public enum SchemaMeta {
 
     /// 升级后必须存在的对象（结构 + 必要索引）。
     /// 只做存在性检查，不校验 DDL 细节；用于"迁移成功后能否恢复读写"的门禁。
-    /// v3 起由 10 项扩为 16 项（v2 的 10 项 + `v3_chat` 的 6 项）。
+    /// v3 起由 10 项扩为 16 项；v4 起再扩 11 项（关系档案 3 表 + 指纹/导入 2 表 + 6 索引），共 27 项。
     public static func verifyRequiredObjects(_ db: Database) throws {
         let required = [
             // v2 既有（保留）
@@ -144,7 +144,19 @@ public enum SchemaMeta {
             "ux_message_groups_turn",
             "ix_message_groups_status",
             "ux_messages_group_seq",
-            "ix_message_refs_ref"
+            "ix_message_refs_ref",
+            // v4 新增
+            "relationship_profile",
+            "relationship_stage_history",
+            "relationship_milestones",
+            "persona_fingerprints",
+            "persona_imports",
+            "ix_relationship_stage_time",
+            "ix_relationship_stage_status",
+            "ix_relationship_milestones_time",
+            "ix_relationship_milestones_kind",
+            "ux_persona_fingerprints",
+            "ix_persona_imports_time"
         ]
         // 名字全部来自本文件常量，不拼接外部输入
         let quoted = required.map { "'\($0)'" }.joined(separator: ",")

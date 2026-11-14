@@ -92,7 +92,7 @@ final class MigrationV3Tests: XCTestCase {
 
     func testM01_FreshV1DatabaseMigratesToV3() throws {
         let queue = try makeQueue("m01", upTo: .v1_phase1)
-        try Migrations.migrator.migrate(queue)
+        try Migrations.makeMigrator(upTo: .v3_chat).migrate(queue)
 
         try queue.read { db in
             let ledger = try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations")
@@ -121,7 +121,7 @@ final class MigrationV3Tests: XCTestCase {
         try seedV2(queue)
 
         let before = try queue.read { db in try legacyRowLines(db) }
-        try Migrations.migrator.migrate(queue)
+        try Migrations.makeMigrator(upTo: .v3_chat).migrate(queue)
         let after = try queue.read { db in try legacyRowLines(db) }
 
         XCTAssertEqual(after, before, "23 条历史消息 14 列逐字段必须完全不变")
@@ -138,7 +138,7 @@ final class MigrationV3Tests: XCTestCase {
 
     func testM03_RepeatedV3Rejected() throws {
         let queue = try makeQueue("m03", upTo: .v2_memory)
-        try Migrations.migrator.migrate(queue)
+        try Migrations.makeMigrator(upTo: .v3_chat).migrate(queue)
 
         let before = try queue.read { db in try legacyRowLines(db) }
         var thrown = false
@@ -165,7 +165,7 @@ final class MigrationV3Tests: XCTestCase {
         try seedV2(queue)
         let before = try queue.read { db in try legacyRowLines(db) }
 
-        try Migrations.migrator.migrate(queue)
+        try Migrations.makeMigrator(upTo: .v3_chat).migrate(queue)
 
         try queue.read { db in
             XCTAssertEqual(try legacyRowLines(db), before)
@@ -191,7 +191,7 @@ final class MigrationV3Tests: XCTestCase {
         let queue = try makeQueue("m05", upTo: .v2_memory)
         try seedV2(queue)
 
-        try Migrations.migrator.migrate(queue)
+        try Migrations.makeMigrator(upTo: .v3_chat).migrate(queue)
 
         try queue.read { db in
             XCTAssertEqual(
@@ -218,7 +218,7 @@ final class MigrationV3Tests: XCTestCase {
             try String.fetchAll(db, sql: "SELECT id || ':' || content FROM memories ORDER BY id")
         }
 
-        try Migrations.migrator.migrate(queue)
+        try Migrations.makeMigrator(upTo: .v3_chat).migrate(queue)
 
         try queue.read { db in
             XCTAssertEqual(try memoryObjectSnapshot(db), objectsBefore)
@@ -232,9 +232,9 @@ final class MigrationV3Tests: XCTestCase {
     // MARK: - M07 digest 独立复算
 
     func testM07_LedgerDigestRecomputedIndependently() throws {
-        let database = try makeDatabase("m07")
+        let queue = try makeQueue("m07", upTo: .v3_chat)
 
-        try database.dbQueue.read { db in
+        try queue.read { db in
             let stored = try SchemaMeta.value(db, key: SchemaMetaKey.ledgerDigest)
             XCTAssertNotNil(stored)
 
@@ -424,7 +424,7 @@ final class MigrationV3Tests: XCTestCase {
         XCTAssertNotNil(previous.1)
         XCTAssertNotNil(previous.2)
 
-        try Migrations.migrator.migrate(queue)
+        try Migrations.makeMigrator(upTo: .v3_chat).migrate(queue)
 
         try queue.read { db in
             XCTAssertEqual(

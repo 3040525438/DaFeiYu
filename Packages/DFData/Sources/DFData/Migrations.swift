@@ -219,6 +219,12 @@ public enum Migrations {
             }
         }
 
+        if includes(.v4_persona, upTo: last) {
+            migrator.registerMigration("v4_persona") { db in
+                try V4Persona.migrate(db)
+            }
+        }
+
         return migrator
     }
 
