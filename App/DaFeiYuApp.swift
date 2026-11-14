@@ -1,4 +1,5 @@
 import SwiftUI
+import DFCore
 
 @main
 @MainActor
@@ -41,10 +42,33 @@ final class AppBootstrap: ObservableObject {
         guard !started else { return }
         started = true
 
-        let environment = AppEnvironment.resolve(bundleID: Bundle.main.bundleIdentifier)
+        // 环境只由构建配置决定；失败即 fail closed，不建容器、不开库、不读 Keychain。
+        let identity: EnvironmentIdentity
+        do {
+            identity = try EnvironmentIdentity.resolve(
+                info: Bundle.main.infoDictionary ?? [:],
+                actualBundleID: Bundle.main.bundleIdentifier
+            )
+        } catch {
+            self.container = nil
+            self.errorTitle = "环境校验未通过"
+            self.errorMessage = EnvironmentDiagnostics.text(
+                error: error,
+                bundleID: Bundle.main.bundleIdentifier,
+                dataRoot: try? FileManager.default.url(
+                    for: .applicationSupportDirectory,
+                    in: .userDomainMask,
+                    appropriateFor: nil,
+                    create: false
+                ),
+                keychainService: nil
+            )
+            self.started = false
+            return
+        }
 
         do {
-            let container = try AppContainer(environment: environment)
+            let container = try AppContainer(identity: identity)
 
             // 升级失败：数据库已整体回滚到旧结构，保持原样，不进入业务界面，
             // 也不允许任何写入；只展示恢复提示与"重试"入口。
