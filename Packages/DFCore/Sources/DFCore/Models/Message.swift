@@ -19,12 +19,17 @@ public enum MessageKind: String, Codable, Sendable, CaseIterable {
 
 /// 消息发送状态机：draft → sending → sent / failed
 /// 不允许从 sent 回到 sending（除显式撤回后重发），避免重复写入
+///
+/// `recalled` 与 `canceled` 严格区分：
+/// - `recalled`：用户撤回**已发送**的消息（P4 功能，P1.5 保留定义、零使用）
+/// - `canceled`：用户取消**生成**，已生成的部分文本保留（P1.5 使用）
 public enum MessageStatus: String, Codable, Sendable, CaseIterable {
     case draft
     case sending
     case sent
     case failed
     case recalled
+    case canceled
 }
 
 /// 消息来源，用于区分用户输入、AI 回复、主动消息与迁移导入
@@ -127,6 +132,13 @@ public extension Message {
     func markingFailed() -> Message {
         var copy = self
         copy.status = .failed
+        return copy
+    }
+
+    /// 用户取消生成：保留已生成的文本，不写 `sentAt`
+    func markingCanceled() -> Message {
+        var copy = self
+        copy.status = .canceled
         return copy
     }
 }
