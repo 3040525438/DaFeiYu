@@ -49,6 +49,9 @@ final class ChatViewModel: ObservableObject {
     /// 本 VM 是否已成功完成一次启动恢复。失败不置位，允许下次 `onAppear` 重试。
     private var hasRecovered = false
 
+    /// D2：本轮发送前的原始文本，仅用于"确认未发出"时恢复输入框。
+    private var draftSnapshot: String?
+
     init(container: AppContainer) {
         self.container = container
         let token = UUID()
@@ -70,6 +73,9 @@ final class ChatViewModel: ObservableObject {
 
             // S5-B 仍保持原有可见历史范围（300 条）；分页接口与分页 UI 延后到 S5-D
             messages = try await container.messages.recentMessages(in: conversation.id, limit: 300)
+            // D1：`hasRecovered` 只代表"历史上恢复过"，不代表"现在没有残留"。
+            // 装载后仍有未完成的 assistant 时，再补一次恢复（每次页面出现最多一次）。
+            await recoverStaleAfterLoad(conversationID: conversation.id)
             hasModel = (try await container.modelConfigs.defaultConfig()) != nil
         } catch {
             errorText = error.localizedDescription
@@ -114,6 +120,7 @@ final class ChatViewModel: ObservableObject {
         }
 
         draft = ""
+        draftSnapshot = text          // D2：仅 send 有草稿可恢复；retry 不设
         start(
             stream: orchestrator.send(text: text, conversationID: conversationID)
         )
@@ -132,6 +139,7 @@ final class ChatViewModel: ObservableObject {
             errorText = DFError.notConfigured("默认模型（请到设置页添加）").localizedDescription
             return
         }
+        draftSnapshot = nil           // D2：重试没有草稿，绝不恢复
         start(
             stream: orchestrator.retry(messageID: message.id, conversationID: conversationID)
         )
@@ -182,10 +190,22 @@ final class ChatViewModel: ObservableObject {
         streamingTask = nil
         streamingTaskID = nil
         currentTurn = nil
+        draftSnapshot = nil           // D2：兜底清理，避免快照残留到下一轮
     }
 
     private func isCurrentTask(_ taskID: UUID) -> Bool {
         streamingTaskID == taskID && streamingTask != nil
+    }
+
+    /// D2：仅当"本轮确实没有创建任何消息"且用户没有重新输入时，才把原文放回输入框。
+    private func restoreDraftIfNeeded() {
+        guard let snapshot = draftSnapshot else { return }
+        draftSnapshot = nil
+        guard draft.isEmpty else { return }        // 用户已重新输入 → 绝不覆盖
+        draft = snapshot
+        if errorText == nil {                      // 已有真实错误时保留错误文案
+            errorText = "消息未发出，已恢复到输入框"
+        }
     }
 
     // MARK: - 事件消费
@@ -202,10 +222,15 @@ final class ChatViewModel: ObservableObject {
         taskID: UUID
     ) async {
         var outcome: EventOutcome = .other
+        var didOpenTurn = false       // D2：本轮是否真的开了组（决定能否恢复草稿）
         do {
             for try await event in stream {
                 guard isCurrentTask(taskID) else { return }
                 outcome = await apply(event, taskID: taskID)
+                // 所有权仍然有效时，才认定"本页确实收到了开组事件"
+                if case .turnOpened = event, isCurrentTask(taskID) {
+                    didOpenTurn = true
+                }
             }
         } catch {
             guard isCurrentTask(taskID) else { return }
@@ -216,6 +241,10 @@ final class ChatViewModel: ObservableObject {
         }
 
         guard isCurrentTask(taskID) else { return }
+        if !didOpenTurn {
+            // 整轮没有任何开组事件（preflight 取消 / 前置失败）→ 库里零写入，草稿可安全还原
+            restoreDraftIfNeeded()
+        }
         if outcome == .other, let turn = currentTurn {
             // 未收到任何终态：以库内真值为准重读一次；读到 sending 时保持"待恢复"，不伪造终态
             await reloadMessage(id: turn.assistantMessageID, taskID: taskID)
@@ -320,6 +349,30 @@ final class ChatViewModel: ObservableObject {
     }
 
     // MARK: - 消息装载
+
+    /// D1 补偿恢复：`hasRecovered` 只代表"历史上恢复过"，不代表"现在没有残留"。
+    ///
+    /// 触发条件（三者缺一不可）：
+    /// 1. 本页没有活跃轮次（正常生成中不得误判为待恢复）；
+    /// 2. 没有处于"待恢复"提示中（该状态需用户重启，恢复也修不掉）；
+    /// 3. 装载后的快照里确实还有 `sending` 的 assistant。
+    ///
+    /// 每次页面出现最多执行一次；失败复位 `hasRecovered`，下次进入页面可再试。
+    private func recoverStaleAfterLoad(conversationID: String) async {
+        guard !isStreaming else { return }
+        guard pendingRecovery == nil else { return }
+        guard hasUnfinishedAssistant else { return }
+
+        do {
+            _ = try await orchestrator.recoverStaleTurns(conversationID: conversationID)
+            hasRecovered = true
+            messages = try await container.messages.recentMessages(in: conversationID, limit: 300)
+            NSLog("装载后补偿恢复完成")
+        } catch {
+            hasRecovered = false
+            NSLog("装载后补偿恢复失败：\(error.localizedDescription)")
+        }
+    }
 
     private func reloadMessage(id: String, taskID: UUID) async {
         guard let message = try? await container.messages.message(id: id) else { return }
