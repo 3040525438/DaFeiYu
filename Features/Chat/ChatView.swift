@@ -228,7 +228,7 @@ struct ChatView: View {
                             isPendingRecovery: viewModel.isPendingRecovery(message),
                             theme: viewModel.theme,
                             onRetry: { viewModel.retry(message) },
-                            onDelete: { viewModel.delete(.ids([message.id])) },
+                            onDelete: { Task { await viewModel.delete(.ids([message.id])) } },
                             onEdit: { viewModel.beginEdit(message) },
                             onRevoke: { Task { await viewModel.revoke(message) } },
                             onToggleFavorite: { Task { await viewModel.toggleFavorite(message) } }

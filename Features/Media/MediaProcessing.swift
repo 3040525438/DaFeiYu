@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import ImageIO
 import Vision
 import Speech
 import AVFoundation
@@ -119,6 +120,7 @@ enum MediaProcessing {
             throw MediaError.imageDecodeFailed
         }
 
+        let languages = ["zh-Hans", "zh-Hant", "en-US"]
         return try await withCheckedThrowingContinuation { continuation in
             let request = VNRecognizeTextRequest { request, error in
                 if let error {
@@ -130,15 +132,16 @@ enum MediaProcessing {
                 let text = lines.map(\.string).joined(separator: "\n")
                 let confidences = lines.map { Double($0.confidence) }
                 let average = confidences.isEmpty ? nil : confidences.reduce(0, +) / Double(confidences.count)
+                let usedLanguages = (request as? VNRecognizeTextRequest)?.recognitionLanguages ?? languages
                 continuation.resume(returning: OCRResult(
                     text: text,
                     confidence: average,
-                    languages: request.recognitionLanguages
+                    languages: usedLanguages
                 ))
             }
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = true
-            request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
+            request.recognitionLanguages = languages
 
             let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
             do {
