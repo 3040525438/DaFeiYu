@@ -145,7 +145,7 @@
 | D50 | 主动消息删除/收藏/不感兴趣/触发原因/关联记忆 | 已实现（数据层 + 后台补算） | `ProactiveMessageService`（`8b69a40`）+ `BackgroundRefreshService` 过期清理/补算（`6c33f4f`） | `ProactiveMessageServiceTests` 7 项 | W7-6 |
 | D51 | 归档可检索；删除保留记忆并可批量管理 | 已实现有证据（数据层 + App 界面） | `setArchivedBatch`（`4cff077`，main 保护 + 幂等计数）+ 归档会话仍进 `message_fts`/统一检索；删除会话保留记忆沿用 `delete/deleteBatch`；App 层 `ConversationListView` 多选批量归档 + 二次确认 + 结果回报（`310a940`） | `ConversationArchiveBatchTests`(4)、`UnifiedSearchTests`(10)、`ConversationAdminTests`(13)，run 43697137498；App 编译待手动触发 `app-build-check` | W2-5 数据层 + W6 界面（`310a940`）。失败恢复：批量操作单事务，失败即整体不生效 |
 | D52 | 完整状态显示（发送/失败/取消/思考/生成/多消息） | 已实现有证据（界面状态机 + App 接线） | `ChatTurnPhase` 七态（等待/思考/生成/暂停/完成/失败/停止）+ `canTransition` 非法跃迁拦截（`236cd8c`）；`ChatViewModel.phase` 由 `turnOpened`/增量/终态/暂停事件驱动；`ChatView` 头部状态文案、暂停/继续按钮、消息滚动只在非暂停时追加 | `ChatTurnPhaseTests` 8 项 | W2-6（`236cd8c`） |
-| D53 | 错误含原因与建议；诊断日志导出；脱敏诊断包 | 部分实现 | B1-L1 失败原因脱敏、`IntegrityChecker` | `ChatOrchestratorFailurePathTests` | W10-3 |
+| D53 | 错误含原因与建议；诊断日志导出；脱敏诊断包 | 已实现有证据（诊断日志文件导出仍由 App 层 `DiagnosticsService` 承担，未编译验证） | `ErrorDiagnoser`：17 类失败（密钥缺失/401·403/429/额度/超时/离线/404 模型/上下文超长/400/5xx/预算/只读/空间/备份损坏/升级未完成/权限/未知），每类给出原因、至少一条建议、是否可重试、是否需用户操作；判定顺序固定且不区分大小写；结论不回显原始错误全文（避免泄露密钥与路径）；聊天页错误提示改用 `diagnosedMessage`（headline + 首条建议）。B1-L1 失败原因脱敏、`IntegrityChecker`、`DiagnosticsService`/`DiagnosticExporter` 继续保留 | `ErrorDiagnosisTests`(7，含 16 条归类断言)、`ChatOrchestratorFailurePathTests`，run 43724845883 | W10-3、W9O（`59561a2`） |
 | D54 | 自动发送技术实现自定，但不得绕过授权/频率/成本/隐私 | 已实现 | `AutonomyGate.evaluate`（暂停/授权/免打扰/上限/间隔/预算）+ 每次拦截写 `autonomy_runs` | `AutonomySchedulingTests` 8 项 | W7-3 |
 
 ### 3.7 第七轮（D55–D62）：基础体验、离线、模型资源、自主验收
