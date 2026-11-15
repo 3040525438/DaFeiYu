@@ -51,6 +51,8 @@ final class AppContainer: ObservableObject {
     let autonomy: AutonomyService
     /// W7：主动消息治理
     let proactive: ProactiveMessageService
+    /// N-20：主动意图生成（严格 JSON）与过闸门投递
+    let intents: ProactiveIntentService
     /// W6：人格成长（提案 → 审批 → 版本回退）
     let personaGrowth: PersonaGrowthService
     /// W6：关系档案与阶段确认
@@ -59,6 +61,8 @@ final class AppContainer: ObservableObject {
     let memoryProcessing: MemoryProcessingService
     /// W9：备份加解密与恢复
     let backupService: BackupService
+    /// D09：自动备份调度（每日完整 + 数据变更增量）
+    let backupScheduler: BackupScheduleService
     /// W9：隐私门禁与删除清单
     let privacy: PrivacyGateService
     /// W9：AstrBot 全量导入
@@ -142,8 +146,15 @@ final class AppContainer: ObservableObject {
         self.memories = GRDBMemoryRepository(database: database)
         self.backups = GRDBBackupRepository(database: database)
 
-        self.autonomy = AutonomyService(database: database)
-        self.proactive = ProactiveMessageService(database: database)
+        let autonomyService = AutonomyService(database: database)
+        let proactiveService = ProactiveMessageService(database: database)
+        self.autonomy = autonomyService
+        self.proactive = proactiveService
+        self.intents = ProactiveIntentService(
+            database: database,
+            autonomy: autonomyService,
+            proactive: proactiveService
+        )
         self.personaGrowth = PersonaGrowthService(database: database)
         self.relationships = RelationshipService(database: database)
         self.memoryProcessing = MemoryProcessingService(database: database)
@@ -152,11 +163,18 @@ final class AppContainer: ObservableObject {
 
         let backupKeys = KeychainBackupKeyStore(store: KeychainStore(service: identity.environment.keychainService))
         self.backupKeys = backupKeys
-        self.backupService = BackupService(
+        let backupService = BackupService(
             database: database,
             keyStore: backupKeys,
             appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
         )
+        self.backupService = backupService
+        self.backupScheduler = BackupScheduleService(
+            database: database,
+            settings: GRDBSettingsRepository(database: database)
+        ) { kind, note in
+            try await backupService.createBackup(kind: kind, note: note)
+        }
 
         self.groups = GRDBMessageGroupRepository(database: database)
         self.turns = GRDBMessageTurnRepository(database: database)

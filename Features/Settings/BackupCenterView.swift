@@ -36,6 +36,8 @@ struct BackupCenterView: View {
     @State private var exportDocument: BackupExportDocument?
     @State private var exportName = "dafeiyu-backup.dfbk"
     @State private var showExporter = false
+    @State private var mirrorName: String?
+    @State private var showFolderPicker = false
 
     var body: some View {
         List {
@@ -81,11 +83,45 @@ struct BackupCenterView: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
+
+            Section {
+                if let mirrorName {
+                    LabeledContent("当前目录", value: mirrorName)
+                    Button("重新选择目录…") {
+                        showFolderPicker = true
+                    }
+                    .disabled(busy)
+                    Button("清除授权", role: .destructive) {
+                        Task { await clearMirror() }
+                    }
+                } else {
+                    Button {
+                        showFolderPicker = true
+                    } label: {
+                        Label("选择外部备份目录…", systemImage: "folder.badge.plus")
+                    }
+                    .disabled(busy)
+                }
+            } header: {
+                Text("外部位置")
+            } footer: {
+                Text("通过系统文件选择器授权目录（可选 iCloud Drive 或第三方网盘在「文件」里的位置）；授权后可将已有备份复制过去。厂商 OAuth 云盘对接尚未内置。")
+            }
         }
         .navigationTitle("备份与恢复")
         .scrollContentBackground(.hidden)
         .background(DFColor.canvas)
-        .task { await reload() }
+        .task {
+            await reload()
+            mirrorName = await ExternalBackupLocation.displayName(settings: container.settings)
+        }
+        .fileImporter(
+            isPresented: $showFolderPicker,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            Task { await handleFolderPick(result) }
+        }
         .alert("恢复这份备份？", isPresented: $showRestoreConfirm) {
             Button("开始恢复", role: .destructive) {
                 Task { await restore() }
@@ -147,6 +183,12 @@ struct BackupCenterView: View {
                         Task { await prepareExport(manifest) }
                     }
                     .font(.caption)
+                    if mirrorName != nil {
+                        Button("复制到外部") {
+                            Task { await copyToExternal(manifest) }
+                        }
+                        .font(.caption)
+                    }
                 } else {
                     Text("不可用（\(manifest.status.rawValue)）")
                         .font(.caption2)
@@ -218,6 +260,47 @@ struct BackupCenterView: View {
             showRestoreConfirm = true
         } catch {
             status = "无法恢复：\(error.localizedDescription)"
+        }
+    }
+
+    private var mirror: BackupMirrorService {
+        BackupMirrorService(settings: container.settings, backupService: container.backupService)
+    }
+
+    private func handleFolderPick(_ result: Result<[URL], Error>) async {
+        switch result {
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            do {
+                try await ExternalBackupLocation.save(url: url, settings: container.settings)
+                mirrorName = await ExternalBackupLocation.displayName(settings: container.settings)
+                status = "外部目录已授权：\(mirrorName ?? url.lastPathComponent)"
+            } catch {
+                status = "保存目录授权失败：\(error.localizedDescription)"
+            }
+        case .failure(let error):
+            status = "选择目录失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func clearMirror() async {
+        do {
+            try await ExternalBackupLocation.clear(settings: container.settings)
+            mirrorName = nil
+            status = "已清除外部目录授权（不会删除已复制出去的文件）"
+        } catch {
+            status = "清除授权失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func copyToExternal(_ manifest: BackupManifest) async {
+        busy = true
+        defer { busy = false }
+        do {
+            let target = try await mirror.copy(manifest)
+            status = "已复制到外部目录：\(target.lastPathComponent)"
+        } catch {
+            status = "复制失败：\(error.localizedDescription)"
         }
     }
 

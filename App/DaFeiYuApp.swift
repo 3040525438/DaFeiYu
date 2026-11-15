@@ -113,6 +113,8 @@ final class AppBootstrap: ObservableObject {
             holder.set(container)
             Task {
                 await container.bootstrap()
+                // D09：启动时补一次自动备份检查（每日一次完整备份由策略保证）
+                _ = try? await container.backupScheduler.runIfDue()
             }
         } catch {
             self.errorTitle = "本地数据库无法打开"
