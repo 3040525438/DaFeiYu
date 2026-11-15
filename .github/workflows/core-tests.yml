@@ -41,10 +41,14 @@ jobs:
         run: |
           set +e
           swift test --package-path Packages/DFData 2>&1 | tee /tmp/dfdata.log
-          status=${PIPESTATUS[0]}
+          status=${PIPESTATUS[0]:-1}
+          echo "::notice title=DFDataStatus::exit=$status"
           if [ "$status" -ne 0 ]; then
-            # 把关键失败行转成注解，Annotations API 无需登录即可读取
-            grep -E "error: |Test Case .* failed|XCTAssert.*failed|Fatal error|Assertion failed" /tmp/dfdata.log \
+            # 把日志尾部逐行转成注解，Annotations API 无需登录即可读取
+            tail -n 12 /tmp/dfdata.log | while IFS= read -r line; do
+              echo "::error title=DFDataTail::${line:0:800}"
+            done
+            grep -E "error: |Test Case .* failed|XCTAssert.*failed|Fatal error|Assertion failed|recorded an issue" /tmp/dfdata.log \
               | head -n 6 \
               | while IFS= read -r line; do
                   echo "::error title=DFData::${line:0:900}"
