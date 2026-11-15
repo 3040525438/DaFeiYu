@@ -197,7 +197,8 @@ public enum ReflectionOutputParser {
     }
 
     /// 去掉模型常见的 ```json 代码围栏，只做外壳剥离，不放宽 Schema。
-    private static func stripCodeFence(_ raw: String) -> String {
+    /// 内部可见：洞察解析器复用同一套围栏剥离逻辑，避免两处行为漂移。
+    static func stripCodeFence(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("```") else { return trimmed }
         var lines = trimmed.components(separatedBy: .newlines)

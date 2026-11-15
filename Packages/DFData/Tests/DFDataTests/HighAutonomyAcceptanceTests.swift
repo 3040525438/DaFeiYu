@@ -305,6 +305,61 @@ final class HighAutonomyAcceptanceTests: XCTestCase {
         XCTAssertEqual(try conversationCount(kind: ProactiveConversationService.conversationKind), 1)
     }
 
+    // MARK: - 场景 7：内容能力（回顾 / 关联 / 值得记录 / 观点变化 / 修正建议）
+
+    func testInsightCapabilitiesProducePendingProposalsOnly() async throws {
+        let insightService = AutonomyInsightService(
+            database: database,
+            clock: AutonomyClock(
+                now: { Self.now },
+                minuteOfDay: { _ in Self.minuteOfDay },
+                dayStart: { _ in Self.dayStart }
+            )
+        )
+        try await database.write { db in
+            try db.execute(sql: """
+            INSERT INTO memories (id, type, title, content, importance, first_seen_at, scope)
+            VALUES ('m1', 'event', '备考', '用户在准备考试', 'normal', 1, 'shared')
+            """)
+        }
+
+        let raw = """
+        {"insights":[
+          {"kind":"recall_recent","summary":"今天状态不太好","evidence":["今天有点累"],"confidence":0.8,"target_memory_id":null},
+          {"kind":"memory_link","summary":"身体状态与备考压力相关","evidence":["用户最近在准备考试"],"confidence":0.6,"target_memory_id":"m1"},
+          {"kind":"worth_recording","summary":"用户长期处于备考压力中","evidence":["用户最近在准备考试"],"confidence":0.7,"target_memory_id":null},
+          {"kind":"stance_change","summary":"对休息的态度从坚持转为接受","evidence":["那早点休息，我在这儿"],"confidence":0.5,"target_memory_id":null},
+          {"kind":"correction_proposal","summary":"备考记忆需要补充压力维度","evidence":["今天有点累"],"confidence":0.6,"target_memory_id":"m1"}
+        ]}
+        """
+
+        let outcome = try await insightService.generate(
+            context: AutonomyInsightService.Context(
+                conversationID: "c1",
+                recentTurns: ["用户：今天有点累", "大肥鱼：那早点休息，我在这儿"],
+                candidateMemories: ["用户最近在准备考试"]
+            ),
+            provider: ScriptedProvider(response: raw),
+            model: "scripted"
+        )
+
+        XCTAssertTrue(outcome.isStrict)
+        XCTAssertEqual(outcome.proposals.count, 5, "五类内容能力都应有提案")
+        XCTAssertEqual(
+            outcome.proposals.filter { $0.requiresUserConfirmation }.count,
+            4,
+            "除只读回顾外，其余四类都必须经用户确认"
+        )
+        XCTAssertTrue(outcome.proposals.allSatisfy { $0.status == "pending" })
+
+        // 只产出提案：记忆行数不变，也不产生主动消息
+        let memoryCount = try await database.dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT count(*) FROM memories") ?? -1
+        }
+        XCTAssertEqual(memoryCount, 1, "洞察不得自动写入记忆")
+        XCTAssertEqual(try proactiveMessageCount(), 0, "洞察不得直接打扰用户")
+    }
+
     // MARK: - 场景 6：行为记录与恢复
 
     func testBehaviourRecordsCoverAllowedAndBlocked() async throws {
