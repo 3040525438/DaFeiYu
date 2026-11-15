@@ -394,7 +394,8 @@ public final class AutonomyService: @unchecked Sendable {
         todaySpentYuan: Double = 0,
         notificationsAuthorized: Bool = true,
         taskID: String? = nil,
-        runTrigger: String = "foreground"
+        runTrigger: String = "foreground",
+        budget: AutonomyBudgetContext? = nil
     ) async throws -> AutonomyGateResult {
         let state = try await state()
         let now = clock.now()
@@ -430,8 +431,24 @@ public final class AutonomyService: @unchecked Sendable {
             todaySentCount: stats.1,
             pausedUntil: state.pausedUntil,
             todaySpentYuan: todaySpentYuan,
-            notificationsAuthorized: notificationsAuthorized
+            notificationsAuthorized: notificationsAuthorized,
+            budget: budget
         )
+
+        let effectiveSpent = budget?.spend.effectiveYuan(
+            unknownReserveYuan: budget?.limits.unknownReserveYuan ?? 0
+        )
+        let budgetJSON: String
+        if let budget {
+            budgetJSON = String(
+                format: ",\"effective_yuan\":%.4f,\"unknown_count\":%d,\"estimated_next_yuan\":%.4f",
+                effectiveSpent ?? 0,
+                budget.spend.unknownCount,
+                budget.estimatedNextCallYuan
+            )
+        } else {
+            budgetJSON = ""
+        }
 
         let runID = try await recordRun(
             taskID: taskID,
@@ -440,7 +457,7 @@ public final class AutonomyService: @unchecked Sendable {
             status: decision.allowed ? .allowed : .blocked,
             decision: decision.allowed ? "allow" : "block",
             blockReason: decision.reason,
-            detailJSON: "{\"today_sent\":\(stats.1),\"spent_yuan\":\(todaySpentYuan)}"
+            detailJSON: "{\"today_sent\":\(stats.1),\"spent_yuan\":\(todaySpentYuan)\(budgetJSON)}"
         )
 
         return AutonomyGateResult(

@@ -167,10 +167,16 @@ public struct OpenAICompatibleProvider: ChatModelProvider, Pingable, Sendable {
         }
     }
 
+    /// D10：请求末尾附带 usage，才能把成本记为"已确认"而不是"估算"
+    private struct StreamOptions: Encodable {
+        let include_usage: Bool
+    }
+
     private struct RequestBody: Encodable {
         let model: String
         let messages: [WireMessage]
         let stream: Bool
+        let stream_options: StreamOptions
         let temperature: Double
         let max_tokens: Int?
     }
@@ -188,6 +194,7 @@ public struct OpenAICompatibleProvider: ChatModelProvider, Pingable, Sendable {
             model: request.model,
             messages: messages,
             stream: true,
+            stream_options: StreamOptions(include_usage: true),
             temperature: request.temperature,
             max_tokens: request.maxTokens
         )

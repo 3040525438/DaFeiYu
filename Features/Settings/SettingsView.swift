@@ -148,6 +148,11 @@ struct SettingsView: View {
             } label: {
                 Label("本地模型文件", systemImage: "internaldrive")
             }
+            NavigationLink {
+                BudgetCenterView()
+            } label: {
+                Label("预算与成本", systemImage: "yensign.circle")
+            }
         } header: {
             sectionHeader("模型配置", icon: "cpu")
         } footer: {

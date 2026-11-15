@@ -69,6 +69,11 @@ public struct ChatOrchestratorDependencies: Sendable {
     /// 回合成功后的后置处理（记忆抽取等）。为 nil 时完全跳过，不影响聊天主流程。
     /// 以非结构化任务执行，聊天流的取消不会中断它，抽取失败也不会回滚消息。
     public var onTurnCompleted: (@Sendable (ChatTurnCompletion) async -> Void)?
+    /// D10：发送请求前预占预算。返回预占 id；抛错表示预算不足，本轮不发起模型请求。
+    public var reserveBudget: (@Sendable (ChatRequest) async throws -> String?)?
+    /// D10：请求结束后结算（成功、失败、取消都会调用一次）。`usage` 为 nil 表示服务端未返回用量，
+    /// `outputText` 为已产出的可见文本，用于按字符估算补全 token。
+    public var settleBudget: (@Sendable (String?, Usage?, ChatRequest, String) async -> Void)?
     /// 恢复屏障探针（S4A-4）。**有意不进入 `public init`**：仅同包测试可写，
     /// 默认 `nil`，此时 `waitForRecoveryBarrier` 只有一次可选链判断，行为与无探针时完全一致。
     package var barrierProbe: (any RecoveryBarrierProbing)?
@@ -86,7 +91,9 @@ public struct ChatOrchestratorDependencies: Sendable {
         rules: String = PromptComposer.defaultRules,
         limitGroups: Int = 20,
         budget: PromptBudget = PromptBudget(),
-        onTurnCompleted: (@Sendable (ChatTurnCompletion) async -> Void)? = nil
+        onTurnCompleted: (@Sendable (ChatTurnCompletion) async -> Void)? = nil,
+        reserveBudget: (@Sendable (ChatRequest) async throws -> String?)? = nil,
+        settleBudget: (@Sendable (String?, Usage?, ChatRequest, String) async -> Void)? = nil
     ) {
         self.groups = groups
         self.turns = turns
@@ -101,6 +108,8 @@ public struct ChatOrchestratorDependencies: Sendable {
         self.limitGroups = limitGroups
         self.budget = budget
         self.onTurnCompleted = onTurnCompleted
+        self.reserveBudget = reserveBudget
+        self.settleBudget = settleBudget
     }
 }
 
@@ -490,14 +499,36 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         var segmenter = SegmentParser()
         var visibleAccumulated = ""
 
+        // D10：预算预占与结算状态。预占失败时不发起模型请求；
+        // 请求无论成功、失败还是取消，都必须结算一次，避免漏记成本。
+        var reservationID: String?
+        var pendingRequest: ChatRequest?
+        var capturedUsage: Usage?
         do {
             let provider = try await deps.makeProvider()
             let request = try await deps.makeRequest(systemPrompt, prompt.messages)
+            pendingRequest = request
             if shouldStop() { throw CancellationError() }
+
+            // 预占在 BudgetService 的单个写事务内完成，并发请求无法绕过上限
+            do {
+                reservationID = try await deps.reserveBudget?(request)
+            } catch {
+                pendingRequest = nil
+                await failPath(
+                    groupID: groupID,
+                    assistantMessageID: assistantID,
+                    text: nil,
+                    reason: "budget_blocked: \(describe(error))",
+                    continuation: continuation
+                )
+                return
+            }
 
             for try await delta in provider.stream(request) {
                 if shouldStop() { throw CancellationError() }
-                if case let .text(chunk) = delta {
+                switch delta {
+                case let .text(chunk):
                     let visible = parser.feed(chunk)
                     if !visible.isEmpty {
                         let shown = segmenter.feed(visible)
@@ -506,9 +537,19 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
                             continuation.yield(.assistantDelta(shown))
                         }
                     }
+                case let .usage(value):
+                    capturedUsage = value
+                case .finished:
+                    break
                 }
             }
+            await deps.settleBudget?(reservationID, capturedUsage, request, visibleAccumulated)
+            pendingRequest = nil
         } catch {
+            // 失败或取消：有请求就结算（usage 可能已到，未到则按保守口径记费）
+            if let request = pendingRequest {
+                await deps.settleBudget?(reservationID, capturedUsage, request, visibleAccumulated)
+            }
             if shouldStop() || isCancellation(error) {
                 await cancelPath(
                     groupID: groupID,

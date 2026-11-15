@@ -44,10 +44,13 @@ public final class ProactiveIntentService: @unchecked Sendable {
     public struct Proposal: Sendable, Equatable {
         public var intent: ProactiveIntent
         public var candidateText: String?
+        /// 服务端返回的 token 用量；未返回时为 nil（调用方据此记"估算"或"无法计量"）
+        public var usage: Usage?
 
-        public init(intent: ProactiveIntent, candidateText: String?) {
+        public init(intent: ProactiveIntent, candidateText: String?, usage: Usage? = nil) {
             self.intent = intent
             self.candidateText = candidateText
+            self.usage = usage
         }
     }
 
@@ -108,10 +111,16 @@ public final class ProactiveIntentService: @unchecked Sendable {
         )
 
         var raw = ""
+        var usage: Usage?
         for try await delta in provider.stream(request) {
             if Task.isCancelled { throw DFError.cancelled }
-            if case .text(let piece) = delta {
+            switch delta {
+            case .text(let piece):
                 raw += piece
+            case .usage(let value):
+                usage = value
+            case .finished:
+                break
             }
         }
 
@@ -142,7 +151,7 @@ public final class ProactiveIntentService: @unchecked Sendable {
             at: now,
             decidedBy: "ai"
         )
-        return Proposal(intent: intent, candidateText: candidate)
+        return Proposal(intent: intent, candidateText: candidate, usage: usage)
     }
 
     // MARK: - 投递
@@ -153,7 +162,8 @@ public final class ProactiveIntentService: @unchecked Sendable {
         text: String,
         todaySpentYuan: Double = 0,
         notificationsAuthorized: Bool = true,
-        runTrigger: String = "background"
+        runTrigger: String = "background",
+        budget: AutonomyBudgetContext? = nil
     ) async throws -> DispatchResult {
         guard let intent = try await intent(id: intentID) else {
             throw ProactiveIntentError.intentNotFound(intentID)
@@ -168,7 +178,8 @@ public final class ProactiveIntentService: @unchecked Sendable {
             trigger: intent.proactiveTrigger,
             todaySpentYuan: todaySpentYuan,
             notificationsAuthorized: notificationsAuthorized,
-            runTrigger: runTrigger
+            runTrigger: runTrigger,
+            budget: budget
         )
 
         guard gate.decision.allowed else {

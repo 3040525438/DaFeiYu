@@ -9,13 +9,18 @@ import DFData
 /// - 只处理 `message` / `suggestion` 两类任务，其余类型保持原样；
 /// - 没有默认模型配置时直接返回，不认领任务，避免把重试次数耗光；
 /// - 闸门拦截属于正常结果（skipped），只有真正异常才记 failed；
-/// - 预算参数暂按 0 传入：D10 成本记账尚未接入，不能假装已有花费统计。
+/// - D10：每次生成前在 `BudgetService` 里预占自主预算，结束后按真实用量结算，
+///   失败保留预占金额，闸门拿到的"今日已花"来自真实成本台账而不是固定 0。
 final class ProactiveIntentRunner: @unchecked Sendable {
     private static let supportedKinds: Set<String> = [
         ProactiveTrigger.message.rawValue,
         ProactiveTrigger.suggestion.rawValue
     ]
     private static let enabledKey = "autonomy.intent.enabled"
+    /// 自主生成的最大输出 token（与 ProactiveIntentService 默认值一致）
+    private static let maxGenerationTokens = 320
+    /// 无法精确获得提示词用量时的保守输入估算
+    private static let estimatedPromptTokens = 1200
 
     private let container: AppContainer
 
@@ -49,12 +54,65 @@ final class ProactiveIntentRunner: @unchecked Sendable {
                     conversationID: conversation.id,
                     topicID: claimed.topicID
                 )
-                let provider = try container.provider(for: config)
-                let proposal = try await container.intents.generate(
-                    trigger: trigger,
-                    context: context,
-                    provider: provider,
-                    model: config.modelID
+
+                // D10：生成前按真实配置预占自主预算；预算不足时任务跳过，不消耗重试次数
+                let limits = try await container.budget.limits()
+                let pricing = try? await container.budget.pricing(modelID: config.modelID)
+                let estimated = pricing?.estimatedCost(
+                    promptTokens: Self.estimatedPromptTokens,
+                    maxCompletionTokens: Self.maxGenerationTokens
+                ) ?? 0
+                let reservationID: String
+                do {
+                    reservationID = try await container.budget.reserve(
+                        scope: .autonomy,
+                        estimatedYuan: estimated,
+                        provider: config.providerKind,
+                        modelID: config.modelID,
+                        limits: limits
+                    )
+                } catch {
+                    try? await container.autonomy.finish(
+                        taskID: claimed.id,
+                        status: .skipped,
+                        resultJSON: "{\"reason\":\"预算不足：\(error.localizedDescription)\"}"
+                    )
+                    continue
+                }
+
+                let proposal: ProactiveIntentService.Proposal
+                do {
+                    let provider = try container.provider(for: config)
+                    proposal = try await container.intents.generate(
+                        trigger: trigger,
+                        context: context,
+                        provider: provider,
+                        model: config.modelID,
+                        maxTokens: Self.maxGenerationTokens
+                    )
+                } catch {
+                    // 生成失败：保留预占金额（服务端可能已计费），任务按失败处理
+                    try? await container.budget.fail(
+                        reservationID: reservationID,
+                        reason: error.localizedDescription
+                    )
+                    try? await container.autonomy.finish(
+                        taskID: claimed.id,
+                        status: .failed,
+                        error: error.localizedDescription
+                    )
+                    continue
+                }
+
+                try? await container.budget.settle(
+                    reservationID: reservationID,
+                    usage: proposal.usage,
+                    pricing: pricing,
+                    fallbackPromptTokens: Self.estimatedPromptTokens,
+                    fallbackCompletionTokens: TokenEstimator.estimate(
+                        proposal.candidateText ?? ""
+                    ),
+                    modelID: config.modelID
                 )
 
                 guard let text = proposal.candidateText else {
@@ -68,12 +126,20 @@ final class ProactiveIntentRunner: @unchecked Sendable {
 
                 let status = await container.notifications.authorizationStatus()
                 let authorized = status == .authorized || status == .provisional || status == .ephemeral
+                // D10：闸门使用真实成本快照（含未知费用的保守估算）
+                let spend = (try? await container.budget.snapshot()) ?? .zero
+                let budgetContext = AutonomyBudgetContext(
+                    limits: limits,
+                    spend: spend,
+                    estimatedNextCallYuan: 0
+                )
                 let result = try await container.intents.dispatch(
                     intentID: proposal.intent.id,
                     text: text,
-                    todaySpentYuan: 0,
+                    todaySpentYuan: spend.knownTotalYuan,
                     notificationsAuthorized: authorized,
-                    runTrigger: "background"
+                    runTrigger: "background",
+                    budget: budgetContext
                 )
 
                 switch result {

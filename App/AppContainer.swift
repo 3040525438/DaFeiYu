@@ -44,6 +44,8 @@ final class AppContainer: ObservableObject {
     let memories: MemoryRepository
     /// W9：备份清单与恢复日志
     let backups: BackupRepository
+    /// D10：预算与成本（真实成本统计 + 并发安全预占）
+    let budget: BudgetService
 
     // MARK: - W6~W9 服务层
 
@@ -149,6 +151,10 @@ final class AppContainer: ObservableObject {
         self.diary = GRDBDiaryRepository(database: database)
         self.memories = GRDBMemoryRepository(database: database)
         self.backups = GRDBBackupRepository(database: database)
+        self.budget = BudgetService(
+            database: database,
+            settings: GRDBSettingsRepository(database: database)
+        )
 
         let autonomyService = AutonomyService(database: database)
         let proactiveService = ProactiveMessageService(database: database)
@@ -294,6 +300,7 @@ final class AppContainer: ObservableObject {
         let modelConfigs = self.modelConfigs
         let personas = self.personas
         let secureStore = self.secureStore
+        let budgetService = self.budget
         // 回合后置：记忆抽取（W8-3）。关掉开关即完全跳过，不影响聊天。
         let extraction = MemoryExtractionCoordinator(
             processing: memoryProcessing,
@@ -347,8 +354,80 @@ final class AppContainer: ObservableObject {
             budget: PromptBudget(totalTokens: 6000),
             onTurnCompleted: { completion in
                 await extraction.handle(completion)
+            },
+            reserveBudget: { request in
+                let config = try await Self.requireDefaultConfig(modelConfigs)
+                return try await Self.reserveChatBudget(
+                    budgetService,
+                    request: request,
+                    provider: config.providerKind
+                )
+            },
+            settleBudget: { reservationID, usage, request, outputText in
+                await Self.settleChatBudget(
+                    budgetService,
+                    reservationID: reservationID,
+                    usage: usage,
+                    request: request,
+                    outputText: outputText
+                )
             }
         )
+    }
+
+    // MARK: - D10 聊天预算接线
+
+    /// 聊天请求前预占：有单价按"输入估算 + 最大输出"预估，无单价时预估为 0（结算记为无法计量）。
+    private static func reserveChatBudget(
+        _ budget: BudgetService,
+        request: ChatRequest,
+        provider: String
+    ) async throws -> String? {
+        let pricing = try await budget.pricing(modelID: request.model)
+        let promptTokens = TokenEstimator.estimate(
+            system: request.systemPrompt,
+            turns: request.messages
+        )
+        let estimate = pricing.map {
+            $0.estimatedCost(
+                promptTokens: promptTokens,
+                maxCompletionTokens: request.maxTokens ?? 1024
+            )
+        } ?? 0
+        return try await budget.reserve(
+            scope: .chat,
+            estimatedYuan: estimate,
+            provider: provider,
+            modelID: request.model
+        )
+    }
+
+    /// 请求结束统一结算：用量齐全即 confirmed；缺用量按输出文本估算；缺单价记 unavailable。
+    private static func settleChatBudget(
+        _ budget: BudgetService,
+        reservationID: String?,
+        usage: Usage?,
+        request: ChatRequest,
+        outputText: String
+    ) async {
+        guard let reservationID else { return }
+        do {
+            let pricing = try await budget.pricing(modelID: request.model)
+            try await budget.settle(
+                reservationID: reservationID,
+                usage: usage,
+                pricing: pricing,
+                fallbackPromptTokens: TokenEstimator.estimate(
+                    system: request.systemPrompt,
+                    turns: request.messages
+                ),
+                fallbackCompletionTokens: TokenEstimator.estimate(outputText),
+                modelID: request.model
+            )
+        } catch {
+            // 结算失败不回滚聊天结果，但必须留下可排查记录
+            NSLog("聊天成本结算失败（预占 \(reservationID)）：\(error.localizedDescription)")
+        }
     }
 
     /// 取默认模型配置，缺失时给出与旧链路一致的错误文案。

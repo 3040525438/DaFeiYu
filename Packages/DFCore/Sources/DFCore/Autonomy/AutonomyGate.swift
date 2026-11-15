@@ -132,6 +132,7 @@ public enum AutonomyGate {
     ///   - pausedUntil: 用户暂停自主行为的截止时间（毫秒）；nil 表示未暂停
     ///   - todaySpentYuan: 今天已花费的模型成本（元）
     ///   - notificationsAuthorized: 用户是否已授权通知
+    ///   - budget: D10 预算上下文（每日 / 单次 / 自主预算与真实花费）；nil 表示只走旧的单值预算判断
     public static func evaluate(
         policy: AutonomyPolicy,
         trigger: ProactiveTrigger,
@@ -141,7 +142,8 @@ public enum AutonomyGate {
         todaySentCount: Int,
         pausedUntil: Int64? = nil,
         todaySpentYuan: Double = 0,
-        notificationsAuthorized: Bool = true
+        notificationsAuthorized: Bool = true,
+        budget: AutonomyBudgetContext? = nil
     ) -> AutonomyDecision {
         let policy = policy.normalized()
         guard policy.enabled else {
@@ -155,6 +157,18 @@ public enum AutonomyGate {
             formatter.dateFormat = "MM-dd HH:mm"
             let until = formatter.string(from: Date(timeIntervalSince1970: Double(pausedUntil) / 1000))
             return AutonomyDecision(allowed: false, reason: "自主行为已暂停至 \(until)")
+        }
+        // D10：预算对所有会花模型费的触发类型都生效（含记忆整理 / 自我反思）
+        if let budget {
+            let decision = BudgetGuard.evaluate(
+                limits: budget.limits,
+                spend: budget.spend,
+                scope: .autonomy,
+                estimatedNextCallYuan: budget.estimatedNextCallYuan
+            )
+            if !decision.allowed {
+                return AutonomyDecision(allowed: false, reason: decision.reason)
+            }
         }
         // 记忆整理与自我反思不打扰用户，不受免打扰、授权、频率与通知档位限制
         guard trigger == .message || trigger == .newConversation || trigger == .suggestion else {
@@ -177,10 +191,23 @@ public enum AutonomyGate {
                 return AutonomyDecision(allowed: false, reason: "距上次主动消息不足最小间隔，还需 \(remaining) 分钟")
             }
         }
-        if let budget = policy.dailyBudgetYuan, todaySpentYuan >= budget {
+        // 自主行动只消耗"自主预算"：有真实快照时用快照（含未知费用保守估算），否则退回旧单值
+        let autonomySpent: Double
+        if let budget {
+            autonomySpent = budget.spend.effectiveAutonomyYuan(
+                unknownReserveYuan: budget.limits.unknownReserveYuan
+            )
+        } else {
+            autonomySpent = todaySpentYuan
+        }
+        if let autonomyBudget = policy.dailyBudgetYuan, autonomySpent >= autonomyBudget {
             return AutonomyDecision(
                 allowed: false,
-                reason: String(format: "已达今日模型预算（%.2f 元），今日已用 %.2f 元", budget, todaySpentYuan)
+                reason: String(
+                    format: "已达今日自主预算（%.2f 元），今日已用 %.2f 元",
+                    autonomyBudget,
+                    autonomySpent
+                )
             )
         }
         return .allowed
