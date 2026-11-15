@@ -360,7 +360,8 @@ public final class BackupService: @unchecked Sendable {
     /// 一旦退回 `?? .null` 就会把整列写成 NULL（曾导致恢复时 conversations.title 违约）。
     /// `Row` 本身就是按列顺序的 `DatabaseValue` 集合，直接按序映射最稳。
     private static func encode(row: Row, columns: [String]) throws -> [BackupValue] {
-        let values: [BackupValue] = row.map { raw in
+        // Row 的 Element 是 (列名, DatabaseValue) 元组，取第二项才是值本身
+        let values: [BackupValue] = row.map { $0.1 }.map { raw in
             switch raw.storage {
             case .null: return .null
             case .int64(let value): return .integer(value)
