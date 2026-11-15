@@ -1,5 +1,26 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import DFCore
+import DFData
+
+/// 导出的备份文件包装：原样搬运已加密容器，不做明文转换
+struct BackupExportDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.data] }
+
+    var data: Data
+
+    init(data: Data) {
+        self.data = data
+    }
+
+    init(configuration: ReadConfiguration) throws {
+        data = configuration.file.regularFileContents ?? Data()
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: data)
+    }
+}
 
 /// 备份与恢复（D08 / D09 / D41 / D42 / D43）
 @MainActor
@@ -12,6 +33,9 @@ struct BackupCenterView: View {
     @State private var restoreCandidate: BackupManifest?
     @State private var precheck: RestorePrecheck?
     @State private var showRestoreConfirm = false
+    @State private var exportDocument: BackupExportDocument?
+    @State private var exportName = "dafeiyu-backup.dfbk"
+    @State private var showExporter = false
 
     var body: some View {
         List {
@@ -48,6 +72,8 @@ struct BackupCenterView: View {
                 }
             } header: {
                 Text("已有备份")
+            } footer: {
+                Text("“导出”把已加密的备份容器原样存到文件或外部分享位置，不做明文转换；换设备恢复需要同一把本机密钥。")
             }
 
             Section {
@@ -67,6 +93,20 @@ struct BackupCenterView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text(restoreMessage)
+        }
+        .fileExporter(
+            isPresented: $showExporter,
+            document: exportDocument,
+            contentType: .data,
+            defaultFilename: exportName
+        ) { result in
+            switch result {
+            case .success(let url):
+                status = "已导出：\(url.lastPathComponent)"
+            case .failure(let error):
+                status = "导出失败：\(error.localizedDescription)"
+            }
+            exportDocument = nil
         }
     }
 
@@ -101,6 +141,10 @@ struct BackupCenterView: View {
                     .font(.caption)
                     Button("恢复") {
                         Task { await prepareRestore(manifest) }
+                    }
+                    .font(.caption)
+                    Button("导出") {
+                        Task { await prepareExport(manifest) }
                     }
                     .font(.caption)
                 } else {
@@ -174,6 +218,21 @@ struct BackupCenterView: View {
             showRestoreConfirm = true
         } catch {
             status = "无法恢复：\(error.localizedDescription)"
+        }
+    }
+
+    /// 读取备份容器原文件，交给系统导出面板（文件 / 外部分享）
+    private func prepareExport(_ manifest: BackupManifest) async {
+        busy = true
+        defer { busy = false }
+        do {
+            let url = container.backupService.fileURL(for: manifest)
+            let data = try Data(contentsOf: url)
+            exportDocument = BackupExportDocument(data: data)
+            exportName = manifest.fileName
+            showExporter = true
+        } catch {
+            status = "读取备份文件失败：\(error.localizedDescription)"
         }
     }
 

@@ -126,6 +126,24 @@ final class BackupServiceTests: XCTestCase {
         XCTAssertEqual(verified?.status, .verified)
     }
 
+    /// D41：导出定位到沙盒里的加密容器原文件
+    func testExportFileURLPointsToEncryptedContainer() async throws {
+        try await seedConversationAndMessage()
+        let service = makeService()
+        let manifest = try await service.createBackup(kind: .external)
+
+        let url = service.fileURL(for: manifest)
+        XCTAssertEqual(url.lastPathComponent, manifest.fileName)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+
+        let data = try Data(contentsOf: url)
+        XCTAssertEqual(Int64(data.count), manifest.byteSize)
+        XCTAssertNil(
+            try? JSONSerialization.jsonObject(with: data),
+            "导出内容必须是加密容器，不能是明文 JSON"
+        )
+    }
+
     func testPlaintextBackupRequiresExplicitChoice() async throws {
         try await seedConversationAndMessage()
         let service = makeService()

@@ -68,6 +68,11 @@ public final class BackupService: @unchecked Sendable {
         database.paths.workspace.appendingPathComponent("Backups", isDirectory: true)
     }
 
+    /// 备份文件在沙盒中的实际位置（导出 / 分享用，不做任何解密）
+    public func fileURL(for manifest: BackupManifest) -> URL {
+        database.paths.root.appendingPathComponent(manifest.relPath)
+    }
+
     // MARK: - 导出
 
     public func exportSnapshot(at millis: Int64? = nil) async throws -> BackupSnapshot {
