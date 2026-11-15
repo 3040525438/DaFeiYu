@@ -46,6 +46,12 @@ final class AppContainer: ObservableObject {
     let backups: BackupRepository
     /// D10：预算与成本（真实成本统计 + 并发安全预占）
     let budget: BudgetService
+    /// D25：跨域统一检索（聊天 / 记忆 / 日记 / 附件）
+    let unifiedSearch: UnifiedSearchRepository
+    /// D26：消息整理（收藏 / 重要 / 标签 / 批量）
+    let messageOrganization: MessageOrganizationRepository
+    /// D57：附件引用检查与清理
+    let attachmentReferences: AttachmentReferenceService
 
     // MARK: - W6~W9 服务层
 
@@ -151,6 +157,9 @@ final class AppContainer: ObservableObject {
         self.diary = GRDBDiaryRepository(database: database)
         self.memories = GRDBMemoryRepository(database: database)
         self.backups = GRDBBackupRepository(database: database)
+        self.unifiedSearch = GRDBUnifiedSearchRepository(database: database)
+        self.messageOrganization = GRDBMessageOrganizationRepository(database: database)
+        self.attachmentReferences = GRDBAttachmentReferenceService(database: database)
         self.budget = BudgetService(
             database: database,
             settings: GRDBSettingsRepository(database: database)

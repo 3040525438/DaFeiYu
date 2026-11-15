@@ -38,6 +38,8 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var archivedConversations: [ConversationSummary] = []
     /// 全部会话未读总数
     @Published private(set) var unreadTotal: Int = 0
+    /// D51：批量归档 / 批量操作的结果提示
+    @Published private(set) var conversationBatchMessage: String?
 
     /// 待恢复轮次（`turnRecoveryPending` 产生）：库里组仍为 `open`，属非终态。
     /// 仅保存编排器明确告知的 groupID，**绝不伪造**。
@@ -467,6 +469,66 @@ final class ChatViewModel: ObservableObject {
     func markAllConversationsRead() async {
         _ = try? await container.conversationAdmin.markAllRead(at: Clock.nowMillis())
         await refreshConversationList()
+    }
+
+    /// D51：批量归档。main 会话由数据层保护，这里只如实回报跳过数量。
+    func archiveConversations(ids: [String]) async {
+        guard !ids.isEmpty else { return }
+        guard !isStreaming else {
+            errorText = "正在生成中，请先停止或等待完成再归档会话"
+            return
+        }
+        do {
+            let result = try await container.conversationAdmin.setArchivedBatch(
+                ids: ids,
+                archived: true,
+                at: Clock.nowMillis()
+            )
+            await refreshConversationList()
+            var parts: [String] = []
+            parts.append(result.affected > 0 ? "已归档 \(result.affected) 个会话" : "没有会话需要归档")
+            if result.skippedProtected > 0 {
+                parts.append("跳过 \(result.skippedProtected) 个主会话")
+            }
+            if result.notFound > 0 {
+                parts.append("\(result.notFound) 个会话已不存在")
+            }
+            conversationBatchMessage = parts.joined(separator: "，")
+        } catch {
+            errorText = Self.interactionMessage(error)
+        }
+    }
+
+    func clearBatchMessage() {
+        conversationBatchMessage = nil
+    }
+
+    /// D25：全局搜索命中消息后，切到目标会话并滚动定位。
+    func openGlobalSearchHit(conversationID: String, messageID: String) async {
+        if conversationID != self.conversationID {
+            await switchConversation(to: conversationID)
+            guard self.conversationID == conversationID else { return }
+        }
+        if !messages.contains(where: { $0.id == messageID }) {
+            messages = (try? await container.messages.recentMessages(in: conversationID, limit: 300)) ?? messages
+        }
+        guard messages.contains(where: { $0.id == messageID }) else {
+            errorText = "这条消息不在最近 300 条内，请先在聊天里加载更早的消息"
+            return
+        }
+        scrollTargetID = messageID
+    }
+
+    /// 从库里重读已加载的消息（收藏 / 标签等标记在其他界面被改动后调用）。
+    func refreshCurrentMessages() async {
+        guard !conversationID.isEmpty, !messages.isEmpty else { return }
+        var refreshed: [Message] = []
+        for message in messages {
+            guard let latest = try? await container.messages.message(id: message.id) else { continue }
+            refreshed.append(latest)
+        }
+        guard refreshed.count == messages.count else { return }
+        messages = refreshed
     }
 
     // MARK: - 订阅

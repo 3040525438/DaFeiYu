@@ -174,6 +174,17 @@ struct SpaceView: View {
             .buttonStyle(.plain)
 
             NavigationLink {
+                AttachmentLibraryView(container: container)
+            } label: {
+                actionRow(
+                    icon: "paperclip",
+                    title: "附件库",
+                    detail: "查看引用情况，安全清理未被使用的图片与语音"
+                )
+            }
+            .buttonStyle(.plain)
+
+            NavigationLink {
                 ProactiveView()
             } label: {
                 actionRow(

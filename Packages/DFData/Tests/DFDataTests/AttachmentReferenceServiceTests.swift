@@ -178,4 +178,44 @@ final class AttachmentReferenceServiceTests: XCTestCase {
         XCTAssertEqual(result.deleted, 0)
         XCTAssertEqual(result.skippedInUse, 0)
     }
+
+    // MARK: - 附件库列表（D57 界面数据源）
+
+    func testLibraryReturnsEachAttachmentWithReferenceCounts() async throws {
+        let items = try await service.library(includeDeleted: false, limit: 50, offset: 0)
+        XCTAssertEqual(items.count, 3, "未软删附件应全部出现")
+
+        // 创建时间倒序：in-use(300) / stale(300) 按 id 升序，然后 orphan(100)
+        let byID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+        XCTAssertEqual(byID[inUseID]?.liveReferences, 1)
+        XCTAssertEqual(byID[inUseID]?.totalReferences, 1)
+        XCTAssertTrue(byID[inUseID]?.isInUse ?? false)
+
+        XCTAssertEqual(byID[staleID]?.liveReferences, 0)
+        XCTAssertEqual(byID[staleID]?.totalReferences, 1)
+        XCTAssertTrue(byID[staleID]?.hasStaleReferencesOnly ?? false)
+        XCTAssertFalse(byID[staleID]?.isInUse ?? true)
+
+        XCTAssertEqual(byID[orphanID]?.totalReferences, 0)
+        XCTAssertFalse(byID[orphanID]?.hasStaleReferencesOnly ?? true)
+        XCTAssertEqual(items.last?.id, orphanID, "最早的附件排在最后")
+    }
+
+    func testLibraryHidesDeletedByDefaultAndCanIncludeThem() async throws {
+        try await service.deleteAttachment(id: orphanID, at: 9000, force: false)
+
+        let visible = try await service.library(includeDeleted: false, limit: 50, offset: 0)
+        XCTAssertFalse(visible.contains { $0.id == orphanID })
+
+        let all = try await service.library(includeDeleted: true, limit: 50, offset: 0)
+        XCTAssertTrue(all.contains { $0.id == orphanID })
+    }
+
+    func testLibrarySupportsPaging() async throws {
+        let first = try await service.library(includeDeleted: false, limit: 2, offset: 0)
+        let second = try await service.library(includeDeleted: false, limit: 2, offset: 2)
+        XCTAssertEqual(first.count, 2)
+        XCTAssertEqual(second.count, 1)
+        XCTAssertTrue(Set(first.map(\.id)).isDisjoint(with: Set(second.map(\.id))), "分页不得重复")
+    }
 }

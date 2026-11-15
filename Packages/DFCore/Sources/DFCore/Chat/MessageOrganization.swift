@@ -32,7 +32,7 @@ public struct MessageTagCount: Sendable, Equatable, Identifiable {
 }
 
 /// 消息列表过滤口径（收藏 / 重要 / 标签）。
-public enum MessageFilter: Sendable, Equatable {
+public enum MessageFilter: Sendable, Hashable {
     case all
     case favorite
     case important
@@ -80,6 +80,16 @@ public protocol MessageOrganizationRepository: Sendable {
     func messageIDs(filter: MessageFilter, limit: Int, offset: Int) async throws -> [String]
 }
 
+/// 消息标签规则（唯一事实源）。
+public enum MessageTagRules {
+    /// 标签长度上限（字符数）
+    public static let maxLength = 24
+}
+
 public extension MessageOrganizationRepository {
-    static var maxTagLength: Int { 24 }
+    static var maxTagLength: Int { MessageTagRules.maxLength }
+
+    /// 实例级访问标签长度上限。
+    /// 协议静态成员不能稳定地通过协议元类型访问，界面层统一走这个实例属性。
+    var tagLimit: Int { MessageTagRules.maxLength }
 }

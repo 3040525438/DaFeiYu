@@ -14,6 +14,10 @@ struct ChatView: View {
     @State private var showConversations = false
     @State private var showVoiceInput = false
     @State private var showImageUnderstanding = false
+    /// D25：全局搜索
+    @State private var showGlobalSearch = false
+    /// D26：消息整理
+    @State private var showOrganizer = false
     private let container: AppContainer
     private let onOpenSettings: () -> Void
 
@@ -75,6 +79,16 @@ struct ChatView: View {
                             showThemeSheet = true
                         } label: {
                             Label("外观", systemImage: "paintpalette")
+                        }
+                        Button {
+                            showGlobalSearch = true
+                        } label: {
+                            Label("全局搜索", systemImage: "magnifyingglass.circle")
+                        }
+                        Button {
+                            showOrganizer = true
+                        } label: {
+                            Label("消息整理", systemImage: "tag")
                         }
                         Divider()
                         Button {
@@ -153,6 +167,18 @@ struct ChatView: View {
         }
         .sheet(isPresented: $showConversations) {
             ConversationListView(viewModel: viewModel)
+        }
+        .sheet(isPresented: $showGlobalSearch) {
+            GlobalSearchView(container: container) { conversationID, messageID in
+                Task { await viewModel.openGlobalSearchHit(conversationID: conversationID, messageID: messageID) }
+            }
+        }
+        .sheet(isPresented: $showOrganizer) {
+            MessageOrganizerView(container: container)
+                .onDisappear {
+                    // 整理会改动收藏 / 标签，回到聊天后刷新当前消息的标记状态
+                    Task { await viewModel.refreshCurrentMessages() }
+                }
         }
         .sheet(item: $viewModel.editingMessage) { message in
             EditMessageSheet(

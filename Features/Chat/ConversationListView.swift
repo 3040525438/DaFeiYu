@@ -15,6 +15,10 @@ struct ConversationListView: View {
     @State private var renameText = ""
     @State private var pendingDelete: ConversationSummary?
     @State private var showArchived = false
+    /// D51：批量归档选择态
+    @State private var isSelecting = false
+    @State private var selection: Set<String> = []
+    @State private var showBatchArchiveConfirm = false
 
     var body: some View {
         NavigationStack {
@@ -24,7 +28,11 @@ struct ConversationListView: View {
                         Text("还没有会话").foregroundStyle(.secondary)
                     }
                     ForEach(viewModel.conversations) { item in
-                        row(item)
+                        if isSelecting {
+                            selectionRow(item)
+                        } else {
+                            row(item)
+                        }
                     }
                 }
 
@@ -54,16 +62,66 @@ struct ConversationListView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("完成") { dismiss() }
+                    if isSelecting {
+                        Button("取消") {
+                            isSelecting = false
+                            selection.removeAll()
+                        }
+                    } else {
+                        Button("完成") { dismiss() }
+                    }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        newTitle = ""
-                        showCreate = true
-                    } label: {
-                        Image(systemName: "square.and.pencil")
+                    if isSelecting {
+                        Button(selection.count == viewModel.conversations.count && !viewModel.conversations.isEmpty ? "取消全选" : "全选") {
+                            if selection.count == viewModel.conversations.count && !viewModel.conversations.isEmpty {
+                                selection.removeAll()
+                            } else {
+                                selection = Set(viewModel.conversations.map(\.id))
+                            }
+                        }
+                        .disabled(viewModel.conversations.isEmpty)
+                    } else {
+                        HStack(spacing: 14) {
+                            Button {
+                                isSelecting = true
+                                selection.removeAll()
+                            } label: {
+                                Image(systemName: "checkmark.circle")
+                            }
+                            .accessibilityLabel("批量归档")
+                            Button {
+                                newTitle = ""
+                                showCreate = true
+                            } label: {
+                                Image(systemName: "square.and.pencil")
+                            }
+                            .accessibilityLabel("新建会话")
+                        }
                     }
-                    .accessibilityLabel("新建会话")
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                if isSelecting {
+                    batchBar
+                }
+            }
+            .alert("批量归档", isPresented: $showBatchArchiveConfirm) {
+                Button("取消", role: .cancel) {}
+                Button("归档") {
+                    let ids = selection.sorted()
+                    Task { await viewModel.archiveConversations(ids: ids) }
+                    isSelecting = false
+                    selection.removeAll()
+                }
+            } message: {
+                Text("将归档选中的 \(selection.count) 个会话。归档后仍可进入，也能被全局搜索检索；主会话会被自动跳过。")
+            }
+            .onChange(of: viewModel.conversationBatchMessage) { _, value in
+                guard value != nil else { return }
+                Task {
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    viewModel.clearBatchMessage()
                 }
             }
             .alert("新建会话", isPresented: $showCreate) {
@@ -117,6 +175,78 @@ struct ConversationListView: View {
             get: { pendingDelete != nil },
             set: { if !$0 { pendingDelete = nil } }
         )
+    }
+
+    // MARK: - 批量归档（D51）
+
+    private var batchBar: some View {
+        VStack(spacing: 6) {
+            if let message = viewModel.conversationBatchMessage {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(DFColor.primary)
+            }
+            if let error = viewModel.errorText {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+            HStack {
+                Text("已选 \(selection.count) 个")
+                    .font(.caption)
+                    .foregroundStyle(DFColor.inkMuted)
+                Spacer()
+                Button {
+                    showBatchArchiveConfirm = true
+                } label: {
+                    Label("归档选中", systemImage: "archivebox")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(DFColor.primarySoft)
+                        .foregroundStyle(DFColor.primary)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(selection.isEmpty)
+            }
+            .padding(.horizontal, 14)
+        }
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial)
+    }
+
+    @ViewBuilder
+    private func selectionRow(_ item: ConversationSummary) -> some View {
+        let selected = selection.contains(item.id)
+        Button {
+            if selected {
+                selection.remove(item.id)
+            } else {
+                selection.insert(item.id)
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(selected ? DFColor.primary : DFColor.inkMuted)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.title)
+                        .lineLimit(1)
+                        .foregroundStyle(.primary)
+                    Text(subtitle(item))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 6)
+                if item.kind == "main" {
+                    Text("主线 · 不可归档")
+                        .font(.caption2)
+                        .foregroundStyle(DFColor.inkMuted)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder

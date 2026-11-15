@@ -29,6 +29,49 @@ public struct GRDBAttachmentReferenceService: AttachmentReferenceService, Sendab
         }
     }
 
+    public func library(
+        includeDeleted: Bool,
+        limit: Int,
+        offset: Int
+    ) async throws -> [AttachmentLibraryItem] {
+        do {
+            return try await database.dbQueue.read { db in
+                let rows = try Row.fetchAll(
+                    db,
+                    sql: """
+                    SELECT a.id, a.sha256, a.kind, a.rel_path, a.byte_size, a.mime,
+                           a.width, a.height, a.duration_ms, a.thumbnail_rel_path,
+                           a.created_at, a.deleted_at,
+                           (SELECT COUNT(*) FROM message_attachments ma
+                            WHERE ma.attachment_id = a.id) AS total_refs,
+                           (SELECT COUNT(*) FROM message_attachments ma
+                            JOIN messages m ON m.id = ma.message_id
+                            WHERE ma.attachment_id = a.id
+                              AND m.deleted_at IS NULL) AS live_refs
+                    FROM attachments a
+                    WHERE (? = 1 OR a.deleted_at IS NULL)
+                    ORDER BY a.created_at DESC, a.id ASC
+                    LIMIT ? OFFSET ?
+                    """,
+                    arguments: [
+                        includeDeleted ? 1 : 0,
+                        min(max(limit, 1), 200),
+                        max(offset, 0)
+                    ]
+                )
+                return try rows.map { row in
+                    AttachmentLibraryItem(
+                        record: try Self.decodeRecord(row),
+                        totalReferences: try row.decode(Int.self, forColumn: "total_refs"),
+                        liveReferences: try row.decode(Int.self, forColumn: "live_refs")
+                    )
+                }
+            }
+        } catch let error as DatabaseError {
+            throw DFError.database(error.message ?? "数据库操作失败")
+        }
+    }
+
     public func deleteAttachment(id: String, at millis: Int64, force: Bool) async throws {
         do {
             try await database.write { db in
@@ -164,6 +207,24 @@ public struct GRDBAttachmentReferenceService: AttachmentReferenceService, Sendab
             totalReferences: messageIDs.count,
             liveReferences: live.count,
             messageIDs: messageIDs
+        )
+    }
+
+    /// 附件记录解码（列名与 `GRDBAttachmentRepository.columns` 保持一致）
+    private static func decodeRecord(_ row: Row) throws -> AttachmentRecord {
+        AttachmentRecord(
+            id: try row.decode(String.self, forColumn: "id"),
+            sha256: try row.decode(String.self, forColumn: "sha256"),
+            kind: try row.decode(String.self, forColumn: "kind"),
+            relPath: try row.decode(String.self, forColumn: "rel_path"),
+            byteSize: try row.decode(Int64.self, forColumn: "byte_size"),
+            mime: try row.decode(String.self, forColumn: "mime"),
+            createdAt: try row.decode(Int64.self, forColumn: "created_at"),
+            width: Int.fromDatabaseValue(row["width"]),
+            height: Int.fromDatabaseValue(row["height"]),
+            durationMs: Int.fromDatabaseValue(row["duration_ms"]),
+            thumbnailRelPath: String.fromDatabaseValue(row["thumbnail_rel_path"]),
+            deletedAt: Int64.fromDatabaseValue(row["deleted_at"])
         )
     }
 

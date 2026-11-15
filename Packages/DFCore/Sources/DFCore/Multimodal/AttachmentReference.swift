@@ -30,6 +30,30 @@ public struct AttachmentReference: Sendable, Equatable {
     }
 }
 
+/// 附件库列表项（D57）：附件本体 + 引用统计。
+///
+/// 界面据此区分"使用中 / 仅有陈旧引用 / 完全无引用"，
+/// 避免把已删除消息留下的陈旧关联当成仍在使用。
+public struct AttachmentLibraryItem: Sendable, Equatable, Identifiable {
+    public var record: AttachmentRecord
+    public var totalReferences: Int
+    public var liveReferences: Int
+
+    public var id: String { record.id }
+
+    /// 仍有未删除消息引用：默认禁止删除
+    public var isInUse: Bool { liveReferences > 0 }
+
+    /// 只剩已删除消息的关联：可以清理，但删除前要提示会失去恢复线索
+    public var hasStaleReferencesOnly: Bool { liveReferences == 0 && totalReferences > 0 }
+
+    public init(record: AttachmentRecord, totalReferences: Int, liveReferences: Int) {
+        self.record = record
+        self.totalReferences = totalReferences
+        self.liveReferences = liveReferences
+    }
+}
+
 public enum AttachmentReferenceError: Error, Equatable, CustomStringConvertible {
     case notFound
     /// 仍被消息引用，且调用方未要求强制删除
@@ -53,6 +77,10 @@ public enum AttachmentReferenceError: Error, Equatable, CustomStringConvertible 
 /// - 批量清理只处理"无活引用"的附件，返回删除与跳过数量，绝不静默删被引用数据。
 public protocol AttachmentReferenceService: Sendable {
     func references(attachmentID: String) async throws -> AttachmentReference
+
+    /// 附件库列表：按创建时间倒序，逐条带引用统计。
+    /// `includeDeleted == false` 时只返回未软删附件。
+    func library(includeDeleted: Bool, limit: Int, offset: Int) async throws -> [AttachmentLibraryItem]
 
     /// 删除附件（软删）。被引用且 `force == false` 时抛 `inUse`。
     func deleteAttachment(id: String, at millis: Int64, force: Bool) async throws
