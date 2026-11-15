@@ -136,10 +136,10 @@ public final class BackupService: @unchecked Sendable {
     /// 本机安装标识（D72）：首次使用时生成并存入 `settings`，失败返回 nil（不阻塞备份）。
     public func deviceID() async -> String? {
         let settings = GRDBSettingsRepository(database: database)
-        if let existing = try? await settings.string(for: Self.deviceIDKey),
-           let trimmed = existing?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !trimmed.isEmpty {
-            return trimmed
+        // `try?` 会把 `String?` 展平为 `String?`，这里只绑定一次
+        if let existing = try? await settings.string(for: Self.deviceIDKey) {
+            let trimmed = existing.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return trimmed }
         }
         let generated = UUID().uuidString
         try? await settings.set(generated, for: Self.deviceIDKey)
