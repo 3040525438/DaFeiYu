@@ -90,6 +90,12 @@ struct DiaryEditorView: View {
         relationshipChange.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// 是否填写了任一结构化字段（决定能否提炼人格提案）
+    private var hasStructuredNotes: Bool {
+        ![sharedExperience, observation, feeling, relationshipChange]
+            .allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
     // MARK: - 日期与情绪
 
     private var dateCard: some View {
@@ -202,7 +208,7 @@ struct DiaryEditorView: View {
                 Text("结构化记录")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(DFColor.ink)
-                Text("可只写其中几项；留空表示这一天没有需要单独记录的内容。")
+                Text("可只写其中几项；留空表示这一天没有需要单独记录的内容。观察与关系变化可在保存后提炼成待确认的人格提案。")
                     .font(.system(size: 10))
                     .foregroundStyle(DFColor.inkMuted)
             }
@@ -319,6 +325,21 @@ struct DiaryEditorView: View {
                 .disabled(isWorking || savedMemoryID != nil)
             }
 
+            if savedEntryID != nil && hasStructuredNotes {
+                Button {
+                    Task { await proposePersona() }
+                } label: {
+                    Text("从日记提炼人格提案")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(DFColor.primaryDeep)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 11)
+                        .background(DFColor.lilacSoft, in: RoundedRectangle(cornerRadius: DFRadius.card, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .disabled(isWorking)
+            }
+
             if savedEntryID != nil {
                 Button(role: .destructive) {
                     confirmDelete = true
@@ -399,6 +420,34 @@ struct DiaryEditorView: View {
                 message = "正文为空，暂无可沉淀内容"
             }
             await onSaved()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// D18：把「观察 / 关系变化」提炼成待审批的人格提案
+    private func proposePersona() async {
+        guard let id = savedEntryID, !isWorking else { return }
+        isWorking = true
+        errorMessage = nil
+        message = nil
+        defer { isWorking = false }
+
+        do {
+            guard let entry = try await container.diary.entry(id: id) else {
+                errorMessage = "日记不存在，请先保存再提炼"
+                return
+            }
+            let service = DiaryPersonaProposalService(
+                database: container.database,
+                growth: container.personaGrowth
+            )
+            let outcome = try await service.propose(from: entry)
+            if outcome.proposalIDs.isEmpty {
+                message = "没有新的可提炼内容（已有相同条目或待审批提案）"
+            } else {
+                message = "已生成 \(outcome.proposalIDs.count) 条待审批的人格提案，请到审批中心确认"
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
