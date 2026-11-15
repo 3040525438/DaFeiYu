@@ -1,0 +1,72 @@
+import Foundation
+
+// MARK: - 附件引用与清理（D57）
+
+/// 一个附件的引用情况。
+///
+/// `liveReferences` 只统计**未软删消息**的引用：已删除消息留下的关联行视为陈旧引用，
+/// 不应阻止用户清理附件，但也不主动删除，便于恢复。
+public struct AttachmentReference: Sendable, Equatable {
+    public var attachmentID: String
+    /// 全部关联消息数（含已软删消息）
+    public var totalReferences: Int
+    /// 未软删消息的引用数
+    public var liveReferences: Int
+    public var messageIDs: [String]
+
+    /// 只要还有活引用就算"使用中"，删除前必须让用户确认
+    public var isInUse: Bool { liveReferences > 0 }
+
+    public init(
+        attachmentID: String,
+        totalReferences: Int,
+        liveReferences: Int,
+        messageIDs: [String]
+    ) {
+        self.attachmentID = attachmentID
+        self.totalReferences = totalReferences
+        self.liveReferences = liveReferences
+        self.messageIDs = messageIDs
+    }
+}
+
+public enum AttachmentReferenceError: Error, Equatable, CustomStringConvertible {
+    case notFound
+    /// 仍被消息引用，且调用方未要求强制删除
+    case inUse(messageIDs: [String])
+
+    public var description: String {
+        switch self {
+        case .notFound:
+            return "附件不存在"
+        case let .inUse(messageIDs):
+            return "附件仍被 \(messageIDs.count) 条消息引用，需确认后再删除"
+        }
+    }
+}
+
+/// 附件引用检查与清理（D57）。
+///
+/// 口径：
+/// - 删除前必须先查引用，被活消息引用时默认拒绝删除（抛 `inUse`），由上层弹确认；
+/// - `force == true` 时先解除全部关联再软删附件（**不删磁盘文件、不删派生文本**）；
+/// - 批量清理只处理"无活引用"的附件，返回删除与跳过数量，绝不静默删被引用数据。
+public protocol AttachmentReferenceService: Sendable {
+    func references(attachmentID: String) async throws -> AttachmentReference
+
+    /// 删除附件（软删）。被引用且 `force == false` 时抛 `inUse`。
+    func deleteAttachment(id: String, at millis: Int64, force: Bool) async throws
+
+    /// 解除该附件的全部消息关联，返回解除条数。
+    @discardableResult
+    func unlinkAll(attachmentID: String) async throws -> Int
+
+    /// 早于指定时间且无任何关联的附件（清理候选，只报告不删除）
+    func cleanupCandidates(before millis: Int64, limit: Int) async throws -> [AttachmentRecord]
+
+    /// 批量清理：逐个检查引用，被活消息引用的跳过。返回 (已删除, 因被引用跳过)。
+    func cleanup(
+        attachmentIDs: [String],
+        at millis: Int64
+    ) async throws -> (deleted: Int, skippedInUse: Int)
+}
