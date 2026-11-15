@@ -5,9 +5,10 @@ import DFCore
 
 /// v13（D10 成本台账）迁移安全
 final class MigrationV13Tests: XCTestCase {
-    func testLatestIsV13() {
-        XCTAssertEqual(Migrations.latest, .v13_cost_ledger)
-        XCTAssertEqual(MigrationID.allCases.last, .v13_cost_ledger)
+    func testV13RemainsInCanonicalOrder() {
+        // 后续迁移追加后，最新版本由 MigrationV14Tests 断言；这里只保证 v13 仍在规范序列中
+        XCTAssertNotNil(MigrationID.allCases.firstIndex(of: .v13_cost_ledger))
+        XCTAssertEqual(Migrations.latest, MigrationID.allCases.last)
     }
 
     func testMigrationCreatesCostLedgerAndPassesGate() async throws {

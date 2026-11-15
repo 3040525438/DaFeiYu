@@ -34,6 +34,8 @@ public final class BackupService: @unchecked Sendable {
         "persona_versions",
         "conversations",
         "messages",
+        // 消息标签是 messages 的子表：必须排在 messages 之后（恢复时子表先清空）
+        "message_tags",
         "memories",
         "memory_sources",
         "memory_versions",

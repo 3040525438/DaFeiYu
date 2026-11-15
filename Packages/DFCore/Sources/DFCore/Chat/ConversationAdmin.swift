@@ -95,6 +95,23 @@ public struct ConversationDeletionResult: Sendable, Equatable {
     }
 }
 
+/// 批量归档结果。
+///
+/// `affected` 只统计**状态真正变化**的会话（重复归档同一批不重复计数），
+/// 这样界面提示"已归档 N 个"不会虚高。
+public struct ConversationBatchArchiveResult: Sendable, Equatable {
+    public var affected: Int
+    /// main 会话受保护，不计入 `affected`
+    public var skippedProtected: Int
+    public var notFound: Int
+
+    public init(affected: Int = 0, skippedProtected: Int = 0, notFound: Int = 0) {
+        self.affected = affected
+        self.skippedProtected = skippedProtected
+        self.notFound = notFound
+    }
+}
+
 /// 多会话管理：建 / 改名 / 置顶 / 归档 / 排序 / 未读 / 删除。
 ///
 /// 排序口径固定为：置顶优先 → `sort_index` 升序 → 最近活动倒序 → id 升序（保证稳定）。
@@ -110,6 +127,15 @@ public protocol ConversationAdminRepository: Sendable {
 
     /// 归档 / 取消归档。main 会话禁止归档。
     func setArchived(id: String, archived: Bool, at millis: Int64) async throws
+
+    /// 批量归档 / 取消归档（单事务）。main 会话跳过并计入 `skippedProtected`。
+    /// 归档只影响列表可见性与分组，**不影响全文检索**（D51：归档仍可被搜到）。
+    @discardableResult
+    func setArchivedBatch(
+        ids: [String],
+        archived: Bool,
+        at millis: Int64
+    ) async throws -> ConversationBatchArchiveResult
 
     /// 按给定顺序重排 `sort_index`；未出现在 `ids` 中的会话保持相对顺序排在后面。
     func reorder(ids: [String]) async throws

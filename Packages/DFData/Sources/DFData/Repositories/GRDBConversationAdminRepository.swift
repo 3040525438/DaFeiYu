@@ -117,6 +117,47 @@ public struct GRDBConversationAdminRepository: ConversationAdminRepository, Send
         }
     }
 
+    /// 批量归档：单事务完成，main 会话跳过，重复归档不重复计数。
+    @discardableResult
+    public func setArchivedBatch(
+        ids: [String],
+        archived: Bool,
+        at millis: Int64
+    ) async throws -> ConversationBatchArchiveResult {
+        do {
+            return try await database.write { db in
+                var result = ConversationBatchArchiveResult()
+                for id in Set(ids) {
+                    guard let row = try Row.fetchOne(
+                        db,
+                        sql: "SELECT kind, archived_at FROM conversations WHERE id = ?",
+                        arguments: [id]
+                    ) else {
+                        result.notFound += 1
+                        continue
+                    }
+                    let kind = try row.decode(String.self, forColumn: "kind")
+                    if kind == "main" {
+                        result.skippedProtected += 1
+                        continue
+                    }
+                    let current = Int64.fromDatabaseValue(row["archived_at"])
+                    let target: Int64? = archived ? millis : nil
+                    // 已是目标状态：不写库、不计数，保证批量操作幂等
+                    if (current == nil) == (target == nil) { continue }
+                    try db.execute(
+                        sql: "UPDATE conversations SET archived_at = ? WHERE id = ?",
+                        arguments: [target, id]
+                    )
+                    result.affected += 1
+                }
+                return result
+            }
+        } catch {
+            throw GRDBErrorMapper.map(error)
+        }
+    }
+
     // MARK: - 排序
 
     public func reorder(ids: [String]) async throws {
