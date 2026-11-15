@@ -300,6 +300,11 @@ struct SettingsView: View {
             } label: {
                 Label("权限", systemImage: "hand.raised")
             }
+            NavigationLink {
+                BackgroundSettingsView()
+            } label: {
+                Label("后台与运行方式", systemImage: "hourglass")
+            }
         } header: {
             sectionHeader("隐私与数据", icon: "shield.lefthalf.filled")
         } footer: {
