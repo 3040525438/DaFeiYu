@@ -159,7 +159,7 @@
 | D59 | 隐私说明/数据流向/授权记录/撤销/导出入口 | 部分实现 | `PrivacyConsentKind` 6 类说明与授权记录 + `PrivacySettingsView` 撤销 + 删除入口；数据流向与导出入口未做 | `PrivacyGateTests`(6)、`PrivacyGateServiceTests`(7) | W9-4 |
 | D60 | 模型下载默认 Wi-Fi、可蜂窝、暂停续传、显示存储 | 已实现（含 App 接线） | 下载器（`f8a1693`）+ `WiFiOnlyNetworkGate`（`NWPathMonitor`）+ 模型管理页进度/存储（`813b0ad`） | `LocalModelTests`(10) | W5-1（已完成） |
 | D61 | 模型文件可独立选择备份；版本/来源/校验和/兼容性 | 部分实现 | 注册表含版本/来源/校验和/上下文；独立备份选择未做 | `LocalModelTests`(10) | W5-1、W9-2 |
-| D62 | 高度自主验收（主动聊天/记忆整理/回顾/独立思考/关联/建议 + 记录） | 部分完成（门禁与闭环已验收；内容能力缺 5 项） | `HighAutonomyAcceptanceTests` 服务级端到端 6 场景：主动聊天闭环、通知未授权拦截、免打扰只拦打扰类、超预算拦截、自主建会话+复用、行为记录可回溯（`dd00bc2`/`1e98014`）。**未实现**：主动回顾近期经历、历史记忆关联、发现值得记录的经历、识别观点变化、主动提出回顾/修正建议——需新增内容生成链路，D62 不得记为完成 | `HighAutonomyAcceptanceTests`(6)、`ProactiveIntentServiceTests`、`ProactiveConversationServiceTests` | W8C |
+| D62 | 高度自主验收（主动聊天/记忆整理/回顾/独立思考/关联/建议 + 记录） | 已实现有证据（服务级闭环 + 五类内容能力；真机 UI/后台唤醒待验） | `HighAutonomyAcceptanceTests` 服务级端到端 7 场景：主动聊天闭环、通知未授权拦截、免打扰只拦打扰类、超预算拦截、自主建会话+复用、行为记录可回溯、五类洞察提案（`dd00bc2`/`1e98014`/`c123e2a`/`8f0a289`）。内容能力：`ReflectionInsight`（闭集 5 类 + 严格 JSON + 证据逐字校验 + 置信度夹取 + 必须用户确认规则）+ `AutonomyInsightService`（证据过滤 → 目标记忆存在性校验 → 只落 `proposals` 待确认提案，不写记忆、不直接打扰、同类不重复）。**剩余缺口**：真机 UI 展示与 iOS 后台唤醒验收（非代码缺口） | `ReflectionInsightTests`(20)、`AutonomyInsightServiceTests`(9)、`HighAutonomyAcceptanceTests`(7) | W8C、W9D |
 
 ### 3.8 第八轮（D63–D70）：安全、设置、长期维护
 
@@ -167,12 +167,12 @@
 |---|---|---|---|---|---|
 | D63 | Face ID、独立密码、后台锁定、失败保护、锁定时间 | 已实现 | `PrivacyGate`（状态机/密码哈希/失败锁定）+ `AppLockController` + `AppLockView` + `Info.plist NSFaceIDUsageDescription` | `PrivacyGateTests`(6)、`PrivacyGateServiceTests`(7)（Face ID 真机待验） | W9-7（代码完成） |
 | D64 | 首启向导（可跳过非必要步骤） | 已实现 | `OnboardingView`（4 步，可跳过）+ `onboarding.completed.v1` + `RootView` 引导 | 编译期校验 | W10-1（已完成） |
-| D65 | 主题/背景/气泡/字体/头像 + 恢复默认 | 部分实现 | `DFColor/DFMetrics/DFMotion/MessageBubble` | — | W2-7 |
+| D65 | 主题/背景/气泡/字体/头像 + 恢复默认 | 已实现有证据（App 编译待手动触发） | `ChatTheme`（主题/背景/气泡/字号/头像 + **appearance：跟随系统/浅色/深色**，旧 JSON 缺键回落、非法值归一）+ `RootView.preferredColorScheme` 全局应用 + `.chatThemeChanged` 广播 + 聊天页外观弹层 + 设置页外观入口（`AppearanceSettingsView`，含当前摘要与恢复默认），`5d2e6be` | `ChatThemeAppearanceTests`(5)、`ChatInteractionTests` 主题用例 | W2-7、W9D |
 | D66 | 存储分类展示、清理建议、空间预警、不自动删重要数据 | 已实现 | `DiagnosticsView`（数据库/附件/备份分类 + 空间预警）+ `DiagnosticsService.storageUsage`；不自动删除 | `DiagnosticsTests`(7) | W10-4（已完成） |
 | D67 | 升级前检查/备份/迁移/兼容/失败恢复/记录/回退 | 部分实现 | `AppDatabase.upgradeOnLaunch`、`retryMigration`、`schema_meta`、`MigrationID` | `MigrationSafetyTests.testT20/T21/T22` | W1-7 |
 | D68 | 自主程度分项控制、暂停、恢复默认、执行记录 | 已实现（数据层） | `AutonomyService.savePolicy/pause/resume/resetToDefault` + `autonomy_controls` + `autonomy_runs` | `testSavePolicyPersistsAndIsReadBack`、`testPauseBlocksThenResumeAllows`、`testResetToDefault` | W7-2 |
-| D69 | 权限按需申请、管理、状态说明、拒绝后替代方案 | 部分实现 | `OnboardingView` 隐私授权 + `PrivacySettingsView` 状态与撤销 + 语音/相册按需申请 | `PrivacyGateTests`(6) | W10-2 |
-| D70 | 版本号/更新日志/反馈/诊断/兼容/健康检查/风险提示 | 部分实现 | `IntegrityChecker` + `DiagnosticExporter`（脱敏诊断包）+ 存储分类与空间预警 + About 版本号；更新日志与反馈入口未做 | `DiagnosticsTests`(7) | W10-3（诊断已完成） |
+| D69 | 权限按需申请、管理、状态说明、拒绝后替代方案 | 已实现有证据（App 编译待手动触发） | `PermissionAdvisor`（三类权限、状态归一、启动永不申请、仅首次使用可申请、拒绝→系统设置、系统限制不重复询问、每类用途与替代方案）+ `PermissionCenterView`（真实系统状态 + 按需申请 + 去系统设置）；设置页入口（`abf2940`） | `PermissionAdvisorTests`(8) | W10-2、W9D |
+| D70 | 版本号/更新日志/反馈/诊断/兼容/健康检查/风险提示 | 已实现有证据（App 编译待手动触发） | 版本号 + `ChangelogView` + `IntegrityChecker` 健康检查 + `DiagnosticsView` + `FeedbackReportBuilder`（只含版本与计数、描述截断、固定隐私声明）+ `FeedbackView`（预览/分享/复制）；设置页入口（`abf2940`） | `FeedbackReportTests`(5)、`DiagnosticsTests`(7) | W10-3、W9D |
 
 ### 3.9 第九轮（D71–D72）：多模态与交付范围
 
