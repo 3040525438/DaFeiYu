@@ -39,7 +39,8 @@ struct BackupCenterView: View {
     @State private var exportDocument: BackupExportDocument?
     @State private var exportName = "dafeiyu-backup.dfbk"
     @State private var showExporter = false
-    @State private var mirrorName: String?
+    /// D41：已授权的外部位置（可多个）
+    @State private var locations: [BackupLocation] = []
     @State private var showFolderPicker = false
     @State private var showBackupPicker = false
 
@@ -102,27 +103,34 @@ struct BackupCenterView: View {
             }
 
             Section {
-                if let mirrorName {
-                    LabeledContent("当前目录", value: mirrorName)
-                    Button("重新选择目录…") {
-                        showFolderPicker = true
+                ForEach(locations) { location in
+                    HStack {
+                        Label(location.name, systemImage: "externaldrive")
+                        Spacer()
+                        Button("移除", role: .destructive) {
+                            Task { await removeLocation(location) }
+                        }
+                        .font(.caption)
                     }
-                    .disabled(busy)
-                    Button("清除授权", role: .destructive) {
-                        Task { await clearMirror() }
-                    }
-                } else {
+                }
+                if locations.count < BackupLocationBook.maxCount {
                     Button {
                         showFolderPicker = true
                     } label: {
-                        Label("选择外部备份目录…", systemImage: "folder.badge.plus")
+                        Label(locations.isEmpty ? "选择外部备份目录…" : "添加外部位置…", systemImage: "folder.badge.plus")
+                    }
+                    .disabled(busy)
+                }
+                if !locations.isEmpty {
+                    Button("清除全部授权", role: .destructive) {
+                        Task { await clearLocations() }
                     }
                     .disabled(busy)
                 }
             } header: {
-                Text("外部位置")
+                Text("外部位置（\(locations.count)/\(BackupLocationBook.maxCount)）")
             } footer: {
-                Text("通过系统文件选择器授权目录（可选 iCloud Drive 或第三方网盘在「文件」里的位置）；授权后可将已有备份复制过去。厂商 OAuth 云盘对接尚未内置。")
+                Text("通过系统文件选择器授权目录（可选 iCloud Drive 或第三方网盘在「文件」里的位置）；每个位置各自独立复制，一个失败不影响其他位置。厂商 OAuth 云盘需要 App 注册与密钥，仍未内置。")
             }
         }
         .navigationTitle("备份与恢复")
@@ -130,7 +138,7 @@ struct BackupCenterView: View {
         .background(DFColor.canvas)
         .task {
             await reload()
-            mirrorName = await ExternalBackupLocation.displayName(settings: container.settings)
+            locations = await ExternalBackupLocation.load(settings: container.settings)
         }
         .fileImporter(
             isPresented: $showFolderPicker,
@@ -215,8 +223,8 @@ struct BackupCenterView: View {
                         Task { await prepareExport(manifest) }
                     }
                     .font(.caption)
-                    if mirrorName != nil {
-                        Button("复制到外部") {
+                    if !locations.isEmpty {
+                        Button("备份到 \(locations.count) 个位置") {
                             Task { await copyToExternal(manifest) }
                         }
                         .font(.caption)
@@ -304,9 +312,8 @@ struct BackupCenterView: View {
         case .success(let urls):
             guard let url = urls.first else { return }
             do {
-                try await ExternalBackupLocation.save(url: url, settings: container.settings)
-                mirrorName = await ExternalBackupLocation.displayName(settings: container.settings)
-                status = "外部目录已授权：\(mirrorName ?? url.lastPathComponent)"
+                locations = try await ExternalBackupLocation.add(url: url, settings: container.settings)
+                status = "外部位置已授权：\(url.lastPathComponent)（当前 \(locations.count) 个）"
             } catch {
                 status = "保存目录授权失败：\(error.localizedDescription)"
             }
@@ -334,11 +341,20 @@ struct BackupCenterView: View {
         }
     }
 
-    private func clearMirror() async {
+    private func removeLocation(_ location: BackupLocation) async {
         do {
-            try await ExternalBackupLocation.clear(settings: container.settings)
-            mirrorName = nil
-            status = "已清除外部目录授权（不会删除已复制出去的文件）"
+            locations = try await ExternalBackupLocation.remove(id: location.id, settings: container.settings)
+            status = "已移除外部位置：\(location.name)（不会删除已复制出去的文件）"
+        } catch {
+            status = "移除位置失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func clearLocations() async {
+        do {
+            try await ExternalBackupLocation.clearAll(settings: container.settings)
+            locations = []
+            status = "已清除全部外部位置授权（不会删除已复制出去的文件）"
         } catch {
             status = "清除授权失败：\(error.localizedDescription)"
         }
@@ -347,12 +363,8 @@ struct BackupCenterView: View {
     private func copyToExternal(_ manifest: BackupManifest) async {
         busy = true
         defer { busy = false }
-        do {
-            let target = try await mirror.copy(manifest)
-            status = "已复制到外部目录：\(target.lastPathComponent)"
-        } catch {
-            status = "复制失败：\(error.localizedDescription)"
-        }
+        let results = await mirror.copyToAll(manifest)
+        status = BackupMirrorSummary.text(for: results)
     }
 
     /// 读取备份容器原文件，交给系统导出面板（文件 / 外部分享）
