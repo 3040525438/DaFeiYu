@@ -11,7 +11,7 @@ final class ProviderRequestBodyTests: XCTestCase {
             messages: [ChatTurn(role: .user, text: "在吗")],
             responseFormat: responseFormat
         )
-        let data = try OpenAICompatibleProvider.makeBody(request)
+        let data = try OpenAIWireCodec.makeBody(request)
         return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
 
