@@ -92,7 +92,8 @@ final class PreUpgradeBackupServiceTests: XCTestCase {
             lastRemoved = result.removed
         }
 
-        XCTAssertEqual(lastRemoved.sorted(), [ids[0], ids[1]].sorted())
+        // 第 3 份时清掉最旧，第 4 份时清掉当时最旧的 ids[1]
+        XCTAssertEqual(lastRemoved, [ids[1]])
         XCTAssertEqual(service.existingBackupIDs().sorted(), Array(ids.suffix(2)).sorted())
     }
 

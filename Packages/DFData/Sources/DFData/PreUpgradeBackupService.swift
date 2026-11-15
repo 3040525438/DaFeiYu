@@ -163,8 +163,10 @@ public final class PreUpgradeBackupService: @unchecked Sendable {
     }
 
     private func prune(keeping current: String) -> [String] {
+        // 本次备份目录已经建好，必须先排除，否则会把 current 也算进"旧备份"
+        let existing = existingBackupIDs().filter { $0 != current }
         let expired = PreUpgradeBackupPolicy.expiredDirectoryNames(
-            existing: existingBackupIDs(),
+            existing: existing,
             keeping: retention,
             current: current
         )
