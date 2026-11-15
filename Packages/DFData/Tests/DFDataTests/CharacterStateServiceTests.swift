@@ -21,7 +21,7 @@ final class CharacterStateServiceTests: XCTestCase {
         database = try AppDatabase(paths: DatabasePaths(root: root))
         clock = ClockBox()
         service = CharacterStateService(database: database, now: { [box = clock] in
-            box?.value ?? 0
+            box.value
         })
     }
 
