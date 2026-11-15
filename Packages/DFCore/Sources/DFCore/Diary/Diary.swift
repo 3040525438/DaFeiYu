@@ -154,6 +154,8 @@ public protocol DiaryRepository: Sendable {
     func versions(diaryID: String) async throws -> [DiaryVersion]
 
     func softDelete(id: String, at millis: Int64) async throws
+    /// 只回填沉淀后的记忆 ID，不改正文、不追加版本快照
+    func attachMemory(id: String, memoryID: String, at millis: Int64) async throws
     /// 关键词检索日记正文，返回日记 id（按相关度升序）
     func search(query: String, limit: Int) async throws -> [String]
     /// 重建日记全文索引，返回索引条数

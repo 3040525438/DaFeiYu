@@ -209,6 +209,26 @@ public struct GRDBDiaryRepository: DiaryRepository, Sendable {
         }
     }
 
+    public func attachMemory(id: String, memoryID: String, at millis: Int64) async throws {
+        do {
+            try await database.write { db in
+                guard try Bool.fetchOne(
+                    db,
+                    sql: "SELECT 1 FROM diary_entries WHERE id = ? AND deleted_at IS NULL",
+                    arguments: [id]
+                ) != nil else {
+                    throw DiaryError.notFound
+                }
+                try db.execute(
+                    sql: "UPDATE diary_entries SET memory_id = ?, updated_at = ? WHERE id = ?",
+                    arguments: [memoryID, millis, id]
+                )
+            }
+        } catch {
+            throw GRDBErrorMapper.map(error)
+        }
+    }
+
     public func search(query: String, limit: Int) async throws -> [String] {
         let tokens = V2Memory.bigram(query)
             .split(separator: " ", omittingEmptySubsequences: true)
