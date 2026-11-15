@@ -32,4 +32,17 @@ jobs:
         run: swift test --package-path Packages/DFAI
 
       - name: DFData 单元测试
-        run: swift test --package-path Packages/DFData
+        # 失败时把尾部日志写进 Job Summary，便于在无登录环境下定位失败用例
+        run: |
+          set +e
+          swift test --package-path Packages/DFData 2>&1 | tee /tmp/dfdata.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            {
+              echo '```'
+              tail -n 150 /tmp/dfdata.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
+
