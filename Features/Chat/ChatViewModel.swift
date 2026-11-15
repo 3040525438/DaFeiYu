@@ -113,7 +113,7 @@ final class ChatViewModel: ObservableObject {
             hasModel = (try await container.modelConfigs.defaultConfig()) != nil
             theme = (try? await container.chatTheme.load()) ?? .default
         } catch {
-            errorText = error.localizedDescription
+            errorText = Self.diagnosedMessage(error)
         }
     }
 
@@ -194,7 +194,7 @@ final class ChatViewModel: ObservableObject {
             currentTurnToken = try coordinator.startSend(text: text)
         } catch {
             // 未开轮（协调器已有活跃轮次）：零写入，恢复输入框
-            errorText = error.localizedDescription
+            errorText = Self.diagnosedMessage(error)
             draftSnapshot = nil
             draft = text
             return
@@ -219,7 +219,7 @@ final class ChatViewModel: ObservableObject {
         do {
             currentTurnToken = try coordinator.startRetry(messageID: message.id)
         } catch {
-            errorText = error.localizedDescription
+            errorText = Self.diagnosedMessage(error)
             return
         }
         beginLocalTurn()
@@ -267,7 +267,7 @@ final class ChatViewModel: ObservableObject {
         do {
             currentTurnToken = try coordinator.startContinue(messageID: message.id)
         } catch {
-            errorText = error.localizedDescription
+            errorText = Self.diagnosedMessage(error)
             return
         }
         beginLocalTurn()
@@ -522,7 +522,14 @@ final class ChatViewModel: ObservableObject {
     private static func interactionMessage(_ error: Error) -> String {
         if let interaction = error as? MessageInteractionError { return interaction.description }
         if let admin = error as? ConversationAdminError { return admin.description }
-        return error.localizedDescription
+        return diagnosedMessage(error)
+    }
+
+    /// D53：错误提示带原因与建议，且不把原始错误全文（可能含密钥/路径）直接展示
+    static func diagnosedMessage(_ error: Error) -> String {
+        let diagnosis = ErrorDiagnoser.diagnose(error.localizedDescription)
+        guard let first = diagnosis.suggestions.first else { return diagnosis.headline }
+        return "\(diagnosis.headline)\n\(first)"
     }
 
     // MARK: - W3 多会话操作
@@ -548,7 +555,7 @@ final class ChatViewModel: ObservableObject {
             try await activate(conversationID: id)
             draft = ""
         } catch {
-            errorText = error.localizedDescription
+            errorText = Self.diagnosedMessage(error)
         }
     }
 
@@ -960,7 +967,7 @@ final class ChatViewModel: ObservableObject {
             }
         } catch {
             NSLog("启动恢复失败：\(error.localizedDescription)")
-            errorText = error.localizedDescription
+            errorText = Self.diagnosedMessage(error)
         }
     }
 
@@ -1022,7 +1029,7 @@ final class ChatViewModel: ObservableObject {
             try await container.messages.update(copy)
             messages.removeAll { $0.id == message.id }
         } catch {
-            errorText = error.localizedDescription
+            errorText = Self.diagnosedMessage(error)
         }
     }
 
