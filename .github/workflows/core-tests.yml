@@ -26,10 +26,46 @@ jobs:
         run: swift --version
 
       - name: DFCore 单元测试
-        run: swift test --package-path Packages/DFCore
+        shell: bash
+        run: |
+          set +e
+          swift test --package-path Packages/DFCore 2>&1 | tee /tmp/dfcore.log
+          status=${PIPESTATUS[0]}
+          echo "::notice title=DFCoreStatus::exit=$status"
+          if [ "$status" -ne 0 ]; then
+            grep -E "error: |Test Case .* failed|XCTAssert.*failed|Fatal error|Assertion failed|recorded an issue" /tmp/dfcore.log \
+              | head -n 8 \
+              | while IFS= read -r line; do
+                  echo "::error title=DFCore::${line:0:900}"
+                done
+            {
+              echo '```'
+              tail -n 150 /tmp/dfcore.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
 
       - name: DFAI 单元测试
-        run: swift test --package-path Packages/DFAI
+        shell: bash
+        run: |
+          set +e
+          swift test --package-path Packages/DFAI 2>&1 | tee /tmp/dfai.log
+          status=${PIPESTATUS[0]}
+          echo "::notice title=DFAIStatus::exit=$status"
+          if [ "$status" -ne 0 ]; then
+            grep -E "error: |Test Case .* failed|XCTAssert.*failed|Fatal error|Assertion failed|recorded an issue" /tmp/dfai.log \
+              | head -n 8 \
+              | while IFS= read -r line; do
+                  echo "::error title=DFAI::${line:0:900}"
+                done
+            {
+              echo '```'
+              tail -n 150 /tmp/dfai.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
 
       - name: DFData 单元测试
         # 容器内默认 shell 是 sh，这里显式用 bash 以便拿 PIPESTATUS；
