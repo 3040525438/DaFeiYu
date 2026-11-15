@@ -88,7 +88,7 @@ public final class BackupService: @unchecked Sendable {
                     BackupTableSnapshot(
                         name: table,
                         columns: columns,
-                        rows: rows.map { Self.encode(row: $0, columns: columns) }
+                        rows: try rows.map { try Self.encode(row: $0, columns: columns) }
                     )
                 )
             }
@@ -354,9 +354,13 @@ public final class BackupService: @unchecked Sendable {
         return free.int64Value
     }
 
-    private static func encode(row: Row, columns: [String]) -> [BackupValue] {
-        columns.map { column in
-            let raw = row[column] as? DatabaseValue ?? .null
+    /// 按列顺序把一行编码为 `BackupValue`。
+    ///
+    /// 注意：不要用 `row[列名]` 取值——它在不同 GRDB 版本下可选性不同，
+    /// 一旦退回 `?? .null` 就会把整列写成 NULL（曾导致恢复时 conversations.title 违约）。
+    /// `Row` 本身就是按列顺序的 `DatabaseValue` 集合，直接按序映射最稳。
+    private static func encode(row: Row, columns: [String]) throws -> [BackupValue] {
+        let values: [BackupValue] = row.map { raw in
             switch raw.storage {
             case .null: return .null
             case .int64(let value): return .integer(value)
@@ -365,6 +369,11 @@ public final class BackupService: @unchecked Sendable {
             case .blob(let value): return .blob(value.base64EncodedString())
             }
         }
+        // 宽度不符说明 SELECT 与列清单不同步，宁可让备份失败也不能写出错位数据
+        guard values.count == columns.count else {
+            throw BackupSnapshotError.rowWidthMismatch(table: "encoding")
+        }
+        return values
     }
 
     private static func rebuildSearchIndexes(_ db: Database) throws {
