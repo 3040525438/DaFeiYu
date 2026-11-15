@@ -87,9 +87,9 @@ public final class UserDataExporter: @unchecked Sendable {
                 exported.reserveCapacity(rows.count)
                 for row in rows {
                     var object: [String: Any] = [:]
-                    for (column, value) in row.asDictionary {
+                    for column in row.columnNames {
                         guard !UserDataExporter.excludedColumnNames.contains(column.lowercased()) else { continue }
-                        object[column] = UserDataExporter.jsonSafe(value)
+                        object[column] = UserDataExporter.jsonSafe(row[column])
                     }
                     exported.append(object)
                 }
