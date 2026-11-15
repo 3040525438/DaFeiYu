@@ -15,10 +15,16 @@ struct LocalModelsView: View {
     @State private var pendingRemove: LocalModelRecord?
     @State private var pendingDelete: LocalModelRecord?
 
+    /// D61：独立备份勾选与结果提示
+    @State private var backupSelection: Set<String> = []
+    @State private var backupMessage: String?
+    @State private var isBackingUp = false
+
     var body: some View {
         List {
             summarySection
             modelsSection
+            backupSection
             noteSection
         }
         .listStyle(.insetGrouped)
@@ -78,6 +84,101 @@ struct LocalModelsView: View {
                 )
             }
             await manager.reload()
+        }
+    }
+
+    // MARK: - D61 独立备份
+
+    /// 当前勾选对应的备份计划（可用性、排除原因与体积都由纯逻辑给出）
+    private var backupPlan: LocalModelBackupPlan {
+        LocalModelBackupPolicy.plan(models: manager.models, selectedIDs: backupSelection)
+    }
+
+    private var backupSection: some View {
+        Section {
+            if manager.models.isEmpty {
+                Text("还没有可备份的模型文件")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(manager.models) { model in
+                    backupRow(model)
+                }
+
+                HStack {
+                    Text("已选 \(backupPlan.included.count) 个")
+                        .font(.footnote)
+                    Spacer()
+                    Text(StorageUsage.humanReadable(backupPlan.totalBytes))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                Button {
+                    Task { await runBackup() }
+                } label: {
+                    HStack(spacing: 6) {
+                        if isBackingUp {
+                            ProgressView()
+                        }
+                        Text(isBackingUp ? "正在备份…" : "备份所选模型")
+                    }
+                }
+                .disabled(backupPlan.isEmpty || isBackingUp)
+
+                if let backupMessage {
+                    Text(backupMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            Text("独立备份")
+        } footer: {
+            Text("模型文件体积大且可重新下载，默认不进整体备份；勾选后会先重新校验 SHA-256 再复制。")
+        }
+    }
+
+    private func backupRow(_ model: LocalModelRecord) -> some View {
+        let compatibility = LocalModelBackupPolicy.compatibility(model)
+        return Toggle(
+            isOn: Binding(
+                get: { backupSelection.contains(model.id) },
+                set: { isOn in
+                    if isOn {
+                        backupSelection.insert(model.id)
+                    } else {
+                        backupSelection.remove(model.id)
+                    }
+                }
+            )
+        ) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.name)
+                    .font(.body)
+                Text(
+                    compatibility.isCompatible
+                        ? "\(model.version.isEmpty ? "未标版本" : "v\(model.version)") · \(StorageUsage.humanReadable(model.byteSize))"
+                        : compatibility.text
+                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .disabled(!compatibility.isCompatible)
+    }
+
+    private func runBackup() async {
+        isBackingUp = true
+        backupMessage = nil
+        defer { isBackingUp = false }
+        do {
+            let result = try await container.localModelBackupService
+                .backup(selectedIDs: backupSelection)
+            backupMessage = "已备份 \(result.included.count) 个模型（\(StorageUsage.humanReadable(result.copiedBytes))）到 \(result.directory.lastPathComponent)"
+            backupSelection = []
+        } catch {
+            backupMessage = ErrorDiagnoser.diagnose(error.localizedDescription).headline
         }
     }
 

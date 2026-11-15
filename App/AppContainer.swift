@@ -243,6 +243,11 @@ final class AppContainer: ObservableObject {
         return directory
     }
 
+    /// D61：本地模型独立备份（只复制用户勾选的模型文件）
+    var localModelBackupService: LocalModelBackupService {
+        LocalModelBackupService(database: database)
+    }
+
     /// 本地模型下载器（W5 / D58–D61）：断点续传 + 校验和 + 仅 Wi-Fi。
     func makeLocalModelDownloader() -> LocalModelDownloader {
         LocalModelDownloader(
