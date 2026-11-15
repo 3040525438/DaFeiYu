@@ -149,4 +149,94 @@ final class DiaryTests: XCTestCase {
         let hits = try await repo.search(query: "第一篇", limit: 10)
         XCTAssertEqual(hits.count, 1)
     }
+
+    // MARK: - D34 结构化字段
+
+    func testStructuredFieldsDefaultEmpty() async throws {
+        let entry = try await repo.upsert(request("2026-11-15"), at: 1000)
+        XCTAssertTrue(entry.sharedExperience.isEmpty)
+        XCTAssertTrue(entry.observation.isEmpty)
+        XCTAssertTrue(entry.feeling.isEmpty)
+        XCTAssertTrue(entry.relationshipChange.isEmpty)
+        XCTAssertFalse(entry.relationshipChangeConfirmed)
+        XCTAssertFalse(entry.hasStructuredNotes)
+        XCTAssertFalse(entry.needsRelationshipConfirmation, "没有关系变化时不应提示确认")
+    }
+
+    func testStructuredFieldsPersistAndSnapshot() async throws {
+        let entry = try await repo.upsert(
+            DiaryUpsert(
+                entryDate: "2026-11-15",
+                title: "雨",
+                content: "今天一起在楼下躲雨",
+                moodCode: "warm",
+                sharedExperience: "一起躲雨",
+                observation: "她把伞往我这边偏",
+                feeling: "心里很暖",
+                relationshipChange: "更亲近了一些",
+                relationshipChangeConfirmed: false,
+                changeReason: "初次记录",
+                changedBy: "user"
+            ),
+            at: 1000
+        )
+        XCTAssertEqual(entry.sharedExperience, "一起躲雨")
+        XCTAssertEqual(entry.observation, "她把伞往我这边偏")
+        XCTAssertEqual(entry.feeling, "心里很暖")
+        XCTAssertEqual(entry.relationshipChange, "更亲近了一些")
+        XCTAssertFalse(entry.relationshipChangeConfirmed)
+        XCTAssertTrue(entry.hasStructuredNotes)
+        XCTAssertTrue(entry.needsRelationshipConfirmation)
+
+        let versions = try await repo.versions(diaryID: entry.id)
+        XCTAssertEqual(versions.count, 1)
+        XCTAssertEqual(versions[0].sharedExperience, "一起躲雨")
+        XCTAssertEqual(versions[0].relationshipChange, "更亲近了一些")
+        XCTAssertFalse(versions[0].relationshipChangeConfirmed)
+
+        let confirmed = try await repo.upsert(
+            DiaryUpsert(
+                entryDate: "2026-11-15",
+                title: "雨",
+                content: "今天一起在楼下躲雨",
+                moodCode: "warm",
+                sharedExperience: "一起躲雨",
+                observation: "她把伞往我这边偏",
+                feeling: "心里很暖",
+                relationshipChange: "更亲近了一些",
+                relationshipChangeConfirmed: true,
+                changeReason: "用户确认关系变化",
+                changedBy: "user"
+            ),
+            at: 2000
+        )
+        XCTAssertTrue(confirmed.relationshipChangeConfirmed)
+        XCTAssertFalse(confirmed.needsRelationshipConfirmation)
+
+        let history = try await repo.versions(diaryID: entry.id)
+        XCTAssertEqual(history.map(\.version), [1, 2], "确认关系变化同样要留全量快照")
+        XCTAssertFalse(history[0].relationshipChangeConfirmed)
+        XCTAssertTrue(history[1].relationshipChangeConfirmed)
+    }
+
+    func testStructuredFieldsAreSearchable() async throws {
+        let entry = try await repo.upsert(
+            DiaryUpsert(
+                entryDate: "2026-11-15",
+                content: "普通的一天",
+                observation: "她换了新发绳",
+                changedBy: "user"
+            ),
+            at: 1000
+        )
+        let hits = try await repo.search(query: "新发绳", limit: 10)
+        XCTAssertEqual(hits, [entry.id], "结构化字段也必须进入全文索引")
+
+        _ = try await repo.upsert(
+            DiaryUpsert(entryDate: "2026-11-15", content: "普通的一天", changedBy: "user"),
+            at: 2000
+        )
+        let afterClear = try await repo.search(query: "新发绳", limit: 10)
+        XCTAssertTrue(afterClear.isEmpty, "清空结构化字段后旧索引必须失效")
+    }
 }

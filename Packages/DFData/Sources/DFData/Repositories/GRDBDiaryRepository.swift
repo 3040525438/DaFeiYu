@@ -17,7 +17,8 @@ public struct GRDBDiaryRepository: DiaryRepository, Sendable {
 
     private static let columns = """
     id, entry_date, title, content, mood_code, source, generated_by, is_user_edited,
-    memory_id, created_at, updated_at, deleted_at
+    memory_id, shared_experience, observation, feeling, relationship_change,
+    relationship_change_confirmed, created_at, updated_at, deleted_at
     """
 
     public func upsert(_ request: DiaryUpsert, at millis: Int64) async throws -> DiaryEntry {
@@ -48,13 +49,17 @@ public struct GRDBDiaryRepository: DiaryRepository, Sendable {
                         sql: """
                         UPDATE diary_entries
                         SET title = ?, content = ?, mood_code = ?, source = ?, generated_by = ?,
-                            is_user_edited = ?, memory_id = ?, updated_at = ?
+                            is_user_edited = ?, memory_id = ?, shared_experience = ?, observation = ?,
+                            feeling = ?, relationship_change = ?, relationship_change_confirmed = ?,
+                            updated_at = ?
                         WHERE id = ?
                         """,
                         arguments: [
                             request.title, content, request.moodCode, request.source,
                             request.generatedBy, request.isUserEdited ? 1 : 0,
-                            request.memoryID, millis, diaryID
+                            request.memoryID, request.sharedExperience, request.observation,
+                            request.feeling, request.relationshipChange,
+                            request.relationshipChangeConfirmed ? 1 : 0, millis, diaryID
                         ]
                     )
                 } else {
@@ -63,13 +68,16 @@ public struct GRDBDiaryRepository: DiaryRepository, Sendable {
                         sql: """
                         INSERT INTO diary_entries
                             (id, entry_date, title, content, mood_code, source, generated_by,
-                             is_user_edited, memory_id, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             is_user_edited, memory_id, shared_experience, observation, feeling,
+                             relationship_change, relationship_change_confirmed, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         arguments: [
                             diaryID, request.entryDate, request.title, content, request.moodCode,
                             request.source, request.generatedBy, request.isUserEdited ? 1 : 0,
-                            request.memoryID, millis, millis
+                            request.memoryID, request.sharedExperience, request.observation,
+                            request.feeling, request.relationshipChange,
+                            request.relationshipChangeConfirmed ? 1 : 0, millis, millis
                         ]
                     )
                 }
@@ -83,16 +91,29 @@ public struct GRDBDiaryRepository: DiaryRepository, Sendable {
                 try db.execute(
                     sql: """
                     INSERT INTO diary_entry_versions
-                        (id, diary_id, version, title, content, change_reason, changed_by, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        (id, diary_id, version, title, content, change_reason, changed_by, created_at,
+                         shared_experience, observation, feeling, relationship_change,
+                         relationship_change_confirmed)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     arguments: [
                         UUID().uuidString, diaryID, nextVersion, request.title, content,
-                        request.changeReason, request.changedBy, millis
+                        request.changeReason, request.changedBy, millis,
+                        request.sharedExperience, request.observation, request.feeling,
+                        request.relationshipChange, request.relationshipChangeConfirmed ? 1 : 0
                     ]
                 )
 
-                try Self.index(db, diaryID: diaryID, title: request.title, content: content)
+                try Self.index(
+                    db,
+                    diaryID: diaryID,
+                    title: request.title,
+                    content: content,
+                    structured: [
+                        request.sharedExperience, request.observation,
+                        request.feeling, request.relationshipChange
+                    ]
+                )
 
                 guard let row = try Row.fetchOne(
                     db,
@@ -164,7 +185,9 @@ public struct GRDBDiaryRepository: DiaryRepository, Sendable {
                 try Row.fetchAll(
                     db,
                     sql: """
-                    SELECT id, diary_id, version, title, content, change_reason, changed_by, created_at
+                    SELECT id, diary_id, version, title, content, change_reason, changed_by, created_at,
+                           shared_experience, observation, feeling, relationship_change,
+                           relationship_change_confirmed
                     FROM diary_entry_versions WHERE diary_id = ? ORDER BY version ASC
                     """,
                     arguments: [diaryID]
@@ -175,6 +198,12 @@ public struct GRDBDiaryRepository: DiaryRepository, Sendable {
                         version: try row.decode(Int.self, forColumn: "version"),
                         title: try row.decode(String.self, forColumn: "title"),
                         content: try row.decode(String.self, forColumn: "content"),
+                        sharedExperience: String.fromDatabaseValue(row["shared_experience"]) ?? "",
+                        observation: String.fromDatabaseValue(row["observation"]) ?? "",
+                        feeling: String.fromDatabaseValue(row["feeling"]) ?? "",
+                        relationshipChange: String.fromDatabaseValue(row["relationship_change"]) ?? "",
+                        relationshipChangeConfirmed:
+                            (Int.fromDatabaseValue(row["relationship_change_confirmed"]) ?? 0) != 0,
                         changeReason: try row.decode(String.self, forColumn: "change_reason"),
                         changedBy: try row.decode(String.self, forColumn: "changed_by"),
                         createdAt: try row.decode(Int64.self, forColumn: "created_at")
@@ -263,14 +292,23 @@ public struct GRDBDiaryRepository: DiaryRepository, Sendable {
                 try db.execute(sql: "DELETE FROM diary_fts")
                 let rows = try Row.fetchAll(
                     db,
-                    sql: "SELECT id, title, content FROM diary_entries WHERE deleted_at IS NULL"
+                    sql: """
+                    SELECT id, title, content, shared_experience, observation, feeling, relationship_change
+                      FROM diary_entries WHERE deleted_at IS NULL
+                    """
                 )
                 for row in rows {
                     try Self.index(
                         db,
                         diaryID: try row.decode(String.self, forColumn: "id"),
                         title: try row.decode(String.self, forColumn: "title"),
-                        content: try row.decode(String.self, forColumn: "content")
+                        content: try row.decode(String.self, forColumn: "content"),
+                        structured: [
+                            String.fromDatabaseValue(row["shared_experience"]) ?? "",
+                            String.fromDatabaseValue(row["observation"]) ?? "",
+                            String.fromDatabaseValue(row["feeling"]) ?? "",
+                            String.fromDatabaseValue(row["relationship_change"]) ?? ""
+                        ]
                     )
                 }
                 return rows.count
@@ -282,10 +320,20 @@ public struct GRDBDiaryRepository: DiaryRepository, Sendable {
 
     // MARK: - 内部
 
-    private static func index(_ db: Database, diaryID: String, title: String, content: String) throws {
+    private static func index(
+        _ db: Database,
+        diaryID: String,
+        title: String,
+        content: String,
+        structured: [String] = []
+    ) throws {
         guard try db.tableExists("diary_fts") else { return }
         try db.execute(sql: "DELETE FROM diary_fts WHERE diary_id = ?", arguments: [diaryID])
-        let merged = (title + "\n" + content).trimmingCharacters(in: .whitespacesAndNewlines)
+        // 结构化字段一并进索引，保证"关系变化"等也能被检索到
+        let merged = ([title, content] + structured)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
         guard !merged.isEmpty else { return }
         try db.execute(
             sql: "INSERT INTO diary_fts (diary_id, text_bigram) VALUES (?, ?)",
@@ -323,6 +371,12 @@ public struct GRDBDiaryRepository: DiaryRepository, Sendable {
             generatedBy: String.fromDatabaseValue(row["generated_by"]),
             isUserEdited: (Int.fromDatabaseValue(row["is_user_edited"]) ?? 0) != 0,
             memoryID: String.fromDatabaseValue(row["memory_id"]),
+            sharedExperience: String.fromDatabaseValue(row["shared_experience"]) ?? "",
+            observation: String.fromDatabaseValue(row["observation"]) ?? "",
+            feeling: String.fromDatabaseValue(row["feeling"]) ?? "",
+            relationshipChange: String.fromDatabaseValue(row["relationship_change"]) ?? "",
+            relationshipChangeConfirmed:
+                (Int.fromDatabaseValue(row["relationship_change_confirmed"]) ?? 0) != 0,
             createdAt: try row.decode(Int64.self, forColumn: "created_at"),
             updatedAt: try row.decode(Int64.self, forColumn: "updated_at"),
             deletedAt: Int64.fromDatabaseValue(row["deleted_at"])

@@ -16,11 +16,34 @@ public struct DiaryEntry: Sendable, Equatable, Identifiable {
     public var isUserEdited: Bool
     /// 日记沉淀成的长期记忆
     public var memoryID: String?
+    // MARK: 结构化记录（D34，v12 起）
+    /// 共同经历：第一人称写下"我们一起做了什么"
+    public var sharedExperience: String
+    /// 观察：看到的细节与变化
+    public var observation: String
+    /// 感受：当时的情绪与身体感受
+    public var feeling: String
+    /// 关系变化：自然语言描述，不直接改关系阶段
+    public var relationshipChange: String
+    /// 关系变化是否已由用户确认（未确认只作为观察，不生效）
+    public var relationshipChangeConfirmed: Bool
     public var createdAt: Int64
     public var updatedAt: Int64
     public var deletedAt: Int64?
 
     public var isDeleted: Bool { deletedAt != nil }
+
+    /// 是否填写了任一结构化字段
+    public var hasStructuredNotes: Bool {
+        ![sharedExperience, observation, feeling, relationshipChange]
+            .allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    /// 有需要用户确认的关系变化
+    public var needsRelationshipConfirmation: Bool {
+        !relationshipChange.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !relationshipChangeConfirmed
+    }
 
     public init(
         id: String,
@@ -32,6 +55,11 @@ public struct DiaryEntry: Sendable, Equatable, Identifiable {
         generatedBy: String?,
         isUserEdited: Bool,
         memoryID: String?,
+        sharedExperience: String = "",
+        observation: String = "",
+        feeling: String = "",
+        relationshipChange: String = "",
+        relationshipChangeConfirmed: Bool = false,
         createdAt: Int64,
         updatedAt: Int64,
         deletedAt: Int64?
@@ -45,6 +73,11 @@ public struct DiaryEntry: Sendable, Equatable, Identifiable {
         self.generatedBy = generatedBy
         self.isUserEdited = isUserEdited
         self.memoryID = memoryID
+        self.sharedExperience = sharedExperience
+        self.observation = observation
+        self.feeling = feeling
+        self.relationshipChange = relationshipChange
+        self.relationshipChangeConfirmed = relationshipChangeConfirmed
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt
@@ -58,6 +91,12 @@ public struct DiaryVersion: Sendable, Equatable, Identifiable {
     public var version: Int
     public var title: String
     public var content: String
+    /// 结构化字段同样进快照，保证历史可完整回看（v12 起）
+    public var sharedExperience: String
+    public var observation: String
+    public var feeling: String
+    public var relationshipChange: String
+    public var relationshipChangeConfirmed: Bool
     public var changeReason: String
     /// user / ai / migration
     public var changedBy: String
@@ -69,6 +108,11 @@ public struct DiaryVersion: Sendable, Equatable, Identifiable {
         version: Int,
         title: String,
         content: String,
+        sharedExperience: String = "",
+        observation: String = "",
+        feeling: String = "",
+        relationshipChange: String = "",
+        relationshipChangeConfirmed: Bool = false,
         changeReason: String,
         changedBy: String,
         createdAt: Int64
@@ -78,6 +122,11 @@ public struct DiaryVersion: Sendable, Equatable, Identifiable {
         self.version = version
         self.title = title
         self.content = content
+        self.sharedExperience = sharedExperience
+        self.observation = observation
+        self.feeling = feeling
+        self.relationshipChange = relationshipChange
+        self.relationshipChangeConfirmed = relationshipChangeConfirmed
         self.changeReason = changeReason
         self.changedBy = changedBy
         self.createdAt = createdAt
@@ -110,6 +159,12 @@ public struct DiaryUpsert: Sendable, Equatable {
     public var generatedBy: String?
     public var isUserEdited: Bool
     public var memoryID: String?
+    /// 结构化记录（D34）：共同经历 / 观察 / 感受 / 关系变化
+    public var sharedExperience: String
+    public var observation: String
+    public var feeling: String
+    public var relationshipChange: String
+    public var relationshipChangeConfirmed: Bool
     /// 本次变更原因（写入版本表）
     public var changeReason: String
     /// user / ai / migration
@@ -124,6 +179,11 @@ public struct DiaryUpsert: Sendable, Equatable {
         generatedBy: String? = nil,
         isUserEdited: Bool = false,
         memoryID: String? = nil,
+        sharedExperience: String = "",
+        observation: String = "",
+        feeling: String = "",
+        relationshipChange: String = "",
+        relationshipChangeConfirmed: Bool = false,
         changeReason: String = "",
         changedBy: String = "user"
     ) {
@@ -135,6 +195,11 @@ public struct DiaryUpsert: Sendable, Equatable {
         self.generatedBy = generatedBy
         self.isUserEdited = isUserEdited
         self.memoryID = memoryID
+        self.sharedExperience = sharedExperience
+        self.observation = observation
+        self.feeling = feeling
+        self.relationshipChange = relationshipChange
+        self.relationshipChangeConfirmed = relationshipChangeConfirmed
         self.changeReason = changeReason
         self.changedBy = changedBy
     }

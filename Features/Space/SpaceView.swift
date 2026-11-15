@@ -163,6 +163,17 @@ struct SpaceView: View {
     private var actions: some View {
         VStack(spacing: 8) {
             NavigationLink {
+                DiaryView()
+            } label: {
+                actionRow(
+                    icon: "book.closed",
+                    title: "日记",
+                    detail: "共同经历、观察、感受与关系变化"
+                )
+            }
+            .buttonStyle(.plain)
+
+            NavigationLink {
                 ProactiveView()
             } label: {
                 actionRow(

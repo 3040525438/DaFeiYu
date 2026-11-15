@@ -420,11 +420,22 @@ public final class BackupService: @unchecked Sendable {
             try db.execute(sql: "DELETE FROM diary_fts")
             let rows = try Row.fetchAll(
                 db,
-                sql: "SELECT id, title, content FROM diary_entries WHERE deleted_at IS NULL"
+                sql: """
+                SELECT id, title, content, shared_experience, observation, feeling, relationship_change
+                  FROM diary_entries WHERE deleted_at IS NULL
+                """
             )
             for row in rows {
-                let text = (String.fromDatabaseValue(row["title"]) ?? "")
-                    + " " + (String.fromDatabaseValue(row["content"]) ?? "")
+                let text = [
+                    String.fromDatabaseValue(row["title"]) ?? "",
+                    String.fromDatabaseValue(row["content"]) ?? "",
+                    String.fromDatabaseValue(row["shared_experience"]) ?? "",
+                    String.fromDatabaseValue(row["observation"]) ?? "",
+                    String.fromDatabaseValue(row["feeling"]) ?? "",
+                    String.fromDatabaseValue(row["relationship_change"]) ?? ""
+                ]
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
                 try db.execute(
                     sql: "INSERT INTO diary_fts (diary_id, text_bigram) VALUES (?, ?)",
                     arguments: [String.fromDatabaseValue(row["id"]), V2Memory.bigram(text)]
