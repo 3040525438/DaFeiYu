@@ -82,6 +82,8 @@
 | V2-W7T | D26 标签全局重命名（I-01） | 完成（`bcc6ec7`） | 新增 DFData 5 项 | **通过（`bcc6ec7`，run 43703893472，2m52s，DFCore/DFAI/DFData 全绿）** | `renameTag(_:to:at:)`：单事务 `UPDATE OR IGNORE` + 清理旧行；新旧标签同一归一化口径；与已存在标签合并时只保留一行；空/超长新标签分别抛 `emptyTag`/`tagTooLong`；界面标签胶囊右键「重命名标签…」弹窗并回报影响条数 |
 | V2-W8A | D47 AI 主动创建会话 | 完成（`c7dcf59` + 修复 `effa97f`） | 新增 DFCore 15 项、DFData 9 项、调度 4 项 | **通过（`effa97f`，run 43705600879）**；首轮 `c7dcf59` run 43705107702 失败（标题换行被转空格、同主题判定过窄），已修复 | `NewConversationPolicy` 纯逻辑决策（标题规范化、同主题复用含公共实词片段、去重键、每日 2 个、6 小时间隔、时钟回拨不绕过）；`ProactiveConversationService` 过 `AutonomyGate` 后新建（kind=proactive）或复用，每次判断写 `autonomy_runs`，去重键存 `detail_json` 无新增迁移；`ProactiveScheduler.enqueueNewConversationIfDue` 每天最多一次；`ProactiveIntentService` 新增专用提示词（reason 复用为话题名）；`ProactiveIntentRunner` 新增新会话链路（建会话 → 写开场消息 → 通知） |
 | V2-W8B | D27 附件原图与预览（含 I-02） | 完成（`effa97f`） | 新增 DFData 3 项 | **通过（`effa97f`，run 43705600879）** | `AttachmentReferenceService.record(id:)`；附件库真实缩略图（异步 120pt，原图不常驻内存）、点击原图预览、右键分享；新增 `AttachmentPreviewView`（缩放/双击/平移/还原/分享，无网络请求）；全局搜索附件命中右键「查看原图」 |
+| V2-W8C | D62 高度自主端到端验收（服务级） | 完成可自动验证部分（`dd00bc2` + 修复 `1e98014`） | 新增 DFData 6 项 | **通过（`1e98014`，run 43706422096，3m13s）**；首轮 `dd00bc2` run 43706158788 编译失败（Optional 未解包），已修复 | `HighAutonomyAcceptanceTests` 串联真实 SQLite 与真实服务：①主动聊天闭环（调度 → 生成 → 闸门 → 落库 → 记录 allowed）②通知未授权拦截且不写会话 ③免打扰只拦打扰类、记忆整理/反思放行 ④超自主预算拦截并给原因 ⑤自主建会话 + 同主题复用 ⑥allowed/blocked 均可回溯且 blocked 必带原因。**未覆盖**：主动回顾经历、历史记忆关联、发现值得记录的经历、识别观点变化、提出修正建议——这些内容能力尚未实现，D62 不得据此记为完成 |
+
 
 
 

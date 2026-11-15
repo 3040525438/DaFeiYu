@@ -159,7 +159,7 @@
 | D59 | 隐私说明/数据流向/授权记录/撤销/导出入口 | 部分实现 | `PrivacyConsentKind` 6 类说明与授权记录 + `PrivacySettingsView` 撤销 + 删除入口；数据流向与导出入口未做 | `PrivacyGateTests`(6)、`PrivacyGateServiceTests`(7) | W9-4 |
 | D60 | 模型下载默认 Wi-Fi、可蜂窝、暂停续传、显示存储 | 已实现（含 App 接线） | 下载器（`f8a1693`）+ `WiFiOnlyNetworkGate`（`NWPathMonitor`）+ 模型管理页进度/存储（`813b0ad`） | `LocalModelTests`(10) | W5-1（已完成） |
 | D61 | 模型文件可独立选择备份；版本/来源/校验和/兼容性 | 部分实现 | 注册表含版本/来源/校验和/上下文；独立备份选择未做 | `LocalModelTests`(10) | W5-1、W9-2 |
-| D62 | 高度自主验收（主动聊天/记忆整理/回顾/独立思考/关联/建议 + 记录） | 尚未开发 | — | — | W7-7、W10-5 |
+| D62 | 高度自主验收（主动聊天/记忆整理/回顾/独立思考/关联/建议 + 记录） | 部分完成（门禁与闭环已验收；内容能力缺 5 项） | `HighAutonomyAcceptanceTests` 服务级端到端 6 场景：主动聊天闭环、通知未授权拦截、免打扰只拦打扰类、超预算拦截、自主建会话+复用、行为记录可回溯（`dd00bc2`/`1e98014`）。**未实现**：主动回顾近期经历、历史记忆关联、发现值得记录的经历、识别观点变化、主动提出回顾/修正建议——需新增内容生成链路，D62 不得记为完成 | `HighAutonomyAcceptanceTests`(6)、`ProactiveIntentServiceTests`、`ProactiveConversationServiceTests` | W8C |
 
 ### 3.8 第八轮（D63–D70）：安全、设置、长期维护
 
