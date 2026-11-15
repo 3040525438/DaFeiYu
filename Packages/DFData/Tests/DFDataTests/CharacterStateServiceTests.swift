@@ -123,13 +123,27 @@ final class CharacterStateServiceTests: XCTestCase {
 
     func testEnergyChangeAloneWritesHistory() async throws {
         try await insertCharacter()
+        // 没有任何既有状态时首次写入：历史里没有"前值"，但必须有这条记录
         _ = try await service.update(
             characterID: "ch1", mood: .neutral, energy: 0.6, affinity: 0.5, reason: "精力下降"
         )
+        let first = try await service.history(for: "ch1")
+        XCTAssertEqual(first.count, 1)
+        XCTAssertNil(first[0].fromMood, "首次建立状态没有前值")
+        XCTAssertNil(first[0].fromEnergy)
+        XCTAssertEqual(first[0].toMood, .neutral)
+        XCTAssertEqual(first[0].toEnergy, 0.6)
+
+        // 第二次只改精力：表情不变，也要留痕
+        _ = try await service.update(
+            characterID: "ch1", mood: .neutral, energy: 0.3, affinity: 0.5, reason: "更累了"
+        )
         let history = try await service.history(for: "ch1")
-        XCTAssertEqual(history.count, 1)
-        XCTAssertEqual(history[0].fromMood, history[0].toMood)
-        XCTAssertEqual(history[0].toEnergy, 0.6)
+        XCTAssertEqual(history.count, 2)
+        XCTAssertEqual(history[0].fromMood, .neutral)
+        XCTAssertEqual(history[0].toMood, .neutral)
+        XCTAssertEqual(history[0].fromEnergy, 0.6)
+        XCTAssertEqual(history[0].toEnergy, 0.3)
     }
 
     func testOutOfRangeValuesAreClamped() async throws {
