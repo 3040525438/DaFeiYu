@@ -39,9 +39,9 @@ public enum PreUpgradeBackupPolicy {
 
     /// 计算需要删除的旧备份目录名。
     ///
-    /// - 按名字中的时间戳升序排列；
-    /// - 保留最后 `keeping` 份，并且**永远保留本次新建的 `current`**；
-    /// - `keeping <= 0` 表示只保留本次新建的那一份。
+    /// - `keeping` 是**保留总数（含本次新建的 `current`）**；
+    /// - 按名字中的时间戳升序排列，保留最新的一批；
+    /// - `current` 永远保留；`keeping <= 1` 表示只留本次新建的那一份。
     public static func expiredDirectoryNames(
         existing: [String],
         keeping: Int,
@@ -53,8 +53,8 @@ public enum PreUpgradeBackupPolicy {
             if left != right { return left < right }
             return lhs < rhs
         }
-        let keepCount = max(0, keeping)
-        var keep = Set(ordered.suffix(keepCount))
+        let keepExisting = max(0, keeping - 1)
+        var keep = Set(ordered.suffix(keepExisting))
         keep.insert(current)
         return ordered.filter { !keep.contains($0) }
     }

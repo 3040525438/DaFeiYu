@@ -41,7 +41,8 @@ final class PreUpgradeBackupPolicyTests: XCTestCase {
             keeping: 2,
             current: "300-v3"
         )
-        XCTAssertEqual(expired, ["100-v1"])
+        // 保留总数含本次，所以只留最新的 300，其余两份清理
+        XCTAssertEqual(expired, ["100-v1", "200-v2"])
     }
 
     func testCurrentIsAlwaysKeptEvenWhenRetentionIsZero() {
@@ -61,7 +62,7 @@ final class PreUpgradeBackupPolicyTests: XCTestCase {
             keeping: 2,
             current: "1000000000001-v3"
         )
-        XCTAssertEqual(expired, ["999-v1"])
+        XCTAssertEqual(expired, ["999-v1", "1000000000000-v2"])
     }
 
     func testNonNumericNamesArePrunedFirst() {
