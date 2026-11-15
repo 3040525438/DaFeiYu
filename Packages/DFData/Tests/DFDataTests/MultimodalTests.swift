@@ -312,7 +312,7 @@ final class MultimodalTests: XCTestCase {
         )
         XCTAssertEqual(saved?.text, "今天想跟你说个事")
 
-        let inMessage = try await attachments.attachments(inMessage: "m1")
+        let inMessage = try await attachments.attachments(inMessage: "m1", includeDeleted: false)
         XCTAssertEqual(inMessage.map(\.id), [audio.id], "语音附件必须能按消息取回")
         XCTAssertEqual(inMessage.first?.kind, "audio")
 
