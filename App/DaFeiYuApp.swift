@@ -115,6 +115,9 @@ final class AppBootstrap: ObservableObject {
                 await container.bootstrap()
                 // D09：启动时补一次自动备份检查（每日一次完整备份由策略保证）
                 _ = try? await container.backupScheduler.runIfDue()
+                // N-20：满足"久未说话"时尝试生成一条主动消息（闸门仍会二次校验）
+                _ = try? await container.proactiveScheduler.enqueueDueCheckIn()
+                _ = await ProactiveIntentRunner(container: container).runDueIntents(limit: 1)
             }
         } catch {
             self.errorTitle = "本地数据库无法打开"

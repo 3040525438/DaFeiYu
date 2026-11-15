@@ -53,6 +53,8 @@ final class AppContainer: ObservableObject {
     let proactive: ProactiveMessageService
     /// N-20：主动意图生成（严格 JSON）与过闸门投递
     let intents: ProactiveIntentService
+    /// N-20：把"用户久未说话"变成可执行的主动任务
+    let proactiveScheduler: ProactiveScheduler
     /// W6：人格成长（提案 → 审批 → 版本回退）
     let personaGrowth: PersonaGrowthService
     /// W6：关系档案与阶段确认
@@ -154,6 +156,10 @@ final class AppContainer: ObservableObject {
             database: database,
             autonomy: autonomyService,
             proactive: proactiveService
+        )
+        self.proactiveScheduler = ProactiveScheduler(
+            database: database,
+            autonomy: autonomyService
         )
         self.personaGrowth = PersonaGrowthService(database: database)
         self.relationships = RelationshipService(database: database)

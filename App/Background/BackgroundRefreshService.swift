@@ -84,7 +84,8 @@ final class BackgroundRefreshService: @unchecked Sendable {
             } catch {
                 NSLog("自动备份失败：\(error.localizedDescription)")
             }
-            // N-20：生成意图 → 五重闸门 → 写会话 → 通知；单条失败只影响该任务
+            // N-20：先按"久未说话"规则排任务，再生成意图 → 五重闸门 → 写会话 → 通知
+            _ = try? await container.proactiveScheduler.enqueueDueCheckIn()
             _ = await ProactiveIntentRunner(container: container).runDueIntents(limit: 2)
             task.setTaskCompleted(success: success)
         }
