@@ -277,6 +277,11 @@ struct SettingsView: View {
             Button("运行完整性检查") {
                 Task { await runIntegrityCheck() }
             }
+            NavigationLink {
+                DiagnosticsView()
+            } label: {
+                Label("诊断与存储", systemImage: "stethoscope")
+            }
             if let statusMessage {
                 Text(statusMessage)
                     .font(.caption)
