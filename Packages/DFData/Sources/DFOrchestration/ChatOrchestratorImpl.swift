@@ -22,6 +22,32 @@ package protocol RecoveryBarrierProbing: Sendable {
     func record(_ event: RecoveryBarrierEvent)
 }
 
+/// 回合成功落库后的后置信息（W8-3 记忆抽取入口）。
+public struct ChatTurnCompletion: Sendable, Equatable {
+    public var conversationID: String
+    public var userMessageID: String
+    public var assistantMessageID: String
+    public var userText: String
+    public var assistantText: String
+    public var completedAt: Int64
+
+    public init(
+        conversationID: String,
+        userMessageID: String,
+        assistantMessageID: String,
+        userText: String,
+        assistantText: String,
+        completedAt: Int64
+    ) {
+        self.conversationID = conversationID
+        self.userMessageID = userMessageID
+        self.assistantMessageID = assistantMessageID
+        self.userText = userText
+        self.assistantText = assistantText
+        self.completedAt = completedAt
+    }
+}
+
 /// 编排器依赖集合。全部以协议注入，`DFOrchestration` 因此不需要依赖 `DFAI`。
 public struct ChatOrchestratorDependencies: Sendable {
     public var groups: any MessageGroupRepository
@@ -40,6 +66,9 @@ public struct ChatOrchestratorDependencies: Sendable {
     public var rules: String
     public var limitGroups: Int
     public var budget: PromptBudget
+    /// 回合成功后的后置处理（记忆抽取等）。为 nil 时完全跳过，不影响聊天主流程。
+    /// 以非结构化任务执行，聊天流的取消不会中断它，抽取失败也不会回滚消息。
+    public var onTurnCompleted: (@Sendable (ChatTurnCompletion) async -> Void)?
     /// 恢复屏障探针（S4A-4）。**有意不进入 `public init`**：仅同包测试可写，
     /// 默认 `nil`，此时 `waitForRecoveryBarrier` 只有一次可选链判断，行为与无探针时完全一致。
     package var barrierProbe: (any RecoveryBarrierProbing)?
@@ -56,7 +85,8 @@ public struct ChatOrchestratorDependencies: Sendable {
         corePersona: @escaping @Sendable () async throws -> String = { "" },
         rules: String = PromptComposer.defaultRules,
         limitGroups: Int = 20,
-        budget: PromptBudget = PromptBudget()
+        budget: PromptBudget = PromptBudget(),
+        onTurnCompleted: (@Sendable (ChatTurnCompletion) async -> Void)? = nil
     ) {
         self.groups = groups
         self.turns = turns
@@ -70,6 +100,7 @@ public struct ChatOrchestratorDependencies: Sendable {
         self.rules = rules
         self.limitGroups = limitGroups
         self.budget = budget
+        self.onTurnCompleted = onTurnCompleted
     }
 }
 
@@ -430,11 +461,12 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
 
         let groupID = opened.id
         let assistantID = opened.assistantMessageID ?? assistantMessage.id
+        let userID = opened.userMessageID ?? userMessage.id
         phase = .opening(groupID: groupID, assistantMessageID: assistantID)
         continuation.yield(
             .turnOpened(
                 groupID: groupID,
-                userMessageID: opened.userMessageID ?? userMessage.id,
+                userMessageID: userID,
                 assistantMessageID: assistantID
             )
         )
@@ -573,6 +605,19 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
                 .turnCompleted(groupID: groupID, assistantMessageID: assistantID, citations: kept)
             )
             continuation.finish()
+
+            // 回合后置处理（记忆抽取等）：非结构化任务，聊天取消/流关闭都不影响它。
+            if let onTurnCompleted = deps.onTurnCompleted {
+                let completion = ChatTurnCompletion(
+                    conversationID: conversationID,
+                    userMessageID: userID,
+                    assistantMessageID: assistantID,
+                    userText: trimmed,
+                    assistantText: bubbles.joined(separator: "\n"),
+                    completedAt: Clock.nowMillis()
+                )
+                Task { await onTurnCompleted(completion) }
+            }
         } catch {
             // 事务 B 失败：走补偿；若组已被取消方终结则以库内真实状态为准。
             // 补偿写入**完整原文**（含所有气泡），不能只保住第一条。

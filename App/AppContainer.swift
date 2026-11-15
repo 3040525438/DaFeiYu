@@ -234,6 +234,28 @@ final class AppContainer: ObservableObject {
         let modelConfigs = self.modelConfigs
         let personas = self.personas
         let secureStore = self.secureStore
+        // 回合后置：记忆抽取（W8-3）。关掉开关即完全跳过，不影响聊天。
+        let extraction = MemoryExtractionCoordinator(
+            processing: memoryProcessing,
+            makeRequest: { systemPrompt, userMessage in
+                let config = try await Self.requireDefaultConfig(modelConfigs)
+                return ChatRequest(
+                    model: config.modelID,
+                    systemPrompt: systemPrompt,
+                    messages: [ChatTurn(role: .user, text: userMessage)],
+                    temperature: 0.2,
+                    maxTokens: 700
+                )
+            },
+            makeProvider: {
+                let config = try await Self.requireDefaultConfig(modelConfigs)
+                return try Self.makeProvider(config: config, secureStore: secureStore)
+            },
+            isEnabled: { [settings] in
+                let value = try? await settings.string(for: "memory.extraction.enabled")
+                return value != "false"
+            }
+        )
 
         return ChatOrchestratorDependencies(
             groups: groups,
@@ -262,7 +284,10 @@ final class AppContainer: ObservableObject {
             },
             rules: PromptComposer.defaultRules,
             limitGroups: 20,
-            budget: PromptBudget(totalTokens: 6000)
+            budget: PromptBudget(totalTokens: 6000),
+            onTurnCompleted: { completion in
+                await extraction.handle(completion)
+            }
         )
     }
 
