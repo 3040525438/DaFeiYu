@@ -98,7 +98,7 @@ final class UserDataExporterTests: XCTestCase {
     func testExportIsReadOnly() async throws {
         try await seed()
         _ = try await UserDataExporter(database: database).export()
-        let count = try database.dbQueue.read { db in
+        let count = try await database.dbQueue.read { db in
             try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM messages")
         }
         XCTAssertEqual(count, 1)
