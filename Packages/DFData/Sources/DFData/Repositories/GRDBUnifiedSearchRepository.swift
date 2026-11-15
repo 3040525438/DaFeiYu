@@ -119,7 +119,7 @@ public struct GRDBUnifiedSearchRepository: UnifiedSearchRepository, Sendable {
             let conversationID = try row.decode(String.self, forColumn: "conversation_id")
             let body = try row.decode(String.self, forColumn: "body")
             let role = try row.decode(String.self, forColumn: "role")
-            let conversationTitle = try row.decodeIfPresent(String.self, forColumn: "conversation_title") ?? ""
+            let conversationTitle = String.fromDatabaseValue(row["conversation_title"]) ?? ""
             let speaker = role == "user" ? "我" : "大肥鱼"
             let base = conversationTitle.isEmpty ? "聊天" : conversationTitle
             return UnifiedSearchHit(
@@ -160,8 +160,8 @@ public struct GRDBUnifiedSearchRepository: UnifiedSearchRepository, Sendable {
 
         return try rows.map { row in
             let memoryID = try row.decode(String.self, forColumn: "memory_id")
-            let title = try row.decodeIfPresent(String.self, forColumn: "title") ?? ""
-            let content = try row.decodeIfPresent(String.self, forColumn: "content") ?? ""
+            let title = String.fromDatabaseValue(row["title"]) ?? ""
+            let content = String.fromDatabaseValue(row["content"]) ?? ""
             return UnifiedSearchHit(
                 domain: .memory,
                 targetID: memoryID,
@@ -198,8 +198,8 @@ public struct GRDBUnifiedSearchRepository: UnifiedSearchRepository, Sendable {
         return try rows.map { row in
             let diaryID = try row.decode(String.self, forColumn: "diary_id")
             let entryDate = try row.decode(String.self, forColumn: "entry_date")
-            let title = try row.decodeIfPresent(String.self, forColumn: "title") ?? ""
-            let content = try row.decodeIfPresent(String.self, forColumn: "content") ?? ""
+            let title = String.fromDatabaseValue(row["title"]) ?? ""
+            let content = String.fromDatabaseValue(row["content"]) ?? ""
             return UnifiedSearchHit(
                 domain: .diary,
                 targetID: diaryID,
@@ -255,8 +255,8 @@ public struct GRDBUnifiedSearchRepository: UnifiedSearchRepository, Sendable {
             let attachmentID = try row.decode(String.self, forColumn: "attachment_id")
             // 同一附件只保留首次（最相关）命中
             guard seen.insert(attachmentID).inserted else { continue }
-            let kind = try row.decodeIfPresent(String.self, forColumn: "kind") ?? "file"
-            let body = try row.decodeIfPresent(String.self, forColumn: "body") ?? ""
+            let kind = String.fromDatabaseValue(row["kind"]) ?? "file"
+            let body = String.fromDatabaseValue(row["body"]) ?? ""
             hits.append(
                 UnifiedSearchHit(
                     domain: .attachment,
@@ -264,8 +264,8 @@ public struct GRDBUnifiedSearchRepository: UnifiedSearchRepository, Sendable {
                     title: "附件 · \(kind)",
                     snippet: SearchSnippet.make(text: body, query: query, maxLength: snippetLength),
                     score: try row.decode(Double.self, forColumn: "score"),
-                    conversationID: try row.decodeIfPresent(String.self, forColumn: "conversation_id"),
-                    messageID: try row.decodeIfPresent(String.self, forColumn: "message_id"),
+                    conversationID: String.fromDatabaseValue(row["conversation_id"]),
+                    messageID: String.fromDatabaseValue(row["message_id"]),
                     createdAt: Int64.fromDatabaseValue(row["created_at"])
                 )
             )
