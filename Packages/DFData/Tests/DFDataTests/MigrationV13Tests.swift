@@ -16,8 +16,14 @@ final class MigrationV13Tests: XCTestCase {
 
         try await queue.read { db in
             XCTAssertTrue(try db.tableExists("cost_ledger"))
-            XCTAssertTrue(try db.indexExists("ix_cost_ledger_day"))
-            XCTAssertTrue(try db.indexExists("ix_cost_ledger_created"))
+            let indexCount = try Int.fetchOne(
+                db,
+                sql: """
+                SELECT count(*) FROM sqlite_master
+                 WHERE type = 'index' AND name IN ('ix_cost_ledger_day', 'ix_cost_ledger_created')
+                """
+            ) ?? 0
+            XCTAssertEqual(indexCount, 2)
             XCTAssertEqual(
                 try SchemaMeta.value(db, key: SchemaMetaKey.schemaVersion),
                 MigrationID.v13_cost_ledger.rawValue

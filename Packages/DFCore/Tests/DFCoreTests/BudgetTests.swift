@@ -211,6 +211,9 @@ final class BudgetTests: XCTestCase {
     // MARK: - 闸门接线（D10）
 
     func testGateBlocksEveryTriggerWhenBudgetExhausted() {
+        // 打开全部分项，确保每个触发类型都走到预算判定
+        var policy = AutonomyPolicy.default
+        policy.allowNewConversation = true
         let budget = AutonomyBudgetContext(
             limits: BudgetLimits(dailyYuan: 0.5),
             spend: BudgetSpend(
@@ -223,7 +226,7 @@ final class BudgetTests: XCTestCase {
         )
         for trigger in ProactiveTrigger.allCases {
             let decision = AutonomyGate.evaluate(
-                policy: .default,
+                policy: policy,
                 trigger: trigger,
                 nowMillis: 1_000_000,
                 nowMinuteOfDay: 12 * 60,
