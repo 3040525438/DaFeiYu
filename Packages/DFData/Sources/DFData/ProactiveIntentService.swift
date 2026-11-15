@@ -426,8 +426,8 @@ public final class ProactiveIntentService: @unchecked Sendable {
         ProactiveIntent(
             id: (try? row.decode(String.self, forColumn: "id")) ?? "",
             conversationID: (try? row.decode(String.self, forColumn: "conversation_id")) ?? "",
-            topicID: try? row.decodeIfPresent(String.self, forColumn: "topic_id"),
-            groupID: try? row.decodeIfPresent(String.self, forColumn: "group_id"),
+            topicID: String.fromDatabaseValue(row["topic_id"]),
+            groupID: String.fromDatabaseValue(row["group_id"]),
             kind: (try? row.decode(String.self, forColumn: "kind")) ?? ProactiveTrigger.message.rawValue,
             status: ProactiveIntentStatus(
                 rawValue: (try? row.decode(String.self, forColumn: "status")) ?? ""
@@ -438,11 +438,11 @@ public final class ProactiveIntentService: @unchecked Sendable {
             confidence: (try? row.decode(Double.self, forColumn: "confidence")) ?? 0.5,
             priority: (try? row.decode(Int.self, forColumn: "priority")) ?? 3,
             plannedAt: (try? row.decode(Int64.self, forColumn: "planned_at")) ?? 0,
-            expiresAt: try? row.decodeIfPresent(Int64.self, forColumn: "expires_at"),
-            suppressReason: try? row.decodeIfPresent(String.self, forColumn: "suppress_reason"),
-            decidedBy: try? row.decodeIfPresent(String.self, forColumn: "decided_by"),
+            expiresAt: Int64.fromDatabaseValue(row["expires_at"]),
+            suppressReason: String.fromDatabaseValue(row["suppress_reason"]),
+            decidedBy: String.fromDatabaseValue(row["decided_by"]),
             createdAt: (try? row.decode(Int64.self, forColumn: "created_at")) ?? 0,
-            resolvedAt: try? row.decodeIfPresent(Int64.self, forColumn: "resolved_at")
+            resolvedAt: Int64.fromDatabaseValue(row["resolved_at"])
         )
     }
 }
