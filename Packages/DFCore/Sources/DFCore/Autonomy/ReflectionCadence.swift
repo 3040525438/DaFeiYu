@@ -305,9 +305,9 @@ public struct CadenceSignals: Sendable, Equatable {
     /// 高频判定：窗口内条数下限
     public static let quickCountThreshold = 6
     /// 高频判定：平均间隔上限（分钟）
-    public static let quickGapMinutes = 5
+    public static let quickGapMinutes: Double = 5
     /// 安静判定：最后一条消息距今（分钟）
-    public static let slowGapMinutes = 180
+    public static let slowGapMinutes: Double = 180
 
     /// 空信号：窗口内没有任何互动
     public static let idle = CadenceSignals(
