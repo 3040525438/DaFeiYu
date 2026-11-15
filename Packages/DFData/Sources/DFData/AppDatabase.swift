@@ -72,19 +72,22 @@ public final class AppDatabase: @unchecked Sendable {
             try db.execute(sql: "PRAGMA foreign_keys = ON")
         }
 
+        // 打开前先记住库里是否已有文件：全新安装时不需要升级前备份
+        let databaseExistedBeforeOpen = fileManager.fileExists(atPath: paths.databaseURL.path)
+
         do {
             dbQueue = try DatabaseQueue(path: paths.databaseURL.path, configuration: configuration)
         } catch {
             throw DFError.database("无法打开本地数据库：\(error.localizedDescription)")
         }
 
-        upgradeOnLaunch()
+        upgradeOnLaunch(databaseExistedBeforeOpen: databaseExistedBeforeOpen)
     }
 
-    /// 启动升级：版本兼容判断 → 迁移 → 台账自检，全程写 `upgrade_records` 审计。
+    /// 启动升级：版本兼容判断 → 升级前备份 → 迁移 → 台账自检，全程写 `upgrade_records` 审计。
     /// 迁移失败**不抛错**：事务已整体回滚，库仍是升级前结构，
     /// 这里降级为 `migrationFailed`（禁止一切写入），由界面提示恢复与重试。
-    private func upgradeOnLaunch() {
+    private func upgradeOnLaunch(databaseExistedBeforeOpen: Bool) {
         let latest = Migrations.latest.rawValue
         let plan = UpgradeGuard.plan(
             currentVersion: currentSchemaVersion,
@@ -99,7 +102,16 @@ public final class AppDatabase: @unchecked Sendable {
 
         var auditID: String?
         if case .upgrade(let from, let to) = plan {
-            auditID = recordUpgradeStart(from: from, to: to)
+            let backup = makePreUpgradeBackup(
+                fromVersion: from,
+                databaseExisted: databaseExistedBeforeOpen
+            )
+            auditID = recordUpgradeStart(
+                from: from,
+                to: to,
+                backupID: backup.id,
+                integrityJSON: backup.integrityJSON
+            )
         }
 
         do {
@@ -128,8 +140,96 @@ public final class AppDatabase: @unchecked Sendable {
 
     // MARK: - 升级审计
 
+    /// 升级前备份的结果摘要（只用于写审计，不改业务状态）
+    private struct PreUpgradeBackupSummary {
+        let id: String?
+        let integrityJSON: String
+    }
+
+    /// 执行升级前备份（D67）。
+    /// - 全新库没有可备份的历史数据，直接跳过；
+    /// - 备份失败**不阻断启动**：把失败原因写进审计，升级照常尝试，避免用户被永久卡在旧版本。
+    private func makePreUpgradeBackup(fromVersion: String, databaseExisted: Bool) -> PreUpgradeBackupSummary {
+        guard databaseExisted else {
+            return PreUpgradeBackupSummary(
+                id: nil,
+                integrityJSON: backupIntegrityJSON(status: "skipped", backupID: nil, reason: "fresh_database")
+            )
+        }
+        do {
+            let result = try PreUpgradeBackupService(paths: paths).backup(fromVersion: fromVersion)
+            // 备份清单必须先落库，`upgrade_records.pre_upgrade_backup_id` 有外键约束
+            let manifestID = registerPreUpgradeManifest(result)
+            return PreUpgradeBackupSummary(
+                id: manifestID,
+                integrityJSON: backupIntegrityJSON(
+                    status: "ok",
+                    backupID: result.id,
+                    reason: manifestID == nil ? "manifest_not_recorded" : nil
+                )
+            )
+        } catch {
+            return PreUpgradeBackupSummary(
+                id: nil,
+                integrityJSON: backupIntegrityJSON(
+                    status: "failed",
+                    backupID: nil,
+                    reason: error.localizedDescription
+                )
+            )
+        }
+    }
+
+    /// 把升级前备份登记到 `backup_manifests`（kind = pre_upgrade）。
+    /// 从 v1–v6 升级时该表尚不存在，返回 nil，不伪造清单记录。
+    private func registerPreUpgradeManifest(_ result: PreUpgradeBackupResult) -> String? {
+        do {
+            try dbQueue.write { db in
+                guard try db.tableExists("backup_manifests") else {
+                    throw DFError.database("backup_manifests 尚未创建，跳过备份清单登记")
+                }
+                try db.execute(
+                    sql: """
+                    INSERT INTO backup_manifests
+                        (id, kind, scope, status, schema_version, app_version, file_name, rel_path,
+                         byte_size, sha256, is_encrypted, item_counts_json, note, created_at)
+                    VALUES (?, 'pre_upgrade', 'full', 'completed', ?, '', ?, ?, ?, NULL, 0, '{}', ?, ?)
+                    """,
+                    arguments: [
+                        result.id,
+                        result.fromVersion,
+                        result.id,
+                        "\(PreUpgradeBackupPolicy.directoryRootName)/\(result.id)",
+                        result.totalBytes,
+                        "升级前自动备份（\(result.fromVersion)）",
+                        Clock.nowMillis()
+                    ]
+                )
+            }
+            return result.id
+        } catch {
+            return nil
+        }
+    }
+
+    private func backupIntegrityJSON(status: String, backupID: String?, reason: String?) -> String {
+        var payload: [String: Any] = ["preUpgradeBackup": status]
+        if let backupID { payload["backupID"] = backupID }
+        if let reason { payload["reason"] = reason }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return text
+    }
+
     /// 记录一次升级开始；`upgrade_records` 尚不存在（从 v1–v6 升级）时返回 nil，不伪造记录。
-    private func recordUpgradeStart(from: String, to: String) -> String? {
+    private func recordUpgradeStart(
+        from: String,
+        to: String,
+        backupID: String? = nil,
+        integrityJSON: String = "{}"
+    ) -> String? {
         let id = UUID().uuidString
         do {
             try dbQueue.write { db in
@@ -139,10 +239,11 @@ public final class AppDatabase: @unchecked Sendable {
                 try db.execute(
                     sql: """
                     INSERT INTO upgrade_records
-                        (id, from_version, to_version, batch, status, started_at)
-                    VALUES (?, ?, ?, '', 'running', ?)
+                        (id, from_version, to_version, batch, status, pre_upgrade_backup_id,
+                         integrity_json, started_at)
+                    VALUES (?, ?, ?, '', 'running', ?, ?, ?)
                     """,
-                    arguments: [id, from, to, Clock.nowMillis()]
+                    arguments: [id, from, to, backupID, integrityJSON, Clock.nowMillis()]
                 )
             }
             return id
