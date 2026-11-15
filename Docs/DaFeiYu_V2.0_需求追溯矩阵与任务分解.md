@@ -88,12 +88,12 @@
 | D13 | 主动消息通知可切换，默认仅重要 | 已实现（数据层） | `NotificationLevel` + `NotificationTiering` + `proactive_messages.notify_level` | `testNotificationTiering` | W7-3、W7-4 |
 | D14 | 勿扰 23:00–08:00、最小间隔 2h、每日上限 5，可调 | 已实现 | `AutonomyPolicy` 默认值 + `AutonomyGate` | `AutonomyGateTests` + `AutonomyServiceTests` 六项闸门用例 | W7-3 |
 | D15 | 一天未开 App 后台整理；失败下次启动补算；不私换模型 | 已实现（数据层） | `AutonomyService.backfill` + `AutonomyBackfill` | `testBackfillCreatesMissingDailyTasks`、`testBackfillReportsOverdueAndExpiresStale` | W7-5 |
-| D16 | 语音转文字跟随当前运行模式；上传需授权 | 部分实现 | 端上 `SpeechTranscriber` + `VoiceRecorder`/`VoiceInputSheet`；上传前授权与模式判定未接 | 编译期校验 | W4-4 |
+| D16 | 语音转文字跟随当前运行模式；上传需授权 | 部分实现（策略与文案完成；当前仅设备端转写，云端路径未接入） | `SpeechInputPolicy`：设备端/云端/不可用三态，云端必须显式授权，未授权或拒绝一律不启动并给文字兜底；语音页明确"设备端转写、音频不会上传"（`f62aca2`） | `SpeechInputPolicyTests`(7) | W4-4、W9G |
 | D17 | 图片 OCR + 文字搜索，优先设备端 | 已实现 | Vision OCR（`MediaProcessing`）+ `attachment_texts` FTS + `ImageUnderstandingSheet` | `MultimodalTests`(14)（OCR 真机待验） | W4-2（已完成） |
 | D18 | 日记可触发外围人格成长提案，重要需确认 | 已实现 | `DiaryPersonaProposalService`（观察/关系变化 → 待审批提案，正文与感受不直接变人格，证据含日记 id 与原文，重复即跳过）+ 日记编辑页入口 | `DiaryPersonaProposalServiceTests`(5) | W6-5（完成） |
 | D19 | 单条/分类/三套记忆管理 + 按来源批量删除 | 已实现 | `memory_scopes`、`v_memory_*`、`GRDBMemoryRepository.softDelete(sourceType:sourceID:)`、`MemoryProcessingService` | `MigrationV2Tests.testT09`、`MemoryRepositoryTests`(11) | W8-5、W8-6（已完成） |
 | D20 | 备份默认加密；明文导出需二次确认 + 风险提示 | 已实现 | `BackupService.createBackup(encrypted: true 默认)` + `BackupContainer` + `BackupCenterView` 风险提示 | `BackupCryptoTests`(8)、`BackupServiceTests`(8) | W9-2（已完成） |
-| D21 | iOS 后台不保证及时；远程调度需单独说明成本/隐私 | 尚未开发 | — | — | W7-5、W10-4 |
+| D21 | iOS 后台不保证及时；远程调度需单独说明成本/隐私 | 已实现有证据（App 编译待手动触发） | `BackgroundExecutionPolicy`（timingGuaranteed 恒 false、后台做什么、成本计入预算、只发最少上下文、下次任务的非承诺式说明）+ 设置页「后台与运行方式」说明页（`f62aca2`） | `BackgroundExecutionDisclosureTests`(5) | W7-5、W9G |
 
 ### 3.3 第三轮（D22–D29）：聊天与附件管理
 
@@ -105,7 +105,7 @@
 | D25 | 全局搜索聊天/记忆/日记/附件文字并定位原文 | 已实现有证据（数据层 + App 界面） | 数据层 `GRDBUnifiedSearchRepository`（`4cff077`）：四域统一检索，命中带定位信息（`conversationID`/`messageID`/`diaryDate`）+ 原文摘要 `SearchSnippet`；归档会话仍可检索；App 层 `GlobalSearchView`/`GlobalSearchViewModel`（`310a940`）：四域分组、范围开关、空结果/异常提示、消息命中经 `ChatViewModel.openGlobalSearchHit` 切会话并滚动定位、记忆/日记打开只读详情 | `UnifiedSearchTests`(10)、`SearchSnippetTests`(8)，run 43697137498；App 编译待手动触发 `app-build-check` | W2-5 数据层 + W6 界面（`310a940`）。缺口：附件命中无关联消息时只显示片段，不提供原图预览 |
 | D26 | 收藏/重要标记/分类整理；收藏不自动成记忆 | 已实现有证据（数据层 + App 界面） | `v14_message_organization`（`messages.is_important/important_at` + `message_tags`）+ `GRDBMessageOrganizationRepository`（批量收藏/重要/标签，单事务，标签归一化去重）；App 层 `MessageOrganizerView`/`MessageOrganizerViewModel`（`310a940`）：收藏/重要/标签筛选、批量收藏与取消、重要标记与取消、标签增删与结果反馈；**不写 memories/persona** | `MessageOrganizationTests`(13)、`MigrationV14Tests`(4)，run 43697137498；App 编译待手动触发 `app-build-check` | W2-5 数据层 + W6 界面（`310a940`）。缺口：标签不支持全局重命名（数据层无该能力），只能逐条移除后重加 |
 | D27 | 图片原图+缩略图、查看/放大/下载/分享、独立附件库 | 已实现有证据（数据层 + 界面；App 编译待手动触发） | `AttachmentStore.fileURL(forRelativePath:)`；`AttachmentReferenceService.record(id:)`（`effa97f`）；附件库真实缩略图（异步 120pt）、点击原图预览、右键分享文件；新增 `AttachmentPreviewView`：原图查看、双指缩放、双击放大、拖动平移、还原、系统分享，文件缺失如实提示，无网络请求；全局搜索附件命中右键「查看原图」 | `AttachmentReferenceServiceTests` 新增 3 项、`AttachmentLibraryItemTests` | W4-5 + W8B（`effa97f`） |
-| D28 | 语音录制/播放/转写/重转写/复制/关联/保留原始音频 | 部分实现 | `VoiceRecorder` + `AudioPreviewPlayer` + `VoiceInputSheet`（录制/播放/转写/回填）；重转写入口与消息关联未做 | 编译期校验 | W4-4 |
+| D28 | 语音录制/播放/转写/重转写/复制/关联/保留原始音频 | 已实现有证据（App 编译待手动触发） | `VoiceRecorder` + `AudioPreviewPlayer` + `VoiceInputSheet`（录制/播放/设备端转写/回填，明确"音频不上传"）；填入时把附件 id 交给聊天页，`turnOpened` 时挂到该条用户消息（`AttachmentIngestService.link`）；附件库对音频/视频提供「重新转写」「复制转写文本」，重转写覆盖同一行（`f3f7261`） | `MultimodalTests.testAudioAttachmentLinksToMessageWithTranscript`；真机转写依赖设备端中文识别支持 | W4-4、W9F |
 | D29 | 常见文件类型；区分保存/预览/读取/理解能力 | 已实现有证据（App 编译待手动触发） | `FileCapabilityCatalog`：图片（保存/预览/OCR/理解）、音频（保存/播放/转写）、视频（保存/播放，不抽帧）、文本（保存/预览/读取/理解）、PDF（保存/预览，不声称可读）、压缩包与未知（仅保存）+ MIME 兜底；附件库列表展示能力摘要（`8577e64`） | `FileCapabilityCatalogTests`(10) | W4-6、W9E |
 
 ### 3.4 第四轮（D30–D37）：人格、关系、日记、角色
