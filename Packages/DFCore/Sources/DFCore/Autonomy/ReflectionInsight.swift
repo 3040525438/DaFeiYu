@@ -125,11 +125,12 @@ public enum ReflectionInsightPolicy {
 
     /// 证据是否逐字出现在上下文中。
     ///
-    /// 只做空白归一（换行 / 连续空格），不做模糊匹配：模型改写过的句子必须被丢弃。
+    /// 只忽略空白（换行 / 连续空格 / 行首缩进），不做模糊匹配：
+    /// 模型改写过的句子必须被丢弃。
     public static func evidenceAppears(_ excerpt: String, in contextText: String) -> Bool {
-        let needle = normalized(excerpt)
+        let needle = squashed(excerpt)
         guard !needle.isEmpty else { return false }
-        let haystack = normalized(contextText)
+        let haystack = squashed(contextText)
         guard !haystack.isEmpty else { return false }
         return haystack.contains(needle)
     }
@@ -187,6 +188,11 @@ public enum ReflectionInsightPolicy {
     /// 对外可见：服务层做"同类同摘要"去重时复用同一口径。
     public static func normalized(_ text: String) -> String {
         text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+    }
+
+    /// 去掉全部空白，只用于证据逐字比对（中文没有词间空格，换行不应影响命中）
+    private static func squashed(_ text: String) -> String {
+        text.filter { !$0.isWhitespace }
     }
 }
 

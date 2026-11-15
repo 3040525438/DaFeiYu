@@ -70,7 +70,7 @@ final class ReflectionInsightTests: XCTestCase {
     }
 
     func testMissingInsightsKeyRejected() {
-        let result = ReflectionInsightParser.parse(#"{"items":[]}"#)
+        let result = ReflectionInsightParser.parse(#"{}"#)
         XCTAssertEqual(result.failure, .missingKeys)
     }
 
@@ -208,13 +208,15 @@ final class ReflectionInsightTests: XCTestCase {
     }
 
     func testEvidenceWhitespaceNormalizationAllowsLineBreaks() {
+        // 上下文里证据被换行拆开，模型摘抄时压成一行；空白归一后仍应命中
+        let multilineContext = "用户：我最近在准备考试，\n压力有点大"
         let insight = ReflectionInsight(
             kind: .recallRecent,
             summary: "考试压力",
-            evidence: ["我最近在准备考试，  压力有点大"],
+            evidence: ["我最近在准备考试，压力有点大"],
             confidence: 0.8
         )
-        XCTAssertNotNil(ReflectionInsightPolicy.sanitize(insight, contextText: contextText))
+        XCTAssertNotNil(ReflectionInsightPolicy.sanitize(insight, contextText: multilineContext))
     }
 
     func testOverlongEvidenceDropped() {
