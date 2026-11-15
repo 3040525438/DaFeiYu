@@ -128,6 +128,52 @@ final class ProactiveSchedulerTests: XCTestCase {
         XCTAssertEqual(first?.id, second?.id, "同一天同一类型只排一次")
     }
 
+    // MARK: - D47 新会话评估
+
+    func testEnqueuesNewConversationOncePerDay() async throws {
+        var policy = AutonomyPolicy.default
+        policy.allowNewConversation = true
+        try await autonomy.savePolicy(policy)
+        try await insertUserMessage(hoursAgo: 9)
+
+        let scheduler = makeScheduler(minute: 10 * 60)
+        let first = try await scheduler.enqueueNewConversationIfDue()
+        XCTAssertEqual(first?.kind, ProactiveTrigger.newConversation.rawValue)
+        XCTAssertEqual(first?.dedupeKey, "newconv:\(dayStart)")
+
+        _ = try await autonomy.claim(taskID: first?.id ?? "")
+        let second = try await scheduler.enqueueNewConversationIfDue()
+        XCTAssertNotNil(second, "同一天重复调用返回既有任务（入队幂等）")
+        XCTAssertEqual(first?.id, second?.id)
+    }
+
+    func testNewConversationRespectsDisabledSwitch() async throws {
+        var policy = AutonomyPolicy.default
+        policy.allowNewConversation = false
+        try await autonomy.savePolicy(policy)
+        try await insertUserMessage(hoursAgo: 9)
+        let task = try await makeScheduler(minute: 10 * 60).enqueueNewConversationIfDue()
+        XCTAssertNil(task, "分项关闭时不得排新会话任务")
+    }
+
+    func testNewConversationSkipsWhenUserRecentlySpoke() async throws {
+        var policy = AutonomyPolicy.default
+        policy.allowNewConversation = true
+        try await autonomy.savePolicy(policy)
+        try await insertUserMessage(hoursAgo: 1)
+        let task = try await makeScheduler(minute: 10 * 60).enqueueNewConversationIfDue()
+        XCTAssertNil(task)
+    }
+
+    func testNewConversationSkipsDuringQuietHours() async throws {
+        var policy = AutonomyPolicy.default
+        policy.allowNewConversation = true
+        try await autonomy.savePolicy(policy)
+        try await insertUserMessage(hoursAgo: 12)
+        let task = try await makeScheduler(minute: 23 * 60 + 30).enqueueNewConversationIfDue()
+        XCTAssertNil(task, "免打扰时段不得排新会话任务")
+    }
+
     func testQuietRangeWrapsMidnight() {
         XCTAssertTrue(ProactiveScheduler.isQuiet(minute: 23 * 60 + 30, start: 23 * 60, end: 8 * 60))
         XCTAssertTrue(ProactiveScheduler.isQuiet(minute: 7 * 60, start: 23 * 60, end: 8 * 60))

@@ -104,7 +104,7 @@ public final class ProactiveIntentService: @unchecked Sendable {
 
         let request = ChatRequest(
             model: model,
-            systemPrompt: Self.systemPrompt,
+            systemPrompt: Self.systemPrompt(for: trigger),
             messages: [ChatTurn(role: .user, text: Self.userPrompt(context: context))],
             temperature: 0.7,
             maxTokens: maxTokens
@@ -251,6 +251,16 @@ public final class ProactiveIntentService: @unchecked Sendable {
     /// 放弃一个意图（如下一次生成前发现已过期）。
     public func abandon(intentID: String, reason: String) async throws {
         try await mark(intentID: intentID, status: .failed, suppressReason: reason, at: clock.now())
+    }
+
+    /// D47：新会话链路复用了同一次生成结果，内容已在新会话里投递，这里只把意图收尾。
+    public func markHandledInNewConversation(intentID: String) async throws {
+        try await mark(intentID: intentID, status: .delivered, suppressReason: nil, at: clock.now())
+    }
+
+    /// D47：新会话决策为复用 / 跳过时，把意图标记为已抑制并留下原因。
+    public func markSuppressedInNewConversation(intentID: String, reason: String) async throws {
+        try await mark(intentID: intentID, status: .suppressed, suppressReason: reason, at: clock.now())
     }
 
     // MARK: - 读取
@@ -423,6 +433,23 @@ public final class ProactiveIntentService: @unchecked Sendable {
     3. message 用第一人称、口语、简短（不超过 120 字），不要提及"上下文/模型/系统"。
     4. 不索取隐私、不制造焦虑、不假装记得未提供的事情。
     """
+
+    /// D47：主动开新会话时 `reason` 复用为"话题名"，因此单独一套提示词。
+    static let newConversationSystemPrompt = """
+    你是「大肥鱼」，与用户长期相处。现在要判断"是否值得为这件事单独开一个新会话"。
+    必须只输出一个 JSON 对象，不要输出任何解释或代码围栏：
+    {"should_send": true 或 false, "reason": "3 到 12 个字的话题名", "evidence": ["逐字引用上下文中的片段"], "message": "开场的第一句话"}
+    规则：
+    1. evidence 必须逐字出自给定上下文；没有证据就不要编造，宁可不发。
+    2. 只有出现了"现有连续对话装不下"的新话题时，should_send 才为 true；否则为 false，message 为空字符串。
+    3. reason 会被直接当作会话标题：不要标点、不要引号、不要"关于/聊聊"之类的空话。
+    4. message 用第一人称、口语、简短（不超过 120 字），不要提及"上下文/模型/系统"。
+    5. 不索取隐私、不制造焦虑、不假装记得未提供的事情。
+    """
+
+    static func systemPrompt(for trigger: ProactiveTrigger) -> String {
+        trigger == .newConversation ? newConversationSystemPrompt : systemPrompt
+    }
 
     static func userPrompt(context: IntentContext) -> String {
         var lines: [String] = []

@@ -125,6 +125,50 @@ public final class ProactiveScheduler: @unchecked Sendable {
         )
     }
 
+    /// D47：每天最多排一次"是否值得为某个话题单独开新会话"的评估。
+    ///
+    /// 与新消息链路分开计数：新会话不占用 `dailyLimit` 的主动消息额度，
+    /// 但同样受总开关、分项开关、暂停、可主动时间窗、免打扰与沉默时长约束。
+    /// 每日仅入队一次（`dedupeKey = newconv:<dayStart>`），避免机械式重复评估。
+    public func enqueueNewConversationIfDue() async throws -> AutonomyTask? {
+        let state = try await autonomy.state()
+        let policy = state.policy
+        let now = clock.now()
+        let minute = clock.minuteOfDay(now)
+        let dayStart = clock.dayStart(now)
+
+        guard policy.enabled, policy.allowNewConversation else { return nil }
+        if let pausedUntil = state.pausedUntil, pausedUntil > now { return nil }
+        guard minute >= earliestMinuteOfDay, minute <= latestMinuteOfDay else { return nil }
+        guard !Self.isQuiet(
+            minute: minute,
+            start: policy.quietStartMinute,
+            end: policy.quietEndMinute
+        ) else { return nil }
+
+        let lastUser = try await database.dbQueue.read { db in
+            try Int64.fetchOne(
+                db,
+                sql: """
+                SELECT max(created_at) FROM messages
+                 WHERE role = 'user' AND deleted_at IS NULL
+                """
+            )
+        }
+        let inactivityMillis = Int64(inactivityMinutes) * 60 * 1000
+        if let lastUser, now - lastUser < inactivityMillis { return nil }
+
+        return try await autonomy.enqueue(
+            kind: .newConversation,
+            conversationID: nil,
+            topicID: nil,
+            dedupeKey: "newconv:\(dayStart)",
+            priority: 4,
+            scheduledAt: now,
+            payloadJSON: "{\"reason\":\"daily_new_conversation_review\"}"
+        )
+    }
+
     /// 免打扰判断，支持跨午夜区间
     static func isQuiet(minute: Int, start: Int, end: Int) -> Bool {
         if start == end { return false }

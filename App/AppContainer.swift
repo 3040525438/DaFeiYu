@@ -63,6 +63,8 @@ final class AppContainer: ObservableObject {
     let intents: ProactiveIntentService
     /// N-20：把"用户久未说话"变成可执行的主动任务
     let proactiveScheduler: ProactiveScheduler
+    /// D47：AI 主动创建会话（同主题复用、去重、间隔与日上限）
+    let proactiveConversations: ProactiveConversationService
     /// W6：人格成长（提案 → 审批 → 版本回退）
     let personaGrowth: PersonaGrowthService
     /// D06：人格文件导入（只生成待审批提案）
@@ -176,6 +178,11 @@ final class AppContainer: ObservableObject {
         )
         self.proactiveScheduler = ProactiveScheduler(
             database: database,
+            autonomy: autonomyService
+        )
+        self.proactiveConversations = ProactiveConversationService(
+            database: database,
+            conversations: GRDBConversationAdminRepository(database: database),
             autonomy: autonomyService
         )
         let personaGrowthService = PersonaGrowthService(database: database)

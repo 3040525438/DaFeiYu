@@ -86,6 +86,8 @@ final class BackgroundRefreshService: @unchecked Sendable {
             }
             // N-20：先按"久未说话"规则排任务，再生成意图 → 五重闸门 → 写会话 → 通知
             _ = try? await container.proactiveScheduler.enqueueDueCheckIn()
+            // D47：每天最多一次"是否值得开新会话"的评估（模型判断 + 策略去重）
+            _ = try? await container.proactiveScheduler.enqueueNewConversationIfDue()
             _ = await ProactiveIntentRunner(container: container).runDueIntents(limit: 2)
             task.setTaskCompleted(success: success)
         }

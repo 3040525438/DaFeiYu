@@ -14,7 +14,8 @@ import DFData
 final class ProactiveIntentRunner: @unchecked Sendable {
     private static let supportedKinds: Set<String> = [
         ProactiveTrigger.message.rawValue,
-        ProactiveTrigger.suggestion.rawValue
+        ProactiveTrigger.suggestion.rawValue,
+        ProactiveTrigger.newConversation.rawValue
     ]
     private static let enabledKey = "autonomy.intent.enabled"
     /// 自主生成的最大输出 token（与 ProactiveIntentService 默认值一致）
@@ -38,6 +39,13 @@ final class ProactiveIntentRunner: @unchecked Sendable {
         var delivered = 0
         for task in tasks where Self.supportedKinds.contains(task.kind) {
             guard let claimed = try? await container.autonomy.claim(taskID: task.id) else { continue }
+            // D47：新会话走独立链路（不写 main 会话，先判断再创建）
+            if claimed.kind == ProactiveTrigger.newConversation.rawValue {
+                if await handleNewConversation(claimed, config: config) {
+                    delivered += 1
+                }
+                continue
+            }
             do {
                 let conversation = try await container.conversations.ensureMainConversation(title: "大肥鱼")
                 if let target = claimed.conversationID, target != conversation.id {
@@ -170,6 +178,228 @@ final class ProactiveIntentRunner: @unchecked Sendable {
             }
         }
         return delivered
+    }
+
+    // MARK: - D47 新会话
+
+    /// 判断是否值得单独开一个新会话；需要时创建会话、写入开场消息并投递通知。
+    ///
+    /// 语义边界：
+    /// - 模型只负责"有没有新话题 + 话题名 + 开场白"，是否真的新建由 `NewConversationPolicy` 决定；
+    /// - 同主题已有会话时只复用、不重复创建，也不额外打扰；
+    /// - 会话创建与否都会写 `autonomy_runs`，便于回溯"为什么多了/没有新会话"。
+    private func handleNewConversation(_ task: AutonomyTask, config: ModelConfig) async -> Bool {
+        let main: Conversation
+        do {
+            main = try await container.conversations.ensureMainConversation(title: "大肥鱼")
+        } catch {
+            try? await container.autonomy.finish(
+                taskID: task.id,
+                status: .failed,
+                error: error.localizedDescription
+            )
+            return false
+        }
+        guard let context = try? await makeContext(conversationID: main.id, topicID: nil) else {
+            try? await container.autonomy.finish(
+                taskID: task.id,
+                status: .failed,
+                error: "无法读取上下文"
+            )
+            return false
+        }
+
+        let limits: BudgetLimits
+        do {
+            limits = try await container.budget.limits()
+        } catch {
+            try? await container.autonomy.finish(
+                taskID: task.id,
+                status: .skipped,
+                resultJSON: "{\"reason\":\"预算不可用\"}"
+            )
+            return false
+        }
+        let pricing = try? await container.budget.pricing(modelID: config.modelID)
+        let estimated = pricing?.estimatedCost(
+            promptTokens: Self.estimatedPromptTokens,
+            maxCompletionTokens: Self.maxGenerationTokens
+        ) ?? 0
+        let reservationID: String
+        do {
+            reservationID = try await container.budget.reserve(
+                scope: .autonomy,
+                estimatedYuan: estimated,
+                provider: config.providerKind,
+                modelID: config.modelID,
+                limits: limits
+            )
+        } catch {
+            try? await container.autonomy.finish(
+                taskID: task.id,
+                status: .skipped,
+                resultJSON: "{\"reason\":\"预算不足\"}"
+            )
+            return false
+        }
+
+        let proposal: ProactiveIntentService.Proposal
+        do {
+            let provider = try container.provider(for: config)
+            proposal = try await container.intents.generate(
+                trigger: .newConversation,
+                context: context,
+                provider: provider,
+                model: config.modelID,
+                maxTokens: Self.maxGenerationTokens
+            )
+        } catch {
+            try? await container.budget.fail(
+                reservationID: reservationID,
+                reason: error.localizedDescription
+            )
+            try? await container.autonomy.finish(
+                taskID: task.id,
+                status: .failed,
+                error: error.localizedDescription
+            )
+            return false
+        }
+
+        try? await container.budget.settle(
+            reservationID: reservationID,
+            usage: proposal.usage,
+            pricing: pricing,
+            fallbackPromptTokens: Self.estimatedPromptTokens,
+            fallbackCompletionTokens: TokenEstimator.estimate(proposal.candidateText ?? ""),
+            modelID: config.modelID
+        )
+
+        guard let text = proposal.candidateText else {
+            try? await container.intents.markSuppressedInNewConversation(
+                intentID: proposal.intent.id,
+                reason: "模型判断不需要新开会话"
+            )
+            try? await container.autonomy.finish(
+                taskID: task.id,
+                status: .skipped,
+                resultJSON: "{\"reason\":\"模型判断不需要新开会话\"}"
+            )
+            return false
+        }
+
+        let title = proposal.intent.reason
+        let candidate = NewConversationCandidate(
+            titleDraft: title,
+            topicAnchor: Self.firstEvidence(from: proposal.intent.evidenceJSON),
+            dedupeKey: Self.topicKey(title: title, fallback: text)
+        )
+
+        let authStatus = await container.notifications.authorizationStatus()
+        let authorized = authStatus == .authorized
+            || authStatus == .provisional
+            || authStatus == .ephemeral
+        let spend = (try? await container.budget.snapshot()) ?? .zero
+        let budgetContext = AutonomyBudgetContext(
+            limits: limits,
+            spend: spend,
+            estimatedNextCallYuan: 0
+        )
+
+        let outcome: ProactiveConversationService.Outcome
+        do {
+            outcome = try await container.proactiveConversations.evaluateAndCreate(
+                candidate: candidate,
+                notificationsAuthorized: authorized,
+                trigger: "background",
+                budget: budgetContext
+            )
+        } catch {
+            try? await container.autonomy.finish(
+                taskID: task.id,
+                status: .failed,
+                error: error.localizedDescription
+            )
+            return false
+        }
+
+        switch outcome {
+        case let .created(conversationID, createdTitle, _):
+            let at = Clock.nowMillis()
+            let level = (try? await container.autonomy.state())?.policy.notificationLevel ?? .brief
+            do {
+                let record = try await container.proactive.record(
+                    text: text,
+                    triggerKind: ProactiveTrigger.newConversation.rawValue,
+                    plannedAt: at,
+                    notifyLevel: level,
+                    dedupeKey: "newconv:\(conversationID)",
+                    expiresAt: nil,
+                    intentID: proposal.intent.id
+                )
+                let message = Message(
+                    conversationID: conversationID,
+                    role: .assistant,
+                    kind: .text,
+                    text: text,
+                    status: .sent,
+                    origin: .proactive,
+                    createdAt: at,
+                    sentAt: at
+                )
+                try await container.messages.insert(message)
+                await container.notifications.deliver(record)
+            } catch {
+                NSLog("新会话开场消息写入失败：\(error.localizedDescription)")
+            }
+            try? await container.intents.markHandledInNewConversation(intentID: proposal.intent.id)
+            try? await container.autonomy.finish(
+                taskID: task.id,
+                status: .done,
+                resultJSON: "{\"conversation_id\":\"\(conversationID)\",\"title\":\"\(createdTitle)\"}"
+            )
+            return true
+
+        case let .reused(conversationID, _, _):
+            try? await container.intents.markSuppressedInNewConversation(
+                intentID: proposal.intent.id,
+                reason: "已有同主题会话，未新建"
+            )
+            try? await container.autonomy.finish(
+                taskID: task.id,
+                status: .skipped,
+                resultJSON: "{\"reused\":\"\(conversationID)\"}"
+            )
+            return false
+
+        case let .skipped(reason, _):
+            try? await container.intents.markSuppressedInNewConversation(
+                intentID: proposal.intent.id,
+                reason: reason
+            )
+            try? await container.autonomy.finish(
+                taskID: task.id,
+                status: .skipped,
+                resultJSON: "{\"reason\":\"\(reason)\"}"
+            )
+            return false
+        }
+    }
+
+    /// 取证据数组第一条（用于标题兜底）
+    static func firstEvidence(from json: String) -> String? {
+        guard let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let array = object as? [String] else { return nil }
+        return array.first
+    }
+
+    /// 去重键：优先用话题名，其次用开场白前 12 字；都为空时返回空串（由策略判为没有话题）
+    static func topicKey(title: String, fallback: String) -> String {
+        let normalized = NewConversationPolicy.normalizeTitle(title)
+        if !normalized.isEmpty { return "topic:\(normalized)" }
+        let fromText = String(NewConversationPolicy.normalizeTitle(fallback).prefix(12))
+        return fromText.isEmpty ? "" : "topic:\(fromText)"
     }
 
     // MARK: - 上下文
