@@ -118,7 +118,7 @@
 | D33 | 用户与 AI 都可编辑日记；留版本；AI 修订需确认 | 已实现 | `Diary.swift`（`generatedBy`/`isUserEdited`/`memoryID`/全量版本表）+ `GRDBDiaryRepository` | `DiaryTests`(13) | W6-7（已完成） |
 | D34 | 日记第一人称记录共同经历/观察/感受/关系变化 | 已实现 | `V12DiaryStructure.swift`（`shared_experience`/`observation`/`feeling`/`relationship_change` + 确认标记，版本快照同步扩列）+ `Features/Diary/*` 列表与编辑界面 | `MigrationV12Tests`(9)、`DiaryTests`(13)，run `43680552034` | W6-7（已完成） |
 | D35 | 日记可成为长期记忆来源，重要变更需确认 | 已实现（自动沉淀） | `DiaryMemoryService.distill`：正文首段→情景候选→证据逐字筛查→写记忆/提案→回填 `memory_id`；已沉淀不重复 | `DiaryTests`(13)、`DiaryMemoryServiceTests`(5) | W6-7、W8-2（`87e19b9`） |
-| D36 | 动态表情/动作/情绪/互动动画，分阶段交付 | 部分实现 | v6 `character_*` / `character_states` / 表情表结构就位；动画未做 | `MigrationV6Tests` | W6-8 |
+| D36 | 动态表情/动作/情绪/互动动画，分阶段交付 | 已实现有证据（界面渲染未接） | `CharacterMood`（与 `character_states.mood_code` 对齐，未知值回落 neutral，可由 D37 `EmotionKind` 映射）+ `CharacterAction`/`CharacterAnimation`（时长/次数/缩放/幅度全部夹取，支持减弱动态效果）+ `CharacterPresentationPolicy`（精力 <0.25 入休息、高唤醒挥手、焦虑思考、低唤醒静立、亲和 <0.3 幅度减半、无随机确定性输出）+ `InteractionAnimationPolicy`（`ChatTurnPhase` 七态一一对应，进行中/待机循环、终态 ≤0.5s）+ `CharacterStateService`（默认态、单事务更新、状态历史留痕、幂等、空原因拒绝、越界夹取、可由 `EmotionState` 更新） | `CharacterPresentationTests`(15)、`CharacterStateServiceTests`(10)，run 43723798853 | W6-8、W9M（`cc7f91b`） |
 | D37 | 情绪/异议/拒绝/幽默；区分真实互动、推断、想象 | 已实现有证据（情绪状态数据源未接） | `DFCore/Persona/SelfExpression.swift`：`EpistemicStance`（observed/inferred/imagined，未知值按推断）+ `EpistemicDisclosure`（事实断言词只能用于真实、想象必须带框架词）+ `ExpressionStance`/`ExpressionPolicy`（拒绝须给理由、异议须说清分歧、幽默禁侮辱、任何态度禁情感施压）+ `EmotionState`（强度夹取 0–1、分档、语气引导）+ `SelfExpressionProtocol.systemFragment` 已接进 `ChatOrchestratorImpl` 每次请求的 system prompt；`memories.epistemic_status` 沿用三态取值 | `SelfExpressionTests`(18)，run 43714304218 | W6-9、W8-3（`ddadfdc`） |
 
 ### 3.5 第五轮（D38–D45）：迁移、备份、恢复、数据安全
@@ -179,7 +179,7 @@
 | 编号 | 决策摘要 | 状态 | 代码证据 | 测试证据 | 承载任务 |
 |---|---|---|---|---|---|
 | D71 | 不做 TTS；语音输入/识别/播放全控制；图片理解/OCR/多图；图片生成作扩展 | 部分实现（本地多模态部分暂缓，ADR-08） | `VoiceRecorder`/`AudioPreviewPlayer`/`VoiceInputSheet` + Vision OCR + `ImageUnderstandingSheet`（多图分析复用 `image_analyses`）；本地多模态依赖 N-18，本阶段不投入 | `ChatTurnImageTests`(4) | W4-1～W4-5（本地部分暂缓） |
-| D72 | 多设备用备份恢复；恢复前保护备份/独立副本/用户决定替换；语言日期时区；分阶段交付 | 部分实现 | 恢复前自动安全备份 + 用户确认预检；跨设备/时区处理未做 | `BackupServiceTests`(8) | W9-3、W10-6 |
+| D72 | 多设备用备份恢复；恢复前保护备份/独立副本/用户决定替换；语言日期时区；分阶段交付 | 已实现有证据（App 层未编译；真机换机演练待执行） | **时区/日期**：`LocalDay`（dayKey/日界/日期键↔毫秒/加减天数全部显式时区，非法时区回落当前时区，跨夏令时按日历计算）+ `TimeZoneChange`（首次运行不算变化，提示已存日记日期不回改）；**跨设备恢复**：`BackupSnapshot.sourceDeviceID` + `device.install_id` 持久化 + `RestoreOriginPolicy`（本机/其他设备/未知、结构版本必须相等、空间与保护备份门禁、跨设备必须确认且提示"整体替换不合并"）+ `BackupService.restore(confirmedCrossDevice:)` + 恢复页跨设备二次确认弹窗 | `LocalDayTests`(9)、`RestoreOriginPolicyTests`(11)、`BackupDeviceOriginTests`(5)，run 43723798853 | W9-3、W10-6、W9N（`8a09f45`/`f088a45`） |
 
 ---
 
