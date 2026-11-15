@@ -99,7 +99,7 @@ final class ChatOrchestratorEmotionTests: XCTestCase {
         XCTAssertFalse(prompt.contains("当前情绪"))
     }
 
-    func testEmotionWithoutReasonUsesIntensityDescription() async throws {
+    func testEmotionWithoutReasonOmitsReasonLine() async throws {
         let box = PromptBox()
         let orchestrator = makeOrchestrator(
             emotion: EmotionState(kind: .joyful, intensity: 0.7),
@@ -108,8 +108,9 @@ final class ChatOrchestratorEmotionTests: XCTestCase {
         _ = try await run(orchestrator)
 
         let prompt = try XCTUnwrap(box.value)
-        XCTAssertTrue(prompt.contains("当前情绪：开心"))
-        XCTAssertTrue(prompt.contains("情绪强度 0.70"))
+        // 强度 0.7 落在 high 档；没有原因时不得编造一句"原因："
+        XCTAssertTrue(prompt.contains("当前情绪：开心（强度high）"))
+        XCTAssertFalse(prompt.contains("原因："))
     }
 }
 
