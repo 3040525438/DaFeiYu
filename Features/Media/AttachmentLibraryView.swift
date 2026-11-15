@@ -182,6 +182,9 @@ struct AttachmentLibraryView: View {
                     Text("\(viewModel.kindText(item.record.kind)) · \(viewModel.sizeText(item.record.byteSize)) · \(Self.dateText(item.record.createdAt))")
                         .font(.caption2)
                         .foregroundStyle(DFColor.inkMuted)
+                    Text(capabilityText(item))
+                        .font(.caption2)
+                        .foregroundStyle(DFColor.inkMuted)
                     HStack(spacing: 6) {
                         Text(viewModel.referenceText(item))
                             .font(.caption2)
@@ -223,6 +226,15 @@ struct AttachmentLibraryView: View {
                 }
             }
         }
+    }
+
+    /// D29：如实展示该文件能做什么（保存 / 预览 / 读取文字 / 模型理解）
+    private func capabilityText(_ item: AttachmentLibraryItem) -> String {
+        let profile = FileCapabilityCatalog.profile(
+            fileName: viewModel.fileName(item),
+            mime: item.record.mime
+        )
+        return FileCapabilityCatalog.summary(profile)
     }
 
     /// D27：图片显示缩略图，其余类型显示类型图标
