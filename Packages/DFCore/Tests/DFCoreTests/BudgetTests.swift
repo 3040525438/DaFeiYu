@@ -51,7 +51,7 @@ final class BudgetTests: XCTestCase {
 
     // MARK: - 每日预算
 
-    func testDailyBudgetBoundary() {
+    func testDailyBudgetBoundary() throws {
         let limits = BudgetLimits(dailyYuan: 1.0)
         let spend = BudgetSpend(
             confirmedYuan: 0.6,
@@ -67,7 +67,8 @@ final class BudgetTests: XCTestCase {
             estimatedNextCallYuan: 0.2
         )
         XCTAssertTrue(equal.allowed, "已花 0.8 + 本次 0.2 = 1.0，刚好等于预算应放行")
-        XCTAssertEqual(equal.remainingYuan, 0, accuracy: 0.0001)
+        let remaining = try XCTUnwrap(equal.remainingYuan)
+        XCTAssertEqual(remaining, 0, accuracy: 0.0001)
 
         let over = BudgetGuard.evaluate(
             limits: limits,
@@ -274,7 +275,7 @@ final class BudgetTests: XCTestCase {
         )
         let decision = AutonomyGate.evaluate(
             policy: policy,
-            trigger: .selfReflection,
+            trigger: .message,
             nowMillis: 1_000_000,
             nowMinuteOfDay: 12 * 60,
             lastSentAt: nil,
