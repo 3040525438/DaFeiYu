@@ -70,6 +70,14 @@ public protocol MessageOrganizationRepository: Sendable {
     @discardableResult
     func removeTag(_ tag: String, from ids: [String]) async throws -> Int
 
+    /// 全局重命名标签（I-01 / D26）：所有消息上的旧标签改为新标签。
+    ///
+    /// - 新旧标签都按同一规则归一化；旧标签为空 → 返回 0，新标签为空或超长 → 抛 `emptyTag` / `tagTooLong`；
+    /// - 新旧相同 → 返回 0；
+    /// - 若某条消息已同时拥有新旧标签，只保留一行（不产生重复），返回值为**实际改名**的行数。
+    @discardableResult
+    func renameTag(_ old: String, to new: String, at millis: Int64) async throws -> Int
+
     /// 某条消息的全部标签（按字母序，稳定输出）
     func tags(ofMessage id: String) async throws -> [String]
 

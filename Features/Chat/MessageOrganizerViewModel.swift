@@ -166,6 +166,40 @@ final class MessageOrganizerViewModel: ObservableObject {
         }
     }
 
+    /// 全局重命名标签（I-01）：不依赖选中项，作用于所有带该标签的消息。
+    func renameTag(_ rawOld: String, to rawNew: String) async {
+        let old = normalize(rawOld)
+        let new = normalize(rawNew)
+        guard !old.isEmpty else {
+            errorText = MessageOrganizationError.emptyTag.description
+            return
+        }
+        guard !new.isEmpty else {
+            errorText = MessageOrganizationError.emptyTag.description
+            return
+        }
+        guard new.count <= maxTagLength else {
+            errorText = MessageOrganizationError.tagTooLong(maxTagLength).description
+            return
+        }
+        do {
+            let renamed = try await container.messageOrganization.renameTag(
+                old,
+                to: new,
+                at: Clock.nowMillis()
+            )
+            await reload()
+            errorText = nil
+            report(
+                renamed > 0
+                    ? "已把标签「\(old)」重命名为「\(new)」（\(renamed) 条）"
+                    : "没有需要改名的「\(old)」"
+            )
+        } catch {
+            errorText = Self.message(error)
+        }
+    }
+
     // MARK: - 内部
 
     /// 与数据层保持一致的归一化口径：去首尾空白、去前导 #、折叠连续空白

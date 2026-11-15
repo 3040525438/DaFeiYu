@@ -205,4 +205,67 @@ final class MessageOrganizationTests: XCTestCase {
         _ = try await repo.addTag("旅行", to: ["m1"], at: 6000)
         XCTAssertEqual(try count("message_tags"), 1)
     }
+
+    // MARK: - 标签全局重命名（I-01）
+
+    func testRenameTagUpdatesEveryMessage() async throws {
+        _ = try await repo.addTag("旅行", to: ["m1", "m2"], at: 5000)
+        let renamed = try await repo.renameTag("旅行", to: "出游", at: 7000)
+        XCTAssertEqual(renamed, 2)
+        let tagsM1 = try await repo.tags(ofMessage: "m1")
+        let tagsM2 = try await repo.tags(ofMessage: "m2")
+        XCTAssertEqual(tagsM1, ["出游"])
+        XCTAssertEqual(tagsM2, ["出游"])
+        let summary = try await repo.tagSummary()
+        XCTAssertEqual(summary.map(\.tag), ["出游"])
+        XCTAssertEqual(summary.first?.count, 2)
+    }
+
+    func testRenameTagNormalizesBothSides() async throws {
+        _ = try await repo.addTag("旅行", to: ["m1"], at: 5000)
+        let renamed = try await repo.renameTag("  #旅行  ", to: "  出   游 ", at: 7000)
+        XCTAssertEqual(renamed, 1)
+        let tags = try await repo.tags(ofMessage: "m1")
+        XCTAssertEqual(tags, ["出 游"])
+    }
+
+    func testRenameTagMergesIntoExistingTagWithoutDuplicates() async throws {
+        _ = try await repo.addTag("旅行", to: ["m1", "m2"], at: 5000)
+        _ = try await repo.addTag("出游", to: ["m1"], at: 6000)
+        _ = try await repo.renameTag("旅行", to: "出游", at: 7000)
+        let tagsM1 = try await repo.tags(ofMessage: "m1")
+        let tagsM2 = try await repo.tags(ofMessage: "m2")
+        XCTAssertEqual(tagsM1, ["出游"], "已存在同名标签时只保留一行")
+        XCTAssertEqual(tagsM2, ["出游"])
+        XCTAssertEqual(try count("message_tags"), 2)
+    }
+
+    func testRenameTagRejectsInvalidTarget() async throws {
+        _ = try await repo.addTag("旅行", to: ["m1"], at: 5000)
+        do {
+            _ = try await repo.renameTag("旅行", to: "   ", at: 7000)
+            XCTFail("空标签应被拒绝")
+        } catch let error as MessageOrganizationError {
+            XCTAssertEqual(error, .emptyTag)
+        }
+        let tooLong = String(repeating: "长", count: MessageTagRules.maxLength + 1)
+        do {
+            _ = try await repo.renameTag("旅行", to: tooLong, at: 7000)
+            XCTFail("超长标签应被拒绝")
+        } catch let error as MessageOrganizationError {
+            XCTAssertEqual(error, .tagTooLong(MessageTagRules.maxLength))
+        }
+        let tags = try await repo.tags(ofMessage: "m1")
+        XCTAssertEqual(tags, ["旅行"], "失败不得留下半改状态")
+    }
+
+    func testRenameTagIsNoopWhenSourceMissingOrSame() async throws {
+        _ = try await repo.addTag("旅行", to: ["m1"], at: 5000)
+        let same = try await repo.renameTag("旅行", to: "旅行", at: 6000)
+        let missing = try await repo.renameTag("不存在", to: "出游", at: 6000)
+        XCTAssertEqual(same, 0)
+        XCTAssertEqual(missing, 0)
+        let tags = try await repo.tags(ofMessage: "m1")
+        XCTAssertEqual(tags, ["旅行"])
+    }
 }

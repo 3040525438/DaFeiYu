@@ -126,6 +126,40 @@ public struct GRDBMessageOrganizationRepository: MessageOrganizationRepository, 
         }
     }
 
+    @discardableResult
+    public func renameTag(_ old: String, to new: String, at millis: Int64) async throws -> Int {
+        let source = Self.normalizeTag(old)
+        guard !source.isEmpty else { return 0 }
+        let target = Self.normalizeTag(new)
+        guard !target.isEmpty else {
+            let trimmed = new.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.count > GRDBMessageOrganizationRepository.maxTagLength {
+                throw MessageOrganizationError.tagTooLong(GRDBMessageOrganizationRepository.maxTagLength)
+            }
+            throw MessageOrganizationError.emptyTag
+        }
+        guard source != target else { return 0 }
+
+        do {
+            return try await database.write { db in
+                // 单事务：先改名（已存在同名标签的消息会被 IGNORE 跳过），再清掉改名失败的旧行，
+                // 保证不会出现"同一消息同标签两行"或残留半改状态。
+                try db.execute(
+                    sql: "UPDATE OR IGNORE message_tags SET tag = ?, created_at = ? WHERE tag = ?",
+                    arguments: [target, millis, source]
+                )
+                let renamed = db.changesCount
+                try db.execute(
+                    sql: "DELETE FROM message_tags WHERE tag = ?",
+                    arguments: [source]
+                )
+                return renamed
+            }
+        } catch let error as DatabaseError {
+            throw DFError.database(error.message ?? "数据库操作失败")
+        }
+    }
+
     public func tags(ofMessage id: String) async throws -> [String] {
         do {
             return try await database.dbQueue.read { db in

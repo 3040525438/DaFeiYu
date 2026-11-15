@@ -12,6 +12,11 @@ struct MessageOrganizerView: View {
     @State private var showTagInput = false
     @State private var tagDraft = ""
     @State private var tagAction: TagAction = .add
+    /// I-01：正在重命名的标签（nil 表示未开始）
+    @State private var renamingTag: String?
+    @State private var renameDraft = ""
+    /// 用于弹窗文案的稳定快照（避免关闭瞬间被清空）
+    @State private var renameSourceLabel = ""
 
     private enum TagAction: Equatable {
         case add
@@ -102,6 +107,15 @@ struct MessageOrganizerView: View {
                                 .clipShape(Capsule())
                         }
                         .buttonStyle(.plain)
+                        .contextMenu {
+                            Button {
+                                renameDraft = item.tag
+                                renameSourceLabel = item.tag
+                                renamingTag = item.tag
+                            } label: {
+                                Label("重命名标签…", systemImage: "pencil")
+                            }
+                        }
                     }
                     if viewModel.tagSummary.isEmpty {
                         Text("还没有标签：选中消息后可批量添加")
@@ -128,6 +142,28 @@ struct MessageOrganizerView: View {
                 viewModel.clearLastMessage()
             }
         }
+        .alert("重命名标签", isPresented: renameAlertBinding) {
+            TextField("新标签", text: $renameDraft)
+            Button("取消", role: .cancel) { renamingTag = nil }
+            Button("重命名") {
+                if let old = renamingTag {
+                    let new = renameDraft
+                    Task { await viewModel.renameTag(old, to: new) }
+                }
+                renamingTag = nil
+            }
+        } message: {
+            Text("所有带「\(renameSourceLabel)」的消息会一起改名，不会复制出重复标签。")
+        }
+    }
+
+    private var renameAlertBinding: Binding<Bool> {
+        Binding(
+            get: { renamingTag != nil },
+            set: { newValue in
+                if !newValue { renamingTag = nil }
+            }
+        )
     }
 
     private func banner(_ text: String, isError: Bool = false) -> some View {
