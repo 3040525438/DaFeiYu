@@ -65,6 +65,14 @@ public protocol ChatOrchestrator: Sendable {
     /// - 返回值与抛出语义同 `send`。
     func retry(messageID: String, conversationID: String) -> AsyncThrowingStream<OrchestratorEvent, Error>
 
+    /// 续写某条 assistant 回复（D49）：从断点继续写，不重复已写内容。
+    ///
+    /// - 参数 messageID：**assistant** 消息 id，必须已有正文（来源可以是正常完成或被取消的轮次）。
+    /// - 实现方式：新建一轮，上下文里保留原回复，另追加一条**隐藏指令消息**
+    ///   （`origin == .system`，界面不渲染），模型据此续写；原消息不被改写。
+    /// - 返回值与抛出语义同 `send`。
+    func continueTurn(messageID: String, conversationID: String) -> AsyncThrowingStream<OrchestratorEvent, Error>
+
     /// 取消当前活跃轮次。
     ///
     /// - 参数 owner：发起该轮次的页面归属 token。只有与活跃轮次的 owner 一致时才生效，

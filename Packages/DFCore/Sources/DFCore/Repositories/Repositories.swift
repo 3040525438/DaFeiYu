@@ -17,6 +17,10 @@ public protocol MessageRepository: Sendable {
     /// 双键游标分页：`ORDER BY created_at DESC, rowid DESC` 取页，内存反转为升序返回。
     /// 游标取"上一页最旧一条"的 `(createdAt, rowid)`；软删消息不占返回条数、不产生游标。
     func page(in conversationID: String, before: PageCursor?, limit: Int) async throws -> MessagePage
+    /// 日期跳转（D56）：取"离目标时间最近的那一页"，按时间升序返回。
+    ///
+    /// 语义：页内最后一条不晚于 `millis`；没有更早消息时返回空页。
+    func page(in conversationID: String, around millis: Int64, limit: Int) async throws -> MessagePage
     /// 组内消息，按 `created_at ASC, rowid ASC` 升序（含软删，由调用方决定是否过滤）
     func messages(inGroup groupID: String) async throws -> [Message]
 
@@ -67,6 +71,21 @@ public struct MessagePage: Sendable, Equatable {
         self.items = items
         self.nextCursor = nextCursor
         self.hasMore = hasMore
+    }
+}
+
+public extension MessageRepository {
+    /// 日期跳转的通用兜底实现（测试替身无需单独实现）：
+    /// 从最新一页开始向前回溯，直到页首早于目标时间或没有更早的消息。
+    func page(in conversationID: String, around millis: Int64, limit: Int) async throws -> MessagePage {
+        var cursor: PageCursor?
+        while true {
+            let page = try await self.page(in: conversationID, before: cursor, limit: limit)
+            guard let oldest = page.items.first else { return page }
+            if oldest.createdAt <= millis || !page.hasMore { return page }
+            guard let next = page.nextCursor, next != cursor else { return page }
+            cursor = next
+        }
     }
 }
 

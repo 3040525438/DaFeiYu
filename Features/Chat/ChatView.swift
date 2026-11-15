@@ -14,6 +14,8 @@ struct ChatView: View {
     @State private var showConversations = false
     @State private var showVoiceInput = false
     @State private var showImageUnderstanding = false
+    @State private var showDateJump = false
+    @State private var jumpDate = Date()
     /// D25：全局搜索
     @State private var showGlobalSearch = false
     /// D26：消息整理
@@ -89,6 +91,12 @@ struct ChatView: View {
                             showOrganizer = true
                         } label: {
                             Label("消息整理", systemImage: "tag")
+                        }
+                        Button {
+                            jumpDate = Date()
+                            showDateJump = true
+                        } label: {
+                            Label("跳到日期…", systemImage: "calendar")
                         }
                         Divider()
                         Button {
@@ -200,6 +208,44 @@ struct ChatView: View {
             }
             .environmentObject(container)
         }
+        .sheet(isPresented: $showDateJump) {
+            NavigationStack {
+                Form {
+                    DatePicker("跳转到", selection: $jumpDate, displayedComponents: .date)
+                    Text("会加载该日期附近的一页消息并定位过去。")
+                        .font(DFFont.caption)
+                        .foregroundStyle(DFColor.inkMuted)
+                }
+                .navigationTitle("跳到日期")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("取消") { showDateJump = false }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("跳转") {
+                            let target = jumpDate
+                            showDateJump = false
+                            Task { await viewModel.jumpToDate(target) }
+                        }
+                    }
+                }
+            }
+        }
+        .alert("历史记录", isPresented: historyNoticeBinding) {
+            Button("知道了", role: .cancel) { viewModel.historyNotice = nil }
+        } message: {
+            Text(viewModel.historyNotice ?? "")
+        }
+    }
+
+    private var historyNoticeBinding: Binding<Bool> {
+        Binding(
+            get: { viewModel.historyNotice != nil },
+            set: { newValue in
+                if !newValue { viewModel.historyNotice = nil }
+            }
+        )
     }
 
     private func deleteToday() {
@@ -246,7 +292,7 @@ struct ChatView: View {
                         .fill(DFColor.success)
                         .frame(width: 5, height: 5)
                 }
-                Text(viewModel.isStreaming ? "正在输入…" : "本地存储 · 只有你和她")
+                Text(viewModel.phase == .idle ? "本地存储 · 只有你和她" : viewModel.phase.label)
                     .font(.system(size: 9))
                     .foregroundStyle(DFColor.inkMuted)
                     .lineLimit(1)
@@ -260,16 +306,20 @@ struct ChatView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 12) {
+                    if viewModel.hasMoreHistory {
+                        loadEarlierButton
+                    }
                     if !viewModel.hasModel {
                         emptyBanner
                     }
-                    ForEach(viewModel.messages) { message in
+                    ForEach(viewModel.visibleMessages) { message in
                         MessageRow(
                             message: message,
                             isStreaming: isStreaming(message),
                             isPendingRecovery: viewModel.isPendingRecovery(message),
                             theme: viewModel.theme,
                             onRetry: { viewModel.retry(message) },
+                            onContinue: { viewModel.continueWriting(message) },
                             onDelete: { Task { await viewModel.delete(.ids([message.id])) } },
                             onEdit: { viewModel.beginEdit(message) },
                             onRevoke: { Task { await viewModel.revoke(message) } },
@@ -283,8 +333,9 @@ struct ChatView: View {
                 .padding(.bottom, 18)
             }
             .scrollDismissesKeyboard(.interactively)
-            .onChange(of: viewModel.messages.count) { _, _ in
-                guard let last = viewModel.messages.last else { return }
+            .onChange(of: viewModel.visibleMessages.count) { oldCount, newCount in
+                // 只有"追加到末尾"才自动滚到底；加载更早（头部插入）保持当前位置
+                guard newCount > oldCount, let last = viewModel.visibleMessages.last else { return }
                 withAnimation(DFMotion.messageIn) {
                     proxy.scrollTo(last.id, anchor: .bottom)
                 }
@@ -297,6 +348,25 @@ struct ChatView: View {
                 viewModel.scrollTargetID = nil
             }
         }
+    }
+
+    /// D56：手动加载更早的消息（到达顶部后可直接点按，保证可达性）
+    private var loadEarlierButton: some View {
+        Button {
+            Task { await viewModel.loadOlderMessages() }
+        } label: {
+            HStack(spacing: 6) {
+                if viewModel.isLoadingHistory {
+                    ProgressView().controlSize(.mini)
+                }
+                Text(viewModel.isLoadingHistory ? "正在加载更早的消息…" : "加载更早的消息")
+                    .font(DFFont.timestamp)
+                    .foregroundStyle(DFColor.inkMuted)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+        }
+        .disabled(viewModel.isLoadingHistory)
     }
 
     // MARK: - 搜索
@@ -386,8 +456,9 @@ struct ChatView: View {
 
     private func isStreaming(_ message: Message) -> Bool {
         viewModel.isStreaming
+            && viewModel.phase != .paused
             && message.role == .assistant
-            && message.id == viewModel.messages.last?.id
+            && message.id == viewModel.visibleMessages.last?.id
     }
 
     private var emptyBanner: some View {
@@ -455,6 +526,24 @@ struct ChatView: View {
                         .stroke(DFColor.hairline, lineWidth: 1)
                 )
 
+            if viewModel.isStreaming {
+                // D49：暂停 / 继续
+                Button {
+                    if viewModel.phase == .paused {
+                        viewModel.resumeGeneration()
+                    } else {
+                        viewModel.pause()
+                    }
+                } label: {
+                    Image(systemName: viewModel.phase == .paused ? "play.fill" : "pause.fill")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 32, height: 32)
+                        .background(DFColor.inkMuted, in: Circle())
+                }
+                .accessibilityLabel(viewModel.phase == .paused ? "继续生成" : "暂停生成")
+            }
+
             Button {
                 if viewModel.isStreaming {
                     viewModel.stop()
@@ -497,6 +586,8 @@ struct MessageRow: View {
     var isPendingRecovery: Bool = false
     var theme: ChatTheme = .default
     let onRetry: () -> Void
+    /// D49：续写（从断点继续写）
+    var onContinue: () -> Void = {}
     let onDelete: () -> Void
     var onEdit: () -> Void = {}
     var onRevoke: () -> Void = {}
@@ -546,6 +637,11 @@ struct MessageRow: View {
                     if canRetry {
                         Button(action: onRetry) {
                             Label("重试", systemImage: "arrow.clockwise")
+                        }
+                    }
+                    if message.canContinueWriting {
+                        Button(action: onContinue) {
+                            Label("续写", systemImage: "text.append")
                         }
                     }
                     if !isRevoked {

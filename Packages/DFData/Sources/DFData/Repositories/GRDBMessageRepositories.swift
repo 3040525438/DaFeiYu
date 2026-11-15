@@ -182,6 +182,43 @@ public struct GRDBMessageRepository: MessageRepository, Sendable {
         }
     }
 
+    // MARK: - 日期跳转（D56）
+
+    public func page(in conversationID: String, around millis: Int64, limit: Int) async throws -> MessagePage {
+        let clamped = min(max(limit, 1), 200)
+        do {
+            return try await database.dbQueue.read { db in
+                // 直接按时间上界取一页：最后一条不晚于目标时间，返回前反转为升序
+                let rows = try MessageRow.fetchAll(
+                    db,
+                    sql: """
+                    SELECT messages.*, messages.rowid AS _rid
+                    FROM messages
+                    WHERE messages.conversation_id = ?
+                      AND messages.deleted_at IS NULL
+                      AND messages.created_at <= ?
+                    ORDER BY messages.created_at DESC, messages.rowid DESC
+                    LIMIT ?
+                    """,
+                    arguments: [conversationID, millis, clamped + 1]
+                )
+                let hasMore = rows.count > clamped
+                let pageRows = Array(rows.prefix(clamped))
+                let ascending = Array(pageRows.reversed())
+                let nextCursor = hasMore
+                    ? ascending.first.map { PageCursor(createdAt: $0.message.createdAt, rowid: $0.rowid) }
+                    : nil
+                return MessagePage(
+                    items: ascending.map(\.message),
+                    nextCursor: nextCursor,
+                    hasMore: hasMore
+                )
+            }
+        } catch {
+            throw GRDBErrorMapper.map(error)
+        }
+    }
+
     // MARK: - 按组查询
 
     public func messages(inGroup groupID: String) async throws -> [Message] {

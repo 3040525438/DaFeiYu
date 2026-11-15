@@ -150,6 +150,23 @@ public extension Message {
         status == .draft || status == .failed
     }
 
+    /// 隐藏指令消息（D49 续写）：由系统注入给模型，界面不渲染。
+    ///
+    /// 判定只依赖 `role == .user && origin == .system` 这一个组合，
+    /// 用户真实输入永远是 `origin == .user`，因此不会误伤。
+    var isHiddenInstruction: Bool {
+        role == .user && origin == .system
+    }
+
+    /// 是否可被续写：assistant 且已有正文（正常完成或被取消的轮次）
+    var canContinueWriting: Bool {
+        role == .assistant
+            && deletedAt == nil
+            && revokedAt == nil
+            && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (status == .sent || status == .canceled)
+    }
+
     func markingSending() -> Message {
         var copy = self
         copy.status = .sending

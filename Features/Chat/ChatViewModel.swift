@@ -19,6 +19,15 @@ final class ChatViewModel: ObservableObject {
     @Published var errorText: String?
     @Published private(set) var hasModel: Bool = false
 
+    /// D52：本轮生成状态（等待 / 思考 / 生成 / 暂停 / 完成 / 失败 / 停止）
+    @Published private(set) var phase: ChatTurnPhase = .idle
+    /// D56：是否还有更早的历史可加载
+    @Published private(set) var hasMoreHistory: Bool = false
+    /// D56：是否正在加载更早的消息
+    @Published private(set) var isLoadingHistory: Bool = false
+    /// D56：日期跳转 / 定位失败等提示（单独一路，不覆盖错误弹窗）
+    @Published var historyNotice: String?
+
     /// W2-7：外观设置（主题/背景/气泡/字号/头像），默认值兜底
     @Published private(set) var theme: ChatTheme = .default
     /// W2-5：会话内搜索
@@ -52,6 +61,8 @@ final class ChatViewModel: ObservableObject {
 
     private let container: AppContainer
     private var conversationID: String = ""
+    /// D56：更早消息的分页游标（nil 表示没有更早）
+    private var historyCursor: PageCursor?
 
     /// 会话协调器（容器持有，页面只是引用；页面生命周期不影响生成）
     private var coordinator: ConversationCoordinator?
@@ -118,6 +129,10 @@ final class ChatViewModel: ObservableObject {
         currentTurnToken = nil
         lastOutcome = .other
         isStreaming = false
+        phase = .idle
+        hasMoreHistory = false
+        isLoadingHistory = false
+        historyCursor = nil
         scrollTargetID = nil
         draftSnapshot = nil
         clearSearch()
@@ -125,8 +140,11 @@ final class ChatViewModel: ObservableObject {
 
         await recoverIfNeeded(coordinator: coordinator)
 
-        // 与 V1 一致：首屏只显示最近 300 条，更早的历史靠分页
-        messages = try await container.messages.recentMessages(in: id, limit: 300)
+        // D56：首屏取一页（升序 + 游标），更早的历史靠"加载更早"分页
+        let initialPage = try await container.messages.page(in: id, before: nil, limit: 100)
+        messages = initialPage.items
+        historyCursor = initialPage.nextCursor
+        hasMoreHistory = initialPage.hasMore
 
         subscribe(coordinator)
         // 快照优先：正在生成的那条文本以协调器内存为准（库内可能尚为空或滞后）
@@ -209,6 +227,148 @@ final class ChatViewModel: ObservableObject {
         Task { await coordinator.cancelTurn(token: token) }
     }
 
+    // MARK: - D49 暂停 / 继续 / 续写
+
+    /// 暂停展示：模型请求不被取消，界面停止追加；恢复后从断点继续。
+    func pause() {
+        guard isStreaming, let coordinator, let token = currentTurnToken, phase != .paused else { return }
+        Task { await coordinator.pauseTurn(token: token) }
+    }
+
+    /// 继续：放行被扣住的增量。
+    func resumeGeneration() {
+        guard let coordinator, let token = currentTurnToken, phase == .paused else { return }
+        Task { await coordinator.resumeTurn(token: token) }
+    }
+
+    /// 续写：从某条 assistant 回复的断点继续写。
+    ///
+    /// 约束与 `retry` 一致（不开启新会话、不改写原消息），另外必须是可续写的消息。
+    func continueWriting(_ message: Message) {
+        guard !isStreaming else { return }
+        guard message.canContinueWriting else {
+            errorText = "这条回复没有可续写的内容"
+            return
+        }
+        guard let coordinator else { return }
+        guard pendingRecovery == nil, !hasUnfinishedAssistant else {
+            errorText = "上一轮还没收尾，正在等待恢复完成"
+            return
+        }
+        guard hasModel else {
+            errorText = DFError.notConfigured("默认模型（请到设置页添加）").localizedDescription
+            return
+        }
+        draftSnapshot = nil
+        do {
+            currentTurnToken = try coordinator.startContinue(messageID: message.id)
+        } catch {
+            errorText = error.localizedDescription
+            return
+        }
+        beginLocalTurn()
+    }
+
+    // MARK: - D56 历史分页 / 日期跳转 / 定位
+
+    /// 加载更早的一页（界面滚到顶时调用）。
+    func loadOlderMessages() async {
+        guard hasMoreHistory, !isLoadingHistory, let cursor = historyCursor else { return }
+        guard !conversationID.isEmpty else { return }
+        isLoadingHistory = true
+        historyNotice = nil
+        defer { isLoadingHistory = false }
+        do {
+            let page = try await container.messages.page(
+                in: conversationID,
+                before: cursor,
+                limit: 100
+            )
+            historyCursor = page.nextCursor
+            hasMoreHistory = page.hasMore
+            prepend(page.items)
+        } catch {
+            historyNotice = "加载更早的消息失败：\(Self.interactionMessage(error))"
+        }
+    }
+
+    /// 日期跳转：直接取目标时间点附近的一页，并把视口移过去。
+    func jumpToDate(_ date: Date) async {
+        guard !conversationID.isEmpty else { return }
+        historyNotice = nil
+        do {
+            let millis = Clock.millis(from: date)
+            let page = try await container.messages.page(
+                in: conversationID,
+                around: millis,
+                limit: 100
+            )
+            guard !page.items.isEmpty else {
+                historyNotice = "这个日期之前还没有消息"
+                return
+            }
+            messages = page.items
+            historyCursor = page.nextCursor
+            hasMoreHistory = page.hasMore
+            let target = page.items.first { $0.createdAt >= millis } ?? page.items.last
+            if let target { scrollTargetID = target.id }
+        } catch {
+            historyNotice = "日期跳转失败：\(Self.interactionMessage(error))"
+        }
+    }
+
+    /// 定位某条消息：不在当前窗口时向后翻页查找（最多 20 页）。
+    @discardableResult
+    func locate(messageID: String) async -> Bool {
+        if messages.contains(where: { $0.id == messageID }) {
+            scrollTargetID = messageID
+            return true
+        }
+        var cursor = historyCursor
+        var rounds = 0
+        while hasMoreHistory, let current = cursor, rounds < 20 {
+            guard let page = try? await container.messages.page(
+                in: conversationID,
+                before: current,
+                limit: 100
+            ) else { break }
+            prepend(page.items)
+            cursor = page.nextCursor
+            hasMoreHistory = page.hasMore
+            rounds += 1
+            if page.items.contains(where: { $0.id == messageID }) { break }
+        }
+        historyCursor = cursor
+        guard messages.contains(where: { $0.id == messageID }) else {
+            historyNotice = "这条消息不在已加载的历史里，可能已被删除"
+            return false
+        }
+        scrollTargetID = messageID
+        return true
+    }
+
+    /// 从数据层重载首屏（清空 / 批量删除后使用）
+    private func reloadFirstPage() async {
+        guard !conversationID.isEmpty else { return }
+        guard let page = try? await container.messages.page(
+            in: conversationID,
+            before: nil,
+            limit: 100
+        ) else { return }
+        messages = page.items
+        historyCursor = page.nextCursor
+        hasMoreHistory = page.hasMore
+    }
+
+    /// 头部插入更早的消息，去重后保持时间升序
+    private func prepend(_ items: [Message]) {
+        guard !items.isEmpty else { return }
+        let existing = Set(messages.map(\.id))
+        let fresh = items.filter { !existing.contains($0.id) }
+        guard !fresh.isEmpty else { return }
+        messages.insert(contentsOf: fresh, at: 0)
+    }
+
     func delete(_ message: Message) {
         guard !isStreaming else { return }
         Task {
@@ -224,6 +384,11 @@ final class ChatViewModel: ObservableObject {
 
     private var hasUnfinishedAssistant: Bool {
         messages.contains { $0.role == .assistant && $0.status == .sending }
+    }
+
+    /// 界面渲染用的消息：过滤掉系统注入的隐藏指令（D49 续写）
+    var visibleMessages: [Message] {
+        messages.filter { !$0.isHiddenInstruction }
     }
 
     /// 供"清空会话"使用：当前会话 id
@@ -296,7 +461,7 @@ final class ChatViewModel: ObservableObject {
                 in: conversationID,
                 at: Clock.nowMillis()
             )
-            messages = try await container.messages.recentMessages(in: conversationID, limit: 300)
+            await reloadFirstPage()
         } catch {
             errorText = Self.interactionMessage(error)
         }
@@ -324,16 +489,9 @@ final class ChatViewModel: ObservableObject {
         searchHits = []
     }
 
-    /// 定位命中消息：不在当前窗口时先重新装载最近 300 条，再交给列表滚动
+    /// 定位命中消息（D56）：不在当前窗口时逐页回溯查找，找不到如实提示
     func revealSearchHit(_ hit: ChatSearchHit) async {
-        if !messages.contains(where: { $0.id == hit.messageID }) {
-            messages = (try? await container.messages.recentMessages(in: conversationID, limit: 300)) ?? messages
-        }
-        guard messages.contains(where: { $0.id == hit.messageID }) else {
-            errorText = "这条消息不在最近 300 条内，请先加载更早的消息"
-            return
-        }
-        scrollTargetID = hit.messageID
+        _ = await locate(messageID: hit.messageID)
         searchHits = []
         searchQuery = ""
     }
@@ -509,14 +667,7 @@ final class ChatViewModel: ObservableObject {
             await switchConversation(to: conversationID)
             guard self.conversationID == conversationID else { return }
         }
-        if !messages.contains(where: { $0.id == messageID }) {
-            messages = (try? await container.messages.recentMessages(in: conversationID, limit: 300)) ?? messages
-        }
-        guard messages.contains(where: { $0.id == messageID }) else {
-            errorText = "这条消息不在最近 300 条内，请先在聊天里加载更早的消息"
-            return
-        }
-        scrollTargetID = messageID
+        _ = await locate(messageID: messageID)
     }
 
     /// 从库里重读已加载的消息（收藏 / 标签等标记在其他界面被改动后调用）。
@@ -562,6 +713,15 @@ final class ChatViewModel: ObservableObject {
         currentTurn = nil
         lastOutcome = .other
         isStreaming = true
+        // 新一轮从 idle 起步，避免被上一轮的终态挡住
+        phase = .idle
+        setPhase(.waiting)
+    }
+
+    /// 状态推进：非法跃迁直接忽略，避免"已完成 → 生成中"这类回退
+    private func setPhase(_ next: ChatTurnPhase) {
+        guard phase.canTransition(to: next) else { return }
+        phase = next
     }
 
     /// 清理段：之间**没有 await**，不会被其它 MainActor 任务插入。
@@ -587,6 +747,10 @@ final class ChatViewModel: ObservableObject {
         currentTurnToken = nil
         draftSnapshot = nil           // D2：兜底清理，避免快照残留到下一轮
         lastOutcome = .other
+        // 终态保留在界面上（完成 / 失败 / 停止），未收尾则回到 idle
+        if !phase.isTerminal {
+            phase = .idle
+        }
     }
 
     /// D2：仅当"本轮确实没有创建任何消息"且用户没有重新输入时，才把原文放回输入框。
@@ -609,6 +773,14 @@ final class ChatViewModel: ObservableObject {
             applySnapshot(snapshot)
         case let .orchestrator(orchestratorEvent):
             await apply(orchestratorEvent, subscriptionID: subscriptionID)
+        case let .turnPaused(token):
+            if token == currentTurnToken, isStreaming {
+                phase = .paused
+            }
+        case let .turnResumed(token):
+            if token == currentTurnToken, isStreaming, phase == .paused {
+                phase = .generating
+            }
         case let .turnEnded(token, opened, error):
             await finishTurn(token: token, opened: opened, error: error)
         }
@@ -621,10 +793,16 @@ final class ChatViewModel: ObservableObject {
             currentTurnToken = nil
             currentTurn = nil
             isStreaming = false
+            if phase.isActive { phase = .idle }
             return
         }
         currentTurnToken = token
         isStreaming = true
+        if snapshot.isPaused {
+            phase = .paused
+        } else if phase == .idle || phase.isTerminal {
+            phase = snapshot.assistantMessageID == nil ? .waiting : .generating
+        }
         guard let assistantMessageID = snapshot.assistantMessageID else {
             // 已开轮但 `turnOpened` 尚未投递：稍后由事件补齐
             currentTurn = nil
@@ -654,15 +832,20 @@ final class ChatViewModel: ObservableObject {
                 assistantMessageID: assistantMessageID,
                 accumulated: assistant?.text ?? ""
             )
+            setPhase(.thinking)
             // 与旧链路一致：每轮开始刷新会话时间（编排层不负责该字段）
             try? await container.conversations.touch(id: conversationID, at: Clock.nowMillis())
             return
 
         case let .assistantDelta(chunk):
             guard var turn = currentTurn else { return }
-            turn.accumulated += chunk
-            currentTurn = turn
-            updateText(id: turn.assistantMessageID, text: turn.accumulated)
+            // 暂停时到达的增量一律丢弃（协调器已扣住，这里是双保险）
+            if phase != .paused {
+                turn.accumulated += chunk
+                currentTurn = turn
+                updateText(id: turn.assistantMessageID, text: turn.accumulated)
+                setPhase(.generating)
+            }
             return
 
         case let .assistantReplaced(text):
@@ -682,14 +865,22 @@ final class ChatViewModel: ObservableObject {
             }
             return
 
-        case let .turnCompleted(_, assistantMessageID, _),
-             let .turnCancelled(_, assistantMessageID):
+        case let .turnCompleted(_, assistantMessageID, _):
             // 终态以库内真值为准：取消路径不保证发 assistantReplaced，
             // 正文必须重读数据库；状态也不得由本地猜测。
             await reloadMessage(id: assistantMessageID, subscriptionID: subscriptionID)
             guard subscriptionID == self.subscriptionID else { return }
             pendingRecovery = nil
             lastOutcome = .terminal
+            phase = .completed
+            return
+
+        case let .turnCancelled(_, assistantMessageID):
+            await reloadMessage(id: assistantMessageID, subscriptionID: subscriptionID)
+            guard subscriptionID == self.subscriptionID else { return }
+            pendingRecovery = nil
+            lastOutcome = .terminal
+            phase = .stopped
             return
 
         case let .turnFailed(_, assistantMessageID, reason):
@@ -699,6 +890,7 @@ final class ChatViewModel: ObservableObject {
             guard subscriptionID == self.subscriptionID else { return }
             pendingRecovery = nil
             lastOutcome = .terminal
+            phase = .failed
             let safe = Self.sanitizedFailure(reason)
             errorText = Self.userFacingFailure(safe)
             NSLog("[chat] 轮次失败 assistant=\(assistantMessageID) reason=\(safe)")
@@ -776,7 +968,7 @@ final class ChatViewModel: ObservableObject {
         do {
             _ = try await coordinator.recoverStaleTurns()
             hasRecovered = true
-            messages = try await container.messages.recentMessages(in: conversationID, limit: 300)
+            await reloadFirstPage()
             NSLog("装载后补偿恢复完成")
         } catch {
             hasRecovered = false

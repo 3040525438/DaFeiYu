@@ -8,6 +8,10 @@ enum CoordinatorEvent: Sendable {
     case snapshot(CoordinatorSnapshot)
     /// 编排器原始事件（顺序与编排器一致）
     case orchestrator(OrchestratorEvent)
+    /// D49：本轮已暂停（模型流仍在缓冲，界面不再追加）
+    case turnPaused(turnToken: UUID)
+    /// D49：本轮已恢复（继续消费缓冲的增量）
+    case turnResumed(turnToken: UUID)
     /// 本轮消费结束（含首个事件之前的失败）
     case turnEnded(turnToken: UUID, opened: Bool, error: String?)
 }
@@ -18,13 +22,24 @@ struct CoordinatorSnapshot: Sendable, Equatable {
     var groupID: String?
     var assistantMessageID: String?
     var accumulated: String
+    /// D49：本轮是否处于暂停态（重新进入页面时据此复原按钮）
+    var isPaused: Bool
 
-    static let idle = CoordinatorSnapshot(
-        turnToken: nil,
-        groupID: nil,
-        assistantMessageID: nil,
-        accumulated: ""
-    )
+    init(
+        turnToken: UUID? = nil,
+        groupID: String? = nil,
+        assistantMessageID: String? = nil,
+        accumulated: String = "",
+        isPaused: Bool = false
+    ) {
+        self.turnToken = turnToken
+        self.groupID = groupID
+        self.assistantMessageID = assistantMessageID
+        self.accumulated = accumulated
+        self.isPaused = isPaused
+    }
+
+    static let idle = CoordinatorSnapshot()
 }
 
 /// 会话级生成协调器（L2 核心）。
@@ -47,11 +62,14 @@ final class ConversationCoordinator {
 
     private var subscribers: [UUID: AsyncStream<CoordinatorEvent>.Continuation] = [:]
     private var consumeTask: Task<Void, Never>?
+    /// D49 暂停闸门：暂停后消费循环挂起，不再向界面追加增量
+    private let pauseGate = PauseGate()
 
     private(set) var turnToken: UUID?
     private(set) var groupID: String?
     private(set) var assistantMessageID: String?
     private(set) var accumulated = ""
+    private(set) var isPaused = false
 
     init(
         conversationID: String,
@@ -92,7 +110,8 @@ final class ConversationCoordinator {
             turnToken: turnToken,
             groupID: groupID,
             assistantMessageID: assistantMessageID,
-            accumulated: accumulated
+            accumulated: accumulated,
+            isPaused: isPaused
         )
     }
 
@@ -116,6 +135,15 @@ final class ConversationCoordinator {
         }
     }
 
+    /// D49 续写：从某条 assistant 回复的断点继续写。
+    func startContinue(messageID: String) throws -> UUID {
+        let orchestrator = self.orchestrator
+        let conversationID = self.conversationID
+        return try start {
+            orchestrator.continueTurn(messageID: messageID, conversationID: conversationID)
+        }
+    }
+
     private func start(
         _ makeStream: () -> AsyncThrowingStream<OrchestratorEvent, Error>
     ) throws -> UUID {
@@ -127,6 +155,7 @@ final class ConversationCoordinator {
         groupID = nil
         assistantMessageID = nil
         accumulated = ""
+        isPaused = false
         broadcast(.snapshot(snapshot()))
 
         let stream = makeStream()
@@ -139,7 +168,40 @@ final class ConversationCoordinator {
     /// 取消本轮。只有持有**当前** turnToken 的调用方生效（旧页面天然无效）。
     func cancelTurn(token: UUID) async {
         guard token == turnToken else { return }
+        // 暂停中取消：先放行消费循环，否则它会一直挂在闸门上，轮次无法收尾
+        await releasePauseIfNeeded()
         await orchestrator.cancelActiveTurn(owner: ownerToken)
+    }
+
+    // MARK: - 暂停 / 继续（D49）
+
+    /// 暂停本轮：只挂起"界面消费"，不取消模型请求。
+    ///
+    /// 语义边界（如实说明，不夸大成"模型停止计算"）：
+    /// - 已到达客户端的增量会被扣住，界面停止追加；
+    /// - 网络流仍在服务端 / 客户端缓冲区里流动，恢复后从断点继续；
+    /// - 长时间暂停会积压缓冲区，用户可选择"停止"彻底结束本轮。
+    func pauseTurn(token: UUID) async {
+        guard token == turnToken, consumeTask != nil, !isPaused else { return }
+        isPaused = true
+        await pauseGate.pause()
+        broadcast(.turnPaused(turnToken: token))
+        broadcast(.snapshot(snapshot()))
+    }
+
+    /// 恢复本轮：放行消费循环，继续追加增量。
+    func resumeTurn(token: UUID) async {
+        guard token == turnToken, consumeTask != nil, isPaused else { return }
+        isPaused = false
+        await pauseGate.resume()
+        broadcast(.turnResumed(turnToken: token))
+        broadcast(.snapshot(snapshot()))
+    }
+
+    private func releasePauseIfNeeded() async {
+        guard isPaused else { return }
+        isPaused = false
+        await pauseGate.resume()
     }
 
     // MARK: - 恢复
@@ -168,6 +230,8 @@ final class ConversationCoordinator {
 
         do {
             for try await event in stream {
+                // D49：暂停时挂在这里，既不丢事件也不向界面追加
+                await pauseGate.waitIfPaused()
                 if case .turnOpened = event { opened = true }
                 apply(event)
                 broadcast(.orchestrator(event))
@@ -183,6 +247,7 @@ final class ConversationCoordinator {
         groupID = nil
         assistantMessageID = nil
         accumulated = ""
+        isPaused = false
         consumeTask = nil
         broadcast(.turnEnded(turnToken: token, opened: opened, error: failure))
     }
@@ -210,6 +275,37 @@ final class ConversationCoordinator {
     private func broadcast(_ event: CoordinatorEvent) {
         for continuation in subscribers.values {
             continuation.yield(event)
+        }
+    }
+}
+
+/// D49 暂停闸门。
+///
+/// 语义：`pause()` 之后所有 `waitIfPaused()` 调用会挂起，直到 `resume()`；
+/// 状态只在内存，进程退出即消失，不存在"永久卡死"。
+actor PauseGate {
+    private var paused = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func pause() {
+        paused = true
+    }
+
+    func resume() {
+        paused = false
+        let pending = waiters
+        waiters.removeAll()
+        for waiter in pending { waiter.resume() }
+    }
+
+    func waitIfPaused() async {
+        guard paused else { return }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            if paused {
+                waiters.append(continuation)
+            } else {
+                continuation.resume()
+            }
         }
     }
 }

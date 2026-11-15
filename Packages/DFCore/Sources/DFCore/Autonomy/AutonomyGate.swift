@@ -133,6 +133,10 @@ public enum AutonomyGate {
     ///   - todaySpentYuan: 今天已花费的模型成本（元）
     ///   - notificationsAuthorized: 用户是否已授权通知
     ///   - budget: D10 预算上下文（每日 / 单次 / 自主预算与真实花费）；nil 表示只走旧的单值预算判断
+    ///   - urgency: 反思给出的说话紧迫度（0...1）。nil 表示本次调用不启用节奏联动
+    ///   - speakReason: 反思给出的说话理由，仅在与紧迫度联动时使用
+    ///   - cadence: 用户互动节奏信号，仅在与紧迫度联动时使用
+    ///   - urgencyThreshold: 紧迫度阈值，默认平衡档
     public static func evaluate(
         policy: AutonomyPolicy,
         trigger: ProactiveTrigger,
@@ -143,7 +147,11 @@ public enum AutonomyGate {
         pausedUntil: Int64? = nil,
         todaySpentYuan: Double = 0,
         notificationsAuthorized: Bool = true,
-        budget: AutonomyBudgetContext? = nil
+        budget: AutonomyBudgetContext? = nil,
+        urgency: Double? = nil,
+        speakReason: ReflectionSpeakReason = .none,
+        cadence: CadenceSignals? = nil,
+        urgencyThreshold: Double = ReflectionCadence.balancedThreshold
     ) -> AutonomyDecision {
         let policy = policy.normalized()
         guard policy.enabled else {
@@ -209,6 +217,18 @@ public enum AutonomyGate {
                     autonomySpent
                 )
             )
+        }
+        // 节奏联动（只收紧，不放宽）：紧迫度不足或用户正在连续互动时，不投递主动内容。
+        // 未传入紧迫度时完全跳过，既有调用方行为不变。
+        if let urgency {
+            if let reason = ReflectionRhythm.blockReason(
+                signals: cadence,
+                urgency: urgency,
+                speakReason: speakReason,
+                threshold: urgencyThreshold
+            ) {
+                return AutonomyDecision(allowed: false, reason: reason)
+            }
         }
         return .allowed
     }

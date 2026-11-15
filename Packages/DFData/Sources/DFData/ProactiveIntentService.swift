@@ -163,7 +163,11 @@ public final class ProactiveIntentService: @unchecked Sendable {
         todaySpentYuan: Double = 0,
         notificationsAuthorized: Bool = true,
         runTrigger: String = "background",
-        budget: AutonomyBudgetContext? = nil
+        budget: AutonomyBudgetContext? = nil,
+        urgency: Double? = nil,
+        speakReason: ReflectionSpeakReason = .none,
+        cadence: CadenceSignals? = nil,
+        urgencyThreshold: Double = ReflectionCadence.balancedThreshold
     ) async throws -> DispatchResult {
         guard let intent = try await intent(id: intentID) else {
             throw ProactiveIntentError.intentNotFound(intentID)
@@ -179,7 +183,11 @@ public final class ProactiveIntentService: @unchecked Sendable {
             todaySpentYuan: todaySpentYuan,
             notificationsAuthorized: notificationsAuthorized,
             runTrigger: runTrigger,
-            budget: budget
+            budget: budget,
+            urgency: urgency,
+            speakReason: speakReason,
+            cadence: cadence,
+            urgencyThreshold: urgencyThreshold
         )
 
         guard gate.decision.allowed else {

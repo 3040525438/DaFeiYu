@@ -171,14 +171,21 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         text: String,
         conversationID: String
     ) -> AsyncThrowingStream<OrchestratorEvent, Error> {
-        makeStream(text: text, retryMessageID: nil, conversationID: conversationID)
+        makeStream(text: text, retryMessageID: nil, continuationMessageID: nil, conversationID: conversationID)
     }
 
     public nonisolated func retry(
         messageID: String,
         conversationID: String
     ) -> AsyncThrowingStream<OrchestratorEvent, Error> {
-        makeStream(text: nil, retryMessageID: messageID, conversationID: conversationID)
+        makeStream(text: nil, retryMessageID: messageID, continuationMessageID: nil, conversationID: conversationID)
+    }
+
+    public nonisolated func continueTurn(
+        messageID: String,
+        conversationID: String
+    ) -> AsyncThrowingStream<OrchestratorEvent, Error> {
+        makeStream(text: nil, retryMessageID: nil, continuationMessageID: messageID, conversationID: conversationID)
     }
 
     public func cancelActiveTurn(owner: UUID) async {
@@ -303,6 +310,7 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
     private nonisolated func makeStream(
         text: String?,
         retryMessageID: String?,
+        continuationMessageID: String?,
         conversationID: String
     ) -> AsyncThrowingStream<OrchestratorEvent, Error> {
         AsyncThrowingStream { continuation in
@@ -314,6 +322,7 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
                 await self.run(
                     text: text,
                     retryMessageID: retryMessageID,
+                    continuationMessageID: continuationMessageID,
                     conversationID: conversationID,
                     token: token,
                     continuation: continuation
@@ -324,11 +333,15 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         }
     }
 
+    /// 续写时注入给模型的隐藏指令（D49）。界面不渲染这条消息。
+    static var continuationInstruction: String { ContinuationPrompt.instruction }
+
     // MARK: - 主流程
 
     private func run(
         text: String?,
         retryMessageID: String?,
+        continuationMessageID: String?,
         conversationID: String,
         token: UUID,
         continuation: AsyncThrowingStream<OrchestratorEvent, Error>.Continuation
@@ -366,10 +379,20 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         }
 
         let trimmed: String
+        // 续写：用户消息是系统注入的隐藏指令，界面不渲染
+        let isContinuation = continuationMessageID != nil
         if let retryMessageID {
             do {
                 trimmed = try await retrySourceText(messageID: retryMessageID)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
+            } catch {
+                continuation.finish(throwing: ChatOrchestrationError.assistantMessageMissing)
+                return
+            }
+        } else if let continuationMessageID {
+            do {
+                try await validateContinuationTarget(messageID: continuationMessageID)
+                trimmed = Self.continuationInstruction
             } catch {
                 continuation.finish(throwing: ChatOrchestrationError.assistantMessageMissing)
                 return
@@ -419,6 +442,17 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
             PromptInput(corePersona: persona, rules: deps.rules, history: composed.turns),
             budget: deps.budget
         )
+        // 上下文来自库内**已关闭**的组，不含本轮刚输入的这条；
+        // 不显式追加的话，模型只能看到上一轮以前的内容（云端闭环缺一环）。
+        // 重试场景下原文已在历史末尾，避免重复追加。
+        var requestTurns = prompt.messages
+        if let lastTurn = requestTurns.last {
+            if !(lastTurn.role == .user && lastTurn.text == trimmed) {
+                requestTurns.append(ChatTurn(role: .user, text: trimmed))
+            }
+        } else {
+            requestTurns.append(ChatTurn(role: .user, text: trimmed))
+        }
         let systemPrompt = prompt.system
             + "\n\n" + ReferenceProtocol.systemFragment
             + "\n\n" + SegmentProtocol.systemFragment
@@ -437,7 +471,7 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
             role: .user,
             text: trimmed,
             status: .sent,
-            origin: .user,
+            origin: isContinuation ? .system : .user,
             createdAt: now,
             sentAt: now
         )
@@ -506,7 +540,7 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         var capturedUsage: Usage?
         do {
             let provider = try await deps.makeProvider()
-            let request = try await deps.makeRequest(systemPrompt, prompt.messages)
+            let request = try await deps.makeRequest(systemPrompt, requestTurns)
             pendingRequest = request
             if shouldStop() { throw CancellationError() }
 
@@ -858,6 +892,17 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         }
     }
 
+    /// 续写目标校验：必须是未被删除 / 未撤回、且有正文的 assistant 消息。
+    /// 失败一律抛 `assistantMessageMissing`，在"首个事件之前"失败，不产生新行。
+    private func validateContinuationTarget(messageID: String) async throws {
+        guard let target = try await deps.messages.message(id: messageID) else {
+            throw ChatOrchestrationError.assistantMessageMissing
+        }
+        guard target.canContinueWriting else {
+            throw ChatOrchestrationError.assistantMessageMissing
+        }
+    }
+
     private func retrySourceText(messageID: String) async throws -> String {
         guard let target = try await deps.messages.message(id: messageID),
               target.role == .assistant else {
@@ -923,6 +968,14 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         }
         return String(describing: error)
     }
+}
+
+/// 续写（D49）注入给模型的隐藏指令。
+///
+/// 只作为"用户消息"进入上下文，不改变任何落库契约；界面按
+/// `Message.isHiddenInstruction`（`role == .user && origin == .system`）过滤掉它。
+enum ContinuationPrompt {
+    static let instruction = "请接着你上一条回复继续写完，直接从断点续写，不要重复已经写过的内容，也不要重新开头。"
 }
 
 /// `observer` 需要满足协议的 nonisolated `get set`，用引用盒子承接。

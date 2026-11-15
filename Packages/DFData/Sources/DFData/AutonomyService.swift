@@ -389,13 +389,21 @@ public final class AutonomyService: @unchecked Sendable {
     /// - Parameters:
     ///   - todaySpentYuan: 今日已花费（由模型成本记账方传入，未接入时为 0）
     ///   - notificationsAuthorized: 用户是否已授权通知
+    ///   - urgency: 反思给出的说话紧迫度（0...1）；nil 表示不启用节奏联动
+    ///   - speakReason: 反思给出的说话理由
+    ///   - cadence: 用户互动节奏信号
+    ///   - urgencyThreshold: 紧迫度阈值，默认平衡档
     public func evaluateSend(
         trigger: ProactiveTrigger,
         todaySpentYuan: Double = 0,
         notificationsAuthorized: Bool = true,
         taskID: String? = nil,
         runTrigger: String = "foreground",
-        budget: AutonomyBudgetContext? = nil
+        budget: AutonomyBudgetContext? = nil,
+        urgency: Double? = nil,
+        speakReason: ReflectionSpeakReason = .none,
+        cadence: CadenceSignals? = nil,
+        urgencyThreshold: Double = ReflectionCadence.balancedThreshold
     ) async throws -> AutonomyGateResult {
         let state = try await state()
         let now = clock.now()
@@ -432,7 +440,11 @@ public final class AutonomyService: @unchecked Sendable {
             pausedUntil: state.pausedUntil,
             todaySpentYuan: todaySpentYuan,
             notificationsAuthorized: notificationsAuthorized,
-            budget: budget
+            budget: budget,
+            urgency: urgency,
+            speakReason: speakReason,
+            cadence: cadence,
+            urgencyThreshold: urgencyThreshold
         )
 
         let effectiveSpent = budget?.spend.effectiveYuan(

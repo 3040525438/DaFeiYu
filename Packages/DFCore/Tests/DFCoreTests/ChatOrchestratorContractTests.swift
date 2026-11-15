@@ -114,6 +114,10 @@ private struct FakeOrchestrator: ChatOrchestrator {
         makeStream()
     }
 
+    func continueTurn(messageID: String, conversationID: String) -> AsyncThrowingStream<OrchestratorEvent, Error> {
+        makeStream()
+    }
+
     func cancelActiveTurn(owner: UUID) async {
         box.value = owner
     }
