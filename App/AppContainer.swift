@@ -65,6 +65,8 @@ final class AppContainer: ObservableObject {
     let astrbotImporter: AstrBotImporter
     /// W9：备份密钥（Keychain）
     let backupKeys: KeychainBackupKeyStore
+    /// N-08：主动消息系统通知
+    let notifications = ProactiveNotificationService()
 
     /// 全局活跃轮次登记表（L2）：跨页面 / 恢复路径共享。
     let activeTurns = ActiveTurnRegistry()

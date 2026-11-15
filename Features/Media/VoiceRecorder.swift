@@ -179,6 +179,11 @@ final class AudioPreviewPlayer: NSObject, ObservableObject, AVAudioPlayerDelegat
         stopTicking()
     }
 
+    /// 从暂停位置继续播放（`AVAudioPlayer.play()` 会接着当前进度）。
+    func resume() {
+        play()
+    }
+
     func stop() {
         player?.stop()
         player = nil

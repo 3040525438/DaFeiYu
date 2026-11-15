@@ -270,6 +270,11 @@ struct SettingsView: View {
             } label: {
                 Label("备份与恢复", systemImage: "externaldrive.badge.timemachine")
             }
+            NavigationLink {
+                NotificationSettingsView()
+            } label: {
+                Label("通知", systemImage: "bell.badge")
+            }
         } header: {
             sectionHeader("隐私与数据", icon: "shield.lefthalf.filled")
         } footer: {

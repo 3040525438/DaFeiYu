@@ -4,7 +4,18 @@ import DFCore
 @main
 @MainActor
 struct DaFeiYuApp: App {
-    @StateObject private var bootstrap = AppBootstrap()
+    @StateObject private var bootstrap: AppBootstrap
+    /// N-07：后台刷新（必须在启动早期注册）
+    private let background: BackgroundRefreshService
+    @Environment(\.scenePhase) private var scenePhase
+
+    init() {
+        let holder = ContainerHolder()
+        let service = BackgroundRefreshService(holder: holder)
+        service.register()
+        self.background = service
+        _bootstrap = StateObject(wrappedValue: AppBootstrap(holder: holder))
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -25,6 +36,12 @@ struct DaFeiYuApp: App {
             .task {
                 await bootstrap.start()
             }
+            .onChange(of: scenePhase) { _, phase in
+                // 进入后台时安排下一次补算；回到前台不主动排，避免浪费配额
+                if phase == .background {
+                    background.schedule()
+                }
+            }
         }
     }
 }
@@ -37,6 +54,11 @@ final class AppBootstrap: ObservableObject {
     @Published private(set) var errorMessage: String?
 
     private var started = false
+    private let holder: ContainerHolder
+
+    init(holder: ContainerHolder = ContainerHolder()) {
+        self.holder = holder
+    }
 
     func start() async {
         guard !started else { return }
@@ -87,6 +109,8 @@ final class AppBootstrap: ObservableObject {
 
             self.container = container
             self.errorMessage = nil
+            // 后台任务回调在系统线程，通过 holder 拿装配好的容器
+            holder.set(container)
             Task {
                 await container.bootstrap()
             }
