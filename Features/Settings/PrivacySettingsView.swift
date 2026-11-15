@@ -1,5 +1,6 @@
 import SwiftUI
 import DFCore
+import DFData
 
 extension Notification.Name {
     /// 隐私设置发生变化（锁屏状态机据此刷新）
@@ -16,6 +17,7 @@ struct PrivacySettingsView: View {
     @State private var showPasscodeSheet = false
     @State private var showDeleteSheet = false
     @State private var message: String?
+    @State private var exportURL: URL?
 
     private let delayOptions: [(String, Int)] = [
         ("立即锁定", 0),
@@ -28,6 +30,8 @@ struct PrivacySettingsView: View {
         Form {
             lockSection
             consentSection
+            dataFlowSection
+            exportSection
             deletionSection
             if let message {
                 Section {
@@ -46,6 +50,65 @@ struct PrivacySettingsView: View {
         }
         .sheet(isPresented: $showDeleteSheet) {
             DataDeletionView()
+        }
+    }
+
+    // MARK: - 数据流向与导出（D59）
+
+    private var dataFlowSection: some View {
+        Section {
+            ForEach(DataFlowCatalog.categories(), id: \.self) { category in
+                ForEach(DataFlowCatalog.entries(in: category)) { entry in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(entry.title).font(.subheadline.weight(.medium))
+                            Spacer()
+                            Text(entry.destination.displayName)
+                                .font(.caption)
+                                .foregroundStyle(entry.destination.leavesDevice ? .orange : .secondary)
+                        }
+                        Text(entry.contents)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(entry.controlHint)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary.opacity(0.75))
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        } header: {
+            Text("数据流向")
+        } footer: {
+            Text(DataFlowCatalog.summary)
+        }
+    }
+
+    private var exportSection: some View {
+        Section {
+            Button("导出我的数据（JSON）") {
+                Task { await exportUserData() }
+            }
+            if let exportURL {
+                ShareLink(item: exportURL) {
+                    Text("分享导出文件")
+                }
+            }
+        } header: {
+            Text("导出")
+        } footer: {
+            Text("只包含本机的聊天、记忆、日记、人格与关系、附件元数据；API Key 与设置不会导出。")
+        }
+    }
+
+    @MainActor
+    private func exportUserData() async {
+        do {
+            let summary = try await container.userDataExporter.export()
+            exportURL = summary.url
+            message = "已导出 \(summary.totalRows) 条记录（\(summary.byteSize) 字节）"
+        } catch {
+            message = error.localizedDescription
         }
     }
 

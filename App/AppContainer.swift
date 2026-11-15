@@ -231,6 +231,11 @@ final class AppContainer: ObservableObject {
         )
     }
 
+    /// D59：用户数据导出（隐私页入口）
+    var userDataExporter: UserDataExporter {
+        UserDataExporter(database: database)
+    }
+
     /// 本地模型文件目录（W5 / D58）
     var localModelsDirectory: URL {
         let directory = database.paths.workspace.appendingPathComponent("Models", isDirectory: true)
