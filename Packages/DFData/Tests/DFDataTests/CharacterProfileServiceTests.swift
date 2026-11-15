@@ -55,8 +55,10 @@ final class CharacterProfileServiceTests: XCTestCase {
         let id = try await service.activeCharacterID()
 
         XCTAssertEqual(id, CharacterProfileService.defaultCharacterID)
-        XCTAssertEqual(try await characterCount(), 1)
-        XCTAssertEqual(try await activeCount(), 1)
+        let count = try await characterCount()
+        let actives = try await activeCount()
+        XCTAssertEqual(count, 1)
+        XCTAssertEqual(actives, 1)
 
         let name = try await database.dbQueue.read { db -> String? in
             try String.fetchOne(db, sql: "SELECT name FROM characters WHERE id = ?", arguments: [id])
@@ -71,7 +73,8 @@ final class CharacterProfileServiceTests: XCTestCase {
 
         XCTAssertEqual(first, second)
         XCTAssertEqual(second, third)
-        XCTAssertEqual(try await characterCount(), 1)
+        let count = try await characterCount()
+        XCTAssertEqual(count, 1)
     }
 
     func testExistingActiveCharacterIsRespected() async throws {
@@ -79,7 +82,8 @@ final class CharacterProfileServiceTests: XCTestCase {
         let id = try await service.activeCharacterID()
 
         XCTAssertEqual(id, "custom-1")
-        XCTAssertEqual(try await characterCount(), 1)
+        let count = try await characterCount()
+        XCTAssertEqual(count, 1)
     }
 
     func testInactiveCharacterIsActivatedInsteadOfCreatingNew() async throws {
@@ -87,8 +91,10 @@ final class CharacterProfileServiceTests: XCTestCase {
         let id = try await service.activeCharacterID()
 
         XCTAssertEqual(id, "custom-1")
-        XCTAssertEqual(try await characterCount(), 1)
-        XCTAssertEqual(try await activeCount(), 1)
+        let count = try await characterCount()
+        let actives = try await activeCount()
+        XCTAssertEqual(count, 1)
+        XCTAssertEqual(actives, 1)
     }
 
     func testOnlyOneCharacterStaysActive() async throws {
@@ -98,6 +104,7 @@ final class CharacterProfileServiceTests: XCTestCase {
         let id = try await service.ensureDefaultCharacter()
 
         XCTAssertEqual(id, "a", "按 sort / created_at 取最早的启用角色")
-        XCTAssertEqual(try await activeCount(), 1, "不得出现两个启用角色")
+        let actives = try await activeCount()
+        XCTAssertEqual(actives, 1, "不得出现两个启用角色")
     }
 }
