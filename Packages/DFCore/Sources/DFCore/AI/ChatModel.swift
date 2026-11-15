@@ -58,25 +58,35 @@ public struct ChatTurn: Codable, Hashable, Sendable {
     }
 }
 
+/// 期望的响应格式（D04）。服务端不支持时，应用层仍可用 `StructuredOutput` 从文本里取 JSON。
+public enum ChatResponseFormat: String, Sendable, Equatable, Codable {
+    case text
+    case jsonObject = "json_object"
+}
+
 public struct ChatRequest: Sendable {
     public var model: String
     public var systemPrompt: String
     public var messages: [ChatTurn]
     public var temperature: Double
     public var maxTokens: Int?
+    /// 为 nil 时不向服务端声明，保持与旧行为一致
+    public var responseFormat: ChatResponseFormat?
 
     public init(
         model: String,
         systemPrompt: String,
         messages: [ChatTurn],
         temperature: Double = 0.8,
-        maxTokens: Int? = nil
+        maxTokens: Int? = nil,
+        responseFormat: ChatResponseFormat? = nil
     ) {
         self.model = model
         self.systemPrompt = systemPrompt
         self.messages = messages
         self.temperature = temperature
         self.maxTokens = maxTokens
+        self.responseFormat = responseFormat
     }
 }
 

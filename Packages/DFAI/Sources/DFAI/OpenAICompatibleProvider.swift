@@ -179,9 +179,15 @@ public struct OpenAICompatibleProvider: ChatModelProvider, Pingable, Sendable {
         let stream_options: StreamOptions
         let temperature: Double
         let max_tokens: Int?
+        /// D04：仅当调用方声明时才发送（nil 会被合成的 encodeIfPresent 省略）
+        let response_format: ResponseFormatPayload?
     }
 
-    private static func makeBody(_ request: ChatRequest) throws -> Data {
+    private struct ResponseFormatPayload: Encodable {
+        let type: String
+    }
+
+    static func makeBody(_ request: ChatRequest) throws -> Data {
         var messages: [WireMessage] = []
         if !request.systemPrompt.isEmpty {
             messages.append(WireMessage(role: "system", text: request.systemPrompt, images: []))
@@ -196,7 +202,8 @@ public struct OpenAICompatibleProvider: ChatModelProvider, Pingable, Sendable {
             stream: true,
             stream_options: StreamOptions(include_usage: true),
             temperature: request.temperature,
-            max_tokens: request.maxTokens
+            max_tokens: request.maxTokens,
+            response_format: request.responseFormat.map { ResponseFormatPayload(type: $0.rawValue) }
         )
         return try JSONEncoder().encode(body)
     }
