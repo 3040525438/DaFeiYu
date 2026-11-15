@@ -124,7 +124,7 @@ public struct GRDBPersonaRepository: PersonaRepository, Sendable {
                     arguments: [persona.id]
                 )
 
-                let object: [String: Any] = ["name": name, "items": []]
+                let object: [String: Any] = ["name": name, "items": [Any]()]
                 let snapshot = (try? JSONSerialization.data(withJSONObject: object))
                     .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
                 let version = PersonaVersion(
