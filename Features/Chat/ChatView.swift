@@ -197,8 +197,9 @@ struct ChatView: View {
             )
         }
         .sheet(isPresented: $showVoiceInput) {
-            VoiceInputSheet { text in
+            VoiceInputSheet { text, attachmentID in
                 viewModel.draft = text
+                viewModel.pendingVoiceAttachmentID = attachmentID
             }
             .environmentObject(container)
         }

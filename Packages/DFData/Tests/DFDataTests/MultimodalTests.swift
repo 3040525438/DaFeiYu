@@ -295,4 +295,46 @@ final class MultimodalTests: XCTestCase {
             XCTAssertEqual(error, .invalidStatus("unknown"))
         }
     }
+
+    /// D28：语音附件可挂到用户消息上，转写文本可读取、重转写只覆盖不新增。
+    func testAudioAttachmentLinksToMessageWithTranscript() async throws {
+        let audio = try await attachments.ensure(newAttachment("audio-1", kind: "audio"))
+        try await attachments.link(messageID: "m1", attachmentID: audio.id, sort: 0)
+
+        let saved = try await texts.upsert(
+            attachmentID: audio.id,
+            kind: .transcript,
+            text: "今天想跟你说个事",
+            language: "zh-CN",
+            engine: "speech-on-device",
+            confidence: nil,
+            at: 300
+        )
+        XCTAssertEqual(saved?.text, "今天想跟你说个事")
+
+        let inMessage = try await attachments.attachments(inMessage: "m1")
+        XCTAssertEqual(inMessage.map(\.id), [audio.id], "语音附件必须能按消息取回")
+        XCTAssertEqual(inMessage.first?.kind, "audio")
+
+        let fetched = try await texts.text(attachmentID: audio.id, kind: .transcript)
+        XCTAssertEqual(fetched?.text, "今天想跟你说个事")
+
+        _ = try await texts.upsert(
+            attachmentID: audio.id,
+            kind: .transcript,
+            text: "今天想和你说件事",
+            language: "zh-CN",
+            engine: "speech-on-device",
+            confidence: nil,
+            at: 400
+        )
+        let rows = try await database.dbQueue.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT count(*) FROM attachment_texts WHERE attachment_id = ? AND kind = 'transcript'",
+                arguments: [audio.id]
+            ) ?? 0
+        }
+        XCTAssertEqual(rows, 1, "重转写只覆盖旧文本，不新增行")
+    }
 }

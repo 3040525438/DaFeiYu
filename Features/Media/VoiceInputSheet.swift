@@ -3,16 +3,21 @@ import DFData
 import DFCore
 
 /// 语音输入（D28）：录制 → 设备端转写 → 可回放 → 填入聊天框。
-/// 原始音频保存在附件库，转写文本落 `attachment_texts`。
+/// 原始音频保存在附件库，转写文本落 `attachment_texts`；
+/// 填入时把附件 id 一并交给调用方，发送后由聊天页挂到该条消息上。
+/// 转写固定在设备端完成，音频不上传。
 @MainActor
 struct VoiceInputSheet: View {
     @EnvironmentObject private var container: AppContainer
     @Environment(\.dismiss) private var dismiss
-    let onInsert: (String) -> Void
+    /// 参数：转写文本、录音附件 id（无录音时为 nil）
+    let onInsert: (String, String?) -> Void
 
     @StateObject private var recorder = VoiceRecorder()
     @StateObject private var player = AudioPreviewPlayer()
     @State private var attachmentURL: URL?
+    /// D28：已入库的录音附件，发送时挂到用户消息上
+    @State private var ingestedAttachmentID: String?
     @State private var transcript = ""
     @State private var busy = false
     @State private var message: String?
@@ -59,6 +64,9 @@ struct VoiceInputSheet: View {
                 if busy {
                     ProgressView("正在本机转写…")
                 }
+                Text("转写在设备端完成，音频不会上传。")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
                 if let message {
                     Text(message)
                         .font(.footnote)
@@ -84,7 +92,7 @@ struct VoiceInputSheet: View {
                     Button("填入") {
                         let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !text.isEmpty else { return }
-                        onInsert(text)
+                        onInsert(text, ingestedAttachmentID)
                         dismiss()
                     }
                     .disabled(transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -133,6 +141,7 @@ struct VoiceInputSheet: View {
         } else {
             message = nil
             transcript = ""
+            ingestedAttachmentID = nil
             player.stop()
             do {
                 try await recorder.start()
@@ -154,6 +163,7 @@ struct VoiceInputSheet: View {
                 messageID: nil,
                 at: timestamp
             )
+            ingestedAttachmentID = record.id
             let result = try await container.media.runTranscription(attachment: record, at: timestamp)
             transcript = result?.text ?? ""
             if transcript.isEmpty {

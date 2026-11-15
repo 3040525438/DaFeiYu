@@ -213,6 +213,18 @@ struct AttachmentLibraryView: View {
         .buttonStyle(.plain)
         .task { await viewModel.loadThumbnailIfNeeded(item) }
         .contextMenu {
+            if item.record.kind == "audio" || item.record.kind == "video" {
+                Button {
+                    Task { await viewModel.retranscribe(item) }
+                } label: {
+                    Label("重新转写", systemImage: "waveform")
+                }
+                Button {
+                    Task { await viewModel.copyTranscript(item) }
+                } label: {
+                    Label("复制转写文本", systemImage: "doc.on.doc")
+                }
+            }
             if viewModel.canShare(item) {
                 ShareLink(item: viewModel.fileURL(for: item)) {
                     Label("分享文件", systemImage: "square.and.arrow.up")

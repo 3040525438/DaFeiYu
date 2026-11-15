@@ -95,6 +95,9 @@ final class ChatViewModel: ObservableObject {
     /// D2：本轮发送前的原始文本，仅用于"确认未发出"时恢复输入框。
     private var draftSnapshot: String?
 
+    /// D28：待挂到本条消息上的语音附件 id（填入后、发送前有效）
+    var pendingVoiceAttachmentID: String?
+
     init(container: AppContainer) {
         self.container = container
     }
@@ -135,6 +138,7 @@ final class ChatViewModel: ObservableObject {
         historyCursor = nil
         scrollTargetID = nil
         draftSnapshot = nil
+        pendingVoiceAttachmentID = nil
         clearSearch()
         cancelEdit()
 
@@ -829,6 +833,14 @@ final class ChatViewModel: ObservableObject {
 
             if let user { upsert(user) }
             if let assistant { upsert(assistant) }
+            // D28：语音录制的原始音频挂到本条用户消息上（只建关联，不改正文）
+            if let voiceAttachmentID = pendingVoiceAttachmentID {
+                pendingVoiceAttachmentID = nil
+                try? await container.media.link(
+                    attachmentID: voiceAttachmentID,
+                    toMessage: userMessageID
+                )
+            }
             currentTurn = TurnState(
                 groupID: groupID,
                 assistantMessageID: assistantMessageID,

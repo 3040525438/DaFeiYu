@@ -67,6 +67,14 @@ struct AttachmentIngestService: Sendable {
         return try await repository.attachment(id: record.id) ?? record
     }
 
+    /// D28：把已入库的附件挂到刚刚发出的消息上。
+    ///
+    /// 只建立 `message_attachments` 关联，不改文件、不改既有转写文本；
+    /// 由调用方保证附件与消息属于同一会话。
+    func link(attachmentID: String, toMessage messageID: String, sort: Int = 0) async throws {
+        try await repository.link(messageID: messageID, attachmentID: attachmentID, sort: sort)
+    }
+
     /// 对图片执行设备端 OCR 并落库。空文本视为"没有识别到文字"，不写记录。
     @discardableResult
     func runOCR(attachment record: AttachmentRecord, at millis: Int64) async throws -> AttachmentTextRecord? {

@@ -50,6 +50,41 @@ final class AttachmentLibraryViewModel: ObservableObject {
         }
     }
 
+    // MARK: - D28 语音转写
+
+    /// 已保存的转写文本；没有转写过返回 nil。
+    func transcriptText(for item: AttachmentLibraryItem) async -> String? {
+        guard let record = try? await container.media.textRepository.text(
+            attachmentID: item.id,
+            kind: .transcript
+        ) else { return nil }
+        return record.text
+    }
+
+    /// 重新转写（设备端），覆盖旧转写文本。
+    func retranscribe(_ item: AttachmentLibraryItem) async {
+        guard item.record.kind == "audio" || item.record.kind == "video" else { return }
+        do {
+            let result = try await container.media.runTranscription(
+                attachment: item.record,
+                at: Clock.nowMillis()
+            )
+            lastMessage = result == nil ? "没有识别到语音内容" : "已重新转写"
+        } catch {
+            errorText = Self.message(error)
+        }
+    }
+
+    /// 复制转写文本，便于用户粘贴到别处。
+    func copyTranscript(_ item: AttachmentLibraryItem) async {
+        guard let text = await transcriptText(for: item), !text.isEmpty else {
+            lastMessage = "该附件还没有转写文本"
+            return
+        }
+        UIPasteboard.general.string = text
+        lastMessage = "已复制转写文本"
+    }
+
     func toggleIncludeDeleted() async {
         includeDeleted.toggle()
         await reload()
