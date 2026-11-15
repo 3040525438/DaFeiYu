@@ -105,4 +105,41 @@ public struct GRDBPersonaRepository: PersonaRepository, Sendable {
             throw GRDBErrorMapper.map(error)
         }
     }
+
+    /// 只在不存在外围人格时创建一次，重复调用是幂等的。
+    /// 新建外围人格必须开启自主成长（决策 30：成长只作用于 outer 层）。
+    public func ensureOuterPersona(name: String) async throws -> Persona {
+        do {
+            return try await database.write { db in
+                if let existing = try Persona
+                    .filter(Column("kind") == PersonaKind.outer.rawValue)
+                    .fetchOne(db) {
+                    return existing
+                }
+
+                let persona = Persona(kind: .outer, name: name, isLocked: false, currentVersion: 1)
+                try persona.insert(db)
+                try db.execute(
+                    sql: "UPDATE personas SET growth_enabled = 1 WHERE id = ?",
+                    arguments: [persona.id]
+                )
+
+                let object: [String: Any] = ["name": name, "items": []]
+                let snapshot = (try? JSONSerialization.data(withJSONObject: object))
+                    .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                let version = PersonaVersion(
+                    personaID: persona.id,
+                    version: 1,
+                    snapshotJSON: snapshot,
+                    changeReason: "创建外围人格",
+                    changedBy: "user"
+                )
+                try version.insert(db)
+
+                return persona
+            }
+        } catch {
+            throw GRDBErrorMapper.map(error)
+        }
+    }
 }

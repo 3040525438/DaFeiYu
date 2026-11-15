@@ -199,6 +199,9 @@ public protocol PersonaRepository: Sendable {
     func coreSystemPrompt() async throws -> String?
     func outerItems() async throws -> [PersonaItem]
     func ensureCorePersona(name: String, systemPrompt: String) async throws -> Persona
+    /// 首次导入人格文件时按需创建外围人格；已存在则原样返回（幂等）。
+    /// 外围人格允许自主成长，核心人格不受影响。
+    func ensureOuterPersona(name: String) async throws -> Persona
 }
 
 public protocol ModelConfigRepository: Sendable {

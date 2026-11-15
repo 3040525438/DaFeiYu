@@ -38,6 +38,7 @@ struct BackupCenterView: View {
     @State private var showExporter = false
     @State private var mirrorName: String?
     @State private var showFolderPicker = false
+    @State private var showBackupPicker = false
 
     var body: some View {
         List {
@@ -85,6 +86,19 @@ struct BackupCenterView: View {
             }
 
             Section {
+                Button {
+                    showBackupPicker = true
+                } label: {
+                    Label("从文件导入备份…", systemImage: "square.and.arrow.down")
+                }
+                .disabled(busy)
+            } header: {
+                Text("从文件导入")
+            } footer: {
+                Text("选择之前导出的 .dfbk 加密备份或 .json 明文备份。导入只登记到本机备份列表，不会自动覆盖当前数据；密钥不同或文件被篡改会直接拒绝。")
+            }
+
+            Section {
                 if let mirrorName {
                     LabeledContent("当前目录", value: mirrorName)
                     Button("重新选择目录…") {
@@ -121,6 +135,13 @@ struct BackupCenterView: View {
             allowsMultipleSelection: false
         ) { result in
             Task { await handleFolderPick(result) }
+        }
+        .fileImporter(
+            isPresented: $showBackupPicker,
+            allowedContentTypes: [.data, .json],
+            allowsMultipleSelection: false
+        ) { result in
+            Task { await handleBackupPick(result) }
         }
         .alert("恢复这份备份？", isPresented: $showRestoreConfirm) {
             Button("开始恢复", role: .destructive) {
@@ -280,6 +301,25 @@ struct BackupCenterView: View {
             }
         case .failure(let error):
             status = "选择目录失败：\(error.localizedDescription)"
+        }
+    }
+
+    /// D42：从「文件」导入备份，只登记清单，不自动恢复
+    private func handleBackupPick(_ result: Result<[URL], Error>) async {
+        switch result {
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            busy = true
+            defer { busy = false }
+            do {
+                let manifest = try await container.backupService.importBackupFile(from: url)
+                status = "已导入：\(manifest.fileName)（可在列表里校验或恢复）"
+                await reload()
+            } catch {
+                status = "导入失败：\(error.localizedDescription)"
+            }
+        case .failure(let error):
+            status = "选择文件失败：\(error.localizedDescription)"
         }
     }
 

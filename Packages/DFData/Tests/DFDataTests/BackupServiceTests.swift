@@ -272,6 +272,104 @@ final class BackupServiceTests: XCTestCase {
         XCTAssertTrue(prunable.contains { $0.id == automatic.id })
     }
 
+    // MARK: - 从文件导入（D42）
+
+    func testImportEncryptedBackupFileFromPickedLocation() async throws {
+        try await seedConversationAndMessage()
+        let service = makeService()
+        let manifest = try await service.createBackup(kind: .external)
+
+        // 模拟用户从「文件」里选中之前导出的备份
+        let picked = try copyToPicked(service.fileURL(for: manifest))
+        defer { try? FileManager.default.removeItem(at: picked) }
+
+        let imported = try await service.importBackupFile(from: picked)
+
+        XCTAssertEqual(imported.kind, .manual)
+        XCTAssertEqual(imported.scope, "imported")
+        XCTAssertTrue(imported.isEncrypted)
+        XCTAssertEqual(imported.status, .completed)
+        XCTAssertNotNil(imported.sha256)
+        XCTAssertEqual(imported.note, "从文件导入：\(picked.lastPathComponent)")
+
+        let verification = try await service.verify(manifestID: imported.id)
+        XCTAssertTrue(verification.sha256Matches)
+        XCTAssertTrue(verification.decrypted)
+
+        let precheck = try await service.previewRestore(manifestID: imported.id)
+        XCTAssertTrue(precheck.isCompatible)
+        let snapshot = try await service.readSnapshot(manifestID: imported.id)
+        let importedMessages = snapshot.counts["messages"]
+        XCTAssertEqual(importedMessages, 1)
+    }
+
+    func testImportPlaintextBackupOnlyWhenExplicitlyAllowed() async throws {
+        try await seedConversationAndMessage()
+        let service = makeService()
+        let manifest = try await service.createBackup(kind: .external, encrypted: false)
+
+        let picked = try copyToPicked(service.fileURL(for: manifest))
+        defer { try? FileManager.default.removeItem(at: picked) }
+
+        do {
+            _ = try await service.importBackupFile(from: picked, allowPlaintext: false)
+            XCTFail("未显式允许时不得导入明文备份")
+        } catch let error as BackupCipherError {
+            XCTAssertEqual(error, .badMagic)
+        }
+
+        let imported = try await service.importBackupFile(from: picked)
+        XCTAssertFalse(imported.isEncrypted)
+        XCTAssertTrue(imported.fileName.hasSuffix(".json"))
+    }
+
+    func testImportRejectsBackupFromForeignKey() async throws {
+        try await seedConversationAndMessage()
+        let foreignStore = MemoryKeyStore(key: Data(repeating: 7, count: 32))
+        let manifest = try await makeService(store: foreignStore).createBackup(kind: .external)
+
+        let picked = try copyToPicked(
+            makeService(store: foreignStore).fileURL(for: manifest)
+        )
+        defer { try? FileManager.default.removeItem(at: picked) }
+
+        do {
+            _ = try await makeService().importBackupFile(from: picked)
+            XCTFail("本机密钥打不开的备份必须拒绝导入")
+        } catch let error as BackupCipherError {
+            XCTAssertEqual(error, .authenticationFailed)
+        }
+    }
+
+    func testImportRejectsUnknownTable() async throws {
+        try await seedConversationAndMessage()
+        let service = makeService()
+        let manifest = try await service.createBackup(kind: .external, encrypted: false)
+
+        var snapshot = try await service.readSnapshot(manifestID: manifest.id)
+        snapshot.tables.append(
+            BackupTableSnapshot(name: "unknown_table", columns: ["id"], rows: [[.text("x")]])
+        )
+        let picked = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tampered-\(UUID().uuidString).json")
+        try JSONEncoder().encode(snapshot).write(to: picked)
+        defer { try? FileManager.default.removeItem(at: picked) }
+
+        do {
+            _ = try await service.importBackupFile(from: picked)
+            XCTFail("未知表必须拒绝导入")
+        } catch let error as BackupSnapshotError {
+            XCTAssertEqual(error, .unknownTable("unknown_table"))
+        }
+    }
+
+    private func copyToPicked(_ source: URL) throws -> URL {
+        let target = FileManager.default.temporaryDirectory
+            .appendingPathComponent("picked-\(UUID().uuidString)-\(source.lastPathComponent)")
+        try FileManager.default.copyItem(at: source, to: target)
+        return target
+    }
+
     private func int(_ sql: String) async throws -> Int {
         try await database.dbQueue.read { db in try Int.fetchOne(db, sql: sql) ?? 0 }
     }

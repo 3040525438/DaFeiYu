@@ -222,6 +222,83 @@ public final class BackupService: @unchecked Sendable {
         )
     }
 
+    // MARK: - 从文件导入（D42）
+
+    /// 把「文件」里选中的备份导入到本机备份清单。
+    ///
+    /// - 加密容器（`DFBK1`）必须能用本机密钥解开，密钥不同或文件被篡改直接失败；
+    /// - 明文 JSON 只在调用方显式允许时接受；
+    /// - 导入只登记备份，不自动恢复；恢复仍走 `previewRestore` + `restore`。
+    @discardableResult
+    public func importBackupFile(
+        from url: URL,
+        kind: BackupKind = .manual,
+        allowPlaintext: Bool = true,
+        at millis: Int64? = nil
+    ) async throws -> BackupManifest {
+        let timestamp = millis ?? now()
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer {
+            if accessing { url.stopAccessingSecurityScopedResource() }
+        }
+
+        let data = try Data(contentsOf: url)
+        guard !data.isEmpty else { throw BackupCipherError.truncatedContainer }
+
+        let isEncrypted = [UInt8](data.prefix(BackupContainer.magic.count)) == BackupContainer.magic
+        var hint: String?
+        let plaintext: Data
+        if isEncrypted {
+            guard let cipher else { throw BackupCipherError.cryptoUnavailable }
+            guard let key = try keyStore.existingKey() else {
+                throw BackupCipherError.authenticationFailed
+            }
+            plaintext = try BackupContainer.open(data, key: key, cipher: cipher)
+            hint = cipher.identifier
+        } else {
+            guard allowPlaintext else { throw BackupCipherError.badMagic }
+            plaintext = data
+        }
+
+        let snapshot = try JSONDecoder().decode(BackupSnapshot.self, from: plaintext)
+        guard snapshot.format == BackupSnapshot.currentFormat else {
+            throw BackupSnapshotError.unsupportedFormat(snapshot.format)
+        }
+        let known = Set(Self.tableOrder)
+        for table in snapshot.tables where !known.contains(table.name) {
+            throw BackupSnapshotError.unknownTable(table.name)
+        }
+
+        let countsJSON = String(data: try JSONEncoder().encode(snapshot.counts), encoding: .utf8) ?? "{}"
+        let directory = backupsDirectory
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let ext = isEncrypted ? "dfbk" : "json"
+        let fileName = "dafeiyu-\(kind.rawValue)-import-\(timestamp)-\(UUID().uuidString.prefix(8)).\(ext)"
+        let target = directory.appendingPathComponent(fileName)
+        try data.write(to: target, options: .atomic)
+
+        let manifest = try await repository.create(
+            kind: kind,
+            scope: "imported",
+            schemaVersion: snapshot.schemaVersion,
+            appVersion: snapshot.appVersion,
+            fileName: fileName,
+            relPath: "Workspace/Backups/\(fileName)",
+            isEncrypted: isEncrypted,
+            encryptionHint: hint,
+            note: "从文件导入：\(url.lastPathComponent)",
+            at: timestamp
+        )
+        try await repository.markFinished(
+            id: manifest.id,
+            byteSize: Int64(data.count),
+            sha256: SHA256.hash(data),
+            itemCountsJSON: countsJSON,
+            at: timestamp
+        )
+        return try await repository.manifest(id: manifest.id) ?? manifest
+    }
+
     // MARK: - 恢复
 
     public func previewRestore(manifestID: String) async throws -> RestorePrecheck {

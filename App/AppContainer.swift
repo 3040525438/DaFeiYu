@@ -57,6 +57,8 @@ final class AppContainer: ObservableObject {
     let proactiveScheduler: ProactiveScheduler
     /// W6：人格成长（提案 → 审批 → 版本回退）
     let personaGrowth: PersonaGrowthService
+    /// D06：人格文件导入（只生成待审批提案）
+    let personaImport: PersonaFileImportService
     /// W6：关系档案与阶段确认
     let relationships: RelationshipService
     /// W8：L1–L7 记忆加工
@@ -161,7 +163,13 @@ final class AppContainer: ObservableObject {
             database: database,
             autonomy: autonomyService
         )
-        self.personaGrowth = PersonaGrowthService(database: database)
+        let personaGrowthService = PersonaGrowthService(database: database)
+        self.personaGrowth = personaGrowthService
+        self.personaImport = PersonaFileImportService(
+            database: database,
+            personas: GRDBPersonaRepository(database: database),
+            growth: personaGrowthService
+        )
         self.relationships = RelationshipService(database: database)
         self.memoryProcessing = MemoryProcessingService(database: database)
         self.privacy = PrivacyGateService(database: database)

@@ -184,6 +184,17 @@ struct SpaceView: View {
             }
             .buttonStyle(.plain)
 
+            NavigationLink {
+                PersonaImportView()
+            } label: {
+                actionRow(
+                    icon: "doc.badge.plus",
+                    title: "导入人格文件",
+                    detail: "JSON / Markdown / TXT，导入后逐条审批"
+                )
+            }
+            .buttonStyle(.plain)
+
             Button {
                 selection = 4
             } label: {
