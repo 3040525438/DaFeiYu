@@ -104,7 +104,7 @@
 | D24 | 逐条/批量/按日期关键词筛选删除/清空会话 | 已实现 | 软删 + 范围删除 + 关键词删除 + 清空会话（`ChatInteractions.swift`） | `ChatInteractionTests`(13) | W2-4（已完成） |
 | D25 | 全局搜索聊天/记忆/日记/附件文字并定位原文 | 已实现有证据（数据层 + App 界面） | 数据层 `GRDBUnifiedSearchRepository`（`4cff077`）：四域统一检索，命中带定位信息（`conversationID`/`messageID`/`diaryDate`）+ 原文摘要 `SearchSnippet`；归档会话仍可检索；App 层 `GlobalSearchView`/`GlobalSearchViewModel`（`310a940`）：四域分组、范围开关、空结果/异常提示、消息命中经 `ChatViewModel.openGlobalSearchHit` 切会话并滚动定位、记忆/日记打开只读详情 | `UnifiedSearchTests`(10)、`SearchSnippetTests`(8)，run 43697137498；App 编译待手动触发 `app-build-check` | W2-5 数据层 + W6 界面（`310a940`）。缺口：附件命中无关联消息时只显示片段，不提供原图预览 |
 | D26 | 收藏/重要标记/分类整理；收藏不自动成记忆 | 已实现有证据（数据层 + App 界面） | `v14_message_organization`（`messages.is_important/important_at` + `message_tags`）+ `GRDBMessageOrganizationRepository`（批量收藏/重要/标签，单事务，标签归一化去重）；App 层 `MessageOrganizerView`/`MessageOrganizerViewModel`（`310a940`）：收藏/重要/标签筛选、批量收藏与取消、重要标记与取消、标签增删与结果反馈；**不写 memories/persona** | `MessageOrganizationTests`(13)、`MigrationV14Tests`(4)，run 43697137498；App 编译待手动触发 `app-build-check` | W2-5 数据层 + W6 界面（`310a940`）。缺口：标签不支持全局重命名（数据层无该能力），只能逐条移除后重加 |
-| D27 | 图片原图+缩略图、查看/放大/下载/分享、独立附件库 | 部分实现 | `attachments`、`message_attachments`、`AttachmentStore`、缩略图 | `DatabaseTests` | W4-5 |
+| D27 | 图片原图+缩略图、查看/放大/下载/分享、独立附件库 | 已实现有证据（数据层 + 界面；App 编译待手动触发） | `AttachmentStore.fileURL(forRelativePath:)`；`AttachmentReferenceService.record(id:)`（`effa97f`）；附件库真实缩略图（异步 120pt）、点击原图预览、右键分享文件；新增 `AttachmentPreviewView`：原图查看、双指缩放、双击放大、拖动平移、还原、系统分享，文件缺失如实提示，无网络请求；全局搜索附件命中右键「查看原图」 | `AttachmentReferenceServiceTests` 新增 3 项、`AttachmentLibraryItemTests` | W4-5 + W8B（`effa97f`） |
 | D28 | 语音录制/播放/转写/重转写/复制/关联/保留原始音频 | 部分实现 | `VoiceRecorder` + `AudioPreviewPlayer` + `VoiceInputSheet`（录制/播放/转写/回填）；重转写入口与消息关联未做 | 编译期校验 | W4-4 |
 | D29 | 常见文件类型；区分保存/预览/读取/理解能力 | 部分实现 | `attachments.kind/mime/byte_size` | — | W4-6 |
 
@@ -139,7 +139,7 @@
 | 编号 | 决策摘要 | 状态 | 代码证据 | 测试证据 | 承载任务 |
 |---|---|---|---|---|---|
 | D46 | 会话创建/切换/删除/重命名/置顶/归档/排序/最近活动 | 已实现 | `GRDBConversationAdminRepository` + `ConversationListView` | `ConversationAdminTests`(13) | W3-1（已完成） |
-| D47 | 可手动建会话；AI 可主动建会话但遵守设置 | 部分实现 | 手动建会话已完成；AI 主动建会话未接 | `ConversationAdminTests`(13) | W3-2 |
+| D47 | 可手动建会话；AI 可主动建会话但遵守设置 | 已实现有证据（策略 + 数据层 + 后台接线；App 编译待手动触发） | 手动建会话已完成；AI 主动建会话：`NewConversationPolicy`（标题规范化、同主题复用含公共实词片段、去重键、每日 2 个、6 小时间隔、时钟回拨不绕过）+ `ProactiveConversationService`（过 `AutonomyGate` 的 newConversation 分项，新建 kind=proactive 或复用，每次判断写 `autonomy_runs`，去重键存 `detail_json`，无新增迁移）+ `ProactiveScheduler.enqueueNewConversationIfDue`（每天最多一次）+ 专用提示词（reason 复用为话题名）+ runner 链路（建会话 → 写开场消息 → 通知）（`c7dcf59`/`effa97f`） | `NewConversationPolicyTests`(15)、`ProactiveConversationServiceTests`(9)、`ProactiveSchedulerTests` 新增 4 项、`ConversationAdminTests`(13) | W3-2 + W8A |
 | D48 | 通知三档（完整/简短/隐藏）+ 按类型设置 | 已实现（通道接线） | `NotificationTiering` + `notifyLevel` + `ProactiveNotificationService`（授权/投递/撤销/清空）+ 设置页分档与自检 | `testNotificationTiering`；App 编译 `6c33f4f` | W7-4 |
 | D49 | 生成停止/暂停/继续；保留已生成并可从原上下文继续 | 已实现有证据（核心逻辑 + App 接线；App 编译待手动触发） | `ChatOrchestrator.continueTurn` 契约 + `ChatOrchestratorImpl` 实现（隐藏指令 `origin=system`、`Message.isHiddenInstruction` 界面过滤，`236cd8c`）；`ConversationCoordinator` `PauseGate` 暂停闸门 + `pauseTurn/resumeTurn` + 暂停/继续事件；`ChatViewModel.pause/resumeGeneration/continueWriting`；停止沿用既有取消链路。**暂停只挂起界面消费，模型请求不取消**（ADR-10） | `ChatTurnPhaseTests` 8 项（含 `canContinueWriting` / `isHiddenInstruction`） | W2-6（`236cd8c`） |
 | D50 | 主动消息删除/收藏/不感兴趣/触发原因/关联记忆 | 已实现（数据层 + 后台补算） | `ProactiveMessageService`（`8b69a40`）+ `BackgroundRefreshService` 过期清理/补算（`6c33f4f`） | `ProactiveMessageServiceTests` 7 项 | W7-6 |
@@ -376,7 +376,7 @@
 | 编号 | 内容 | 归属判断 | 现状 |
 |---|---|---|---|
 | I-01 | 消息标签**全局重命名**（一处改名，所有消息同步） | 属 D26"标签添加、修改和管理"的正式范围 | **已补齐**（`bcc6ec7`）：`renameTag(_:to:at:)` 单事务改名 + 合并去重，5 项测试；界面标签胶囊右键重命名 |
-| I-02 | D25 附件文字命中后**直接预览原图** | 属 D27 附件查看/放大范围，不属于 D25 | 未实现；D25 命中只跳转到消息 |
+| I-02 | D25 附件文字命中后**直接预览原图** | 属 D27 附件查看/放大范围，不属于 D25 | **已补齐**（`effa97f`）：搜索命中右键「查看原图」，经 `AttachmentReferenceService.record(id:)` 解析后进入 `AttachmentPreviewView` |
 | I-03 | 暂停仅挂起界面消费（模型请求不取消） | ADR-10 已登记的真实边界 | 如需真正断流，须另行设计"取消 + 断点续写"链路 |
 | I-04 | `app-build-check` / `build-ipa` 需令牌手动触发 | 交付流程缺口，不是需求缺口 | 本机无 `gh`、无令牌，App 编译本批未验 |
 
