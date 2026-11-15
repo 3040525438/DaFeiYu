@@ -13,7 +13,7 @@ final class MigrationV13Tests: XCTestCase {
 
     func testMigrationCreatesCostLedgerAndPassesGate() async throws {
         let queue = try DatabaseQueue()
-        try Migrations.migrator.migrate(queue)
+        try Migrations.makeMigrator(upTo: .v13_cost_ledger).migrate(queue)
 
         try await queue.read { db in
             XCTAssertTrue(try db.tableExists("cost_ledger"))
@@ -29,7 +29,7 @@ final class MigrationV13Tests: XCTestCase {
                 try SchemaMeta.value(db, key: SchemaMetaKey.schemaVersion),
                 MigrationID.v13_cost_ledger.rawValue
             )
-            try SchemaMeta.verifyRequiredObjects(db)
+            try SchemaMeta.verifyRequiredObjects(db, upTo: .v13_cost_ledger)
         }
     }
 
