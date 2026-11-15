@@ -106,7 +106,7 @@
 | D26 | 收藏/重要标记/分类整理；收藏不自动成记忆 | 已实现有证据（数据层 + App 界面） | `v14_message_organization`（`messages.is_important/important_at` + `message_tags`）+ `GRDBMessageOrganizationRepository`（批量收藏/重要/标签，单事务，标签归一化去重）；App 层 `MessageOrganizerView`/`MessageOrganizerViewModel`（`310a940`）：收藏/重要/标签筛选、批量收藏与取消、重要标记与取消、标签增删与结果反馈；**不写 memories/persona** | `MessageOrganizationTests`(13)、`MigrationV14Tests`(4)，run 43697137498；App 编译待手动触发 `app-build-check` | W2-5 数据层 + W6 界面（`310a940`）。缺口：标签不支持全局重命名（数据层无该能力），只能逐条移除后重加 |
 | D27 | 图片原图+缩略图、查看/放大/下载/分享、独立附件库 | 已实现有证据（数据层 + 界面；App 编译待手动触发） | `AttachmentStore.fileURL(forRelativePath:)`；`AttachmentReferenceService.record(id:)`（`effa97f`）；附件库真实缩略图（异步 120pt）、点击原图预览、右键分享文件；新增 `AttachmentPreviewView`：原图查看、双指缩放、双击放大、拖动平移、还原、系统分享，文件缺失如实提示，无网络请求；全局搜索附件命中右键「查看原图」 | `AttachmentReferenceServiceTests` 新增 3 项、`AttachmentLibraryItemTests` | W4-5 + W8B（`effa97f`） |
 | D28 | 语音录制/播放/转写/重转写/复制/关联/保留原始音频 | 部分实现 | `VoiceRecorder` + `AudioPreviewPlayer` + `VoiceInputSheet`（录制/播放/转写/回填）；重转写入口与消息关联未做 | 编译期校验 | W4-4 |
-| D29 | 常见文件类型；区分保存/预览/读取/理解能力 | 部分实现 | `attachments.kind/mime/byte_size` | — | W4-6 |
+| D29 | 常见文件类型；区分保存/预览/读取/理解能力 | 已实现有证据（App 编译待手动触发） | `FileCapabilityCatalog`：图片（保存/预览/OCR/理解）、音频（保存/播放/转写）、视频（保存/播放，不抽帧）、文本（保存/预览/读取/理解）、PDF（保存/预览，不声称可读）、压缩包与未知（仅保存）+ MIME 兜底；附件库列表展示能力摘要（`8577e64`） | `FileCapabilityCatalogTests`(10) | W4-6、W9E |
 
 ### 3.4 第四轮（D30–D37）：人格、关系、日记、角色
 
@@ -169,7 +169,7 @@
 | D64 | 首启向导（可跳过非必要步骤） | 已实现 | `OnboardingView`（4 步，可跳过）+ `onboarding.completed.v1` + `RootView` 引导 | 编译期校验 | W10-1（已完成） |
 | D65 | 主题/背景/气泡/字体/头像 + 恢复默认 | 已实现有证据（App 编译待手动触发） | `ChatTheme`（主题/背景/气泡/字号/头像 + **appearance：跟随系统/浅色/深色**，旧 JSON 缺键回落、非法值归一）+ `RootView.preferredColorScheme` 全局应用 + `.chatThemeChanged` 广播 + 聊天页外观弹层 + 设置页外观入口（`AppearanceSettingsView`，含当前摘要与恢复默认），`5d2e6be` | `ChatThemeAppearanceTests`(5)、`ChatInteractionTests` 主题用例 | W2-7、W9D |
 | D66 | 存储分类展示、清理建议、空间预警、不自动删重要数据 | 已实现 | `DiagnosticsView`（数据库/附件/备份分类 + 空间预警）+ `DiagnosticsService.storageUsage`；不自动删除 | `DiagnosticsTests`(7) | W10-4（已完成） |
-| D67 | 升级前检查/备份/迁移/兼容/失败恢复/记录/回退 | 部分实现 | `AppDatabase.upgradeOnLaunch`、`retryMigration`、`schema_meta`、`MigrationID` | `MigrationSafetyTests.testT20/T21/T22` | W1-7 |
+| D67 | 升级前检查/备份/迁移/兼容/失败恢复/记录/回退 | 部分实现（版本兼容 + 迁移 + 审计 + 失败降级已完成；升级前自动备份与真机升级演练待补） | `UpgradeGuard`（全新/升级/已最新/拒绝四类计划、未知版本与降级拒绝、备份要求、状态机）+ `UpgradeRecordService`（running→succeeded/failed→rolled_back）+ `AppDatabase.upgradeOnLaunch/retryMigration`（先判断再迁移，拒绝时只读不迁移，全过程写 `upgrade_records`，早于 v7 的库跳过不伪造）（`67d51bc`） | `UpgradeGuardTests`(7)、`UpgradeRecordServiceTests`(6)、`MigrationSafetyTests` | W1-7、W9E |
 | D68 | 自主程度分项控制、暂停、恢复默认、执行记录 | 已实现（数据层） | `AutonomyService.savePolicy/pause/resume/resetToDefault` + `autonomy_controls` + `autonomy_runs` | `testSavePolicyPersistsAndIsReadBack`、`testPauseBlocksThenResumeAllows`、`testResetToDefault` | W7-2 |
 | D69 | 权限按需申请、管理、状态说明、拒绝后替代方案 | 已实现有证据（App 编译待手动触发） | `PermissionAdvisor`（三类权限、状态归一、启动永不申请、仅首次使用可申请、拒绝→系统设置、系统限制不重复询问、每类用途与替代方案）+ `PermissionCenterView`（真实系统状态 + 按需申请 + 去系统设置）；设置页入口（`abf2940`） | `PermissionAdvisorTests`(8) | W10-2、W9D |
 | D70 | 版本号/更新日志/反馈/诊断/兼容/健康检查/风险提示 | 已实现有证据（App 编译待手动触发） | 版本号 + `ChangelogView` + `IntegrityChecker` 健康检查 + `DiagnosticsView` + `FeedbackReportBuilder`（只含版本与计数、描述截断、固定隐私声明）+ `FeedbackView`（预览/分享/复制）；设置页入口（`abf2940`） | `FeedbackReportTests`(5)、`DiagnosticsTests`(7) | W10-3、W9D |
