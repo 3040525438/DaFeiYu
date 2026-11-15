@@ -283,7 +283,8 @@ struct ChatView: View {
 
     private var headerTitle: some View {
         HStack(spacing: 8) {
-            DFCharacterMark(size: 28)
+            // D36：表情 / 动作 / 互动动画跟随角色状态与生成阶段
+            CharacterPresenceView(container: container, phase: viewModel.phase)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 5) {
                     Text("大肥鱼")

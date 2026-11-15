@@ -63,6 +63,8 @@ public struct ChatOrchestratorDependencies: Sendable {
     public var makeRequest: @Sendable (_ systemPrompt: String, _ history: [ChatTurn]) async throws -> ChatRequest
     /// 核心人格（为空时使用空字符串，不影响流程）
     public var corePersona: @Sendable () async throws -> String
+    /// D37：本轮请求时的当前情绪。为 nil 时只用静态表达准则，行为与旧版本一致。
+    public var currentEmotion: (@Sendable () async -> EmotionState?)?
     public var rules: String
     public var limitGroups: Int
     public var budget: PromptBudget
@@ -88,6 +90,7 @@ public struct ChatOrchestratorDependencies: Sendable {
         makeProvider: @escaping @Sendable () async throws -> any ChatModelProvider,
         makeRequest: @escaping @Sendable (String, [ChatTurn]) async throws -> ChatRequest,
         corePersona: @escaping @Sendable () async throws -> String = { "" },
+        currentEmotion: (@Sendable () async -> EmotionState?)? = nil,
         rules: String = PromptComposer.defaultRules,
         limitGroups: Int = 20,
         budget: PromptBudget = PromptBudget(),
@@ -104,6 +107,7 @@ public struct ChatOrchestratorDependencies: Sendable {
         self.makeProvider = makeProvider
         self.makeRequest = makeRequest
         self.corePersona = corePersona
+        self.currentEmotion = currentEmotion
         self.rules = rules
         self.limitGroups = limitGroups
         self.budget = budget
@@ -453,11 +457,16 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         } else {
             requestTurns.append(ChatTurn(role: .user, text: trimmed))
         }
+        // D37：当前情绪来自角色状态（App 层注入）；没有数据源时只用静态准则
+        var emotion: EmotionState?
+        if let provider = deps.currentEmotion {
+            emotion = await provider()
+        }
         let systemPrompt = prompt.system
             + "\n\n" + ReferenceProtocol.systemFragment
             + "\n\n" + SegmentProtocol.systemFragment
             // D37：允许情绪/异议/拒绝/幽默，同时强制区分真实、推断与想象
-            + "\n\n" + SelfExpressionProtocol.systemFragment
+            + "\n\n" + SelfExpressionProtocol.promptFragment(emotion: emotion)
 
         // 取消发生在 openTurn 之前：不得创建消息组（时序 A）
         if shouldStop() {

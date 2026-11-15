@@ -52,6 +52,10 @@ final class AppContainer: ObservableObject {
     let messageOrganization: MessageOrganizationRepository
     /// D57：附件引用检查与清理
     let attachmentReferences: AttachmentReferenceService
+    /// D36：当前启用角色（无角色时补建内置角色）
+    let characters: CharacterProfileService
+    /// D36 / D37：角色状态读写（表情、精力、亲和与历史）
+    let characterStates: CharacterStateService
 
     // MARK: - W6~W9 服务层
 
@@ -162,6 +166,8 @@ final class AppContainer: ObservableObject {
         self.unifiedSearch = GRDBUnifiedSearchRepository(database: database)
         self.messageOrganization = GRDBMessageOrganizationRepository(database: database)
         self.attachmentReferences = GRDBAttachmentReferenceService(database: database)
+        self.characters = CharacterProfileService(database: database)
+        self.characterStates = CharacterStateService(database: database)
         self.budget = BudgetService(
             database: database,
             settings: GRDBSettingsRepository(database: database)
@@ -327,6 +333,9 @@ final class AppContainer: ObservableObject {
         let personas = self.personas
         let secureStore = self.secureStore
         let budgetService = self.budget
+        // D36 / D37：角色与状态（闭包只捕获服务值，不捕获容器）
+        let charactersService = self.characters
+        let statesService = self.characterStates
         // 回合后置：记忆抽取（W8-3）。关掉开关即完全跳过，不影响聊天。
         let extraction = MemoryExtractionCoordinator(
             processing: memoryProcessing,
@@ -375,11 +384,23 @@ final class AppContainer: ObservableObject {
             corePersona: {
                 (try await personas.coreSystemPrompt()) ?? ""
             },
+            // D37：当前情绪来自角色状态；没有状态数据时返回 nil，只用静态表达准则
+            currentEmotion: {
+                guard let id = try? await charactersService.activeCharacterID(),
+                      let state = try? await statesService.state(for: id) else { return nil }
+                return EmotionState(kind: EmotionKind(mood: state.mood), intensity: 0.5)
+            },
             rules: PromptComposer.defaultRules,
             limitGroups: 20,
             budget: PromptBudget(totalTokens: 6000),
             onTurnCompleted: { completion in
                 await extraction.handle(completion)
+                // D37：一轮结束后推断情绪并落库，下一轮提示词与界面都会跟着变
+                await Self.recordEmotion(
+                    completion: completion,
+                    characters: charactersService,
+                    states: statesService
+                )
             },
             reserveBudget: { request in
                 let config = try await Self.requireDefaultConfig(modelConfigs)
@@ -453,6 +474,34 @@ final class AppContainer: ObservableObject {
         } catch {
             // 结算失败不回滚聊天结果，但必须留下可排查记录
             NSLog("聊天成本结算失败（预占 \(reservationID)）：\(error.localizedDescription)")
+        }
+    }
+
+    /// D37：一轮结束后推断情绪并写入角色状态。
+    ///
+    /// 失败只记录日志：情绪是体验性数据，不能因为它回滚聊天结果。
+    private static func recordEmotion(
+        completion: ChatTurnCompletion,
+        characters: CharacterProfileService,
+        states: CharacterStateService
+    ) async {
+        do {
+            let characterID = try await characters.activeCharacterID()
+            let current = try await states.state(for: characterID)
+            let previous = EmotionState(kind: EmotionKind(mood: current.mood), intensity: 0.5)
+            let inferred = EmotionSignal.infer(
+                userText: completion.userText,
+                assistantText: completion.assistantText,
+                previous: previous
+            )
+            try await states.update(
+                characterID: characterID,
+                emotion: inferred,
+                source: "chat",
+                triggerMessageID: completion.assistantMessageID
+            )
+        } catch {
+            NSLog("情绪状态更新失败：\(error.localizedDescription)")
         }
     }
 
