@@ -426,16 +426,16 @@ public final class BackupService: @unchecked Sendable {
                 """
             )
             for row in rows {
-                let text = [
-                    String.fromDatabaseValue(row["title"]) ?? "",
-                    String.fromDatabaseValue(row["content"]) ?? "",
-                    String.fromDatabaseValue(row["shared_experience"]) ?? "",
-                    String.fromDatabaseValue(row["observation"]) ?? "",
-                    String.fromDatabaseValue(row["feeling"]) ?? "",
-                    String.fromDatabaseValue(row["relationship_change"]) ?? ""
-                ]
-                .filter { !$0.isEmpty }
-                .joined(separator: " ")
+                var parts: [String] = []
+                for column in [
+                    "title", "content", "shared_experience",
+                    "observation", "feeling", "relationship_change"
+                ] {
+                    if let value = String.fromDatabaseValue(row[column]), !value.isEmpty {
+                        parts.append(value)
+                    }
+                }
+                let text = parts.joined(separator: " ")
                 try db.execute(
                     sql: "INSERT INTO diary_fts (diary_id, text_bigram) VALUES (?, ?)",
                     arguments: [String.fromDatabaseValue(row["id"]), V2Memory.bigram(text)]

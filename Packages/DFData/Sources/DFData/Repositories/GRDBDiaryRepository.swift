@@ -303,12 +303,7 @@ public struct GRDBDiaryRepository: DiaryRepository, Sendable {
                         diaryID: try row.decode(String.self, forColumn: "id"),
                         title: try row.decode(String.self, forColumn: "title"),
                         content: try row.decode(String.self, forColumn: "content"),
-                        structured: [
-                            String.fromDatabaseValue(row["shared_experience"]) ?? "",
-                            String.fromDatabaseValue(row["observation"]) ?? "",
-                            String.fromDatabaseValue(row["feeling"]) ?? "",
-                            String.fromDatabaseValue(row["relationship_change"]) ?? ""
-                        ]
+                        structured: Self.structuredValues(row)
                     )
                 }
                 return rows.count
@@ -320,6 +315,15 @@ public struct GRDBDiaryRepository: DiaryRepository, Sendable {
 
     // MARK: - 内部
 
+    /// 读取一行日记的结构化字段（缺失按空串处理）
+    private static func structuredValues(_ row: Row) -> [String] {
+        var values: [String] = []
+        for column in ["shared_experience", "observation", "feeling", "relationship_change"] {
+            values.append(String.fromDatabaseValue(row[column]) ?? "")
+        }
+        return values
+    }
+
     private static func index(
         _ db: Database,
         diaryID: String,
@@ -330,10 +334,14 @@ public struct GRDBDiaryRepository: DiaryRepository, Sendable {
         guard try db.tableExists("diary_fts") else { return }
         try db.execute(sql: "DELETE FROM diary_fts WHERE diary_id = ?", arguments: [diaryID])
         // 结构化字段一并进索引，保证"关系变化"等也能被检索到
-        let merged = ([title, content] + structured)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n")
+        var pieces: [String] = [title, content]
+        pieces.append(contentsOf: structured)
+        var mergedParts: [String] = []
+        for piece in pieces {
+            let trimmed = piece.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { mergedParts.append(trimmed) }
+        }
+        let merged = mergedParts.joined(separator: "\n")
         guard !merged.isEmpty else { return }
         try db.execute(
             sql: "INSERT INTO diary_fts (diary_id, text_bigram) VALUES (?, ?)",
