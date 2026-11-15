@@ -57,6 +57,31 @@ public struct SpeechInputPlan: Sendable, Equatable {
     }
 }
 
+/// 语音输入相关设置键（App 层读写，策略层只做解析）
+public enum SpeechSettingsKey {
+    /// 运行方式：`on_device` / `cloud`
+    public static let mode = "speech.mode"
+    /// 云端转写使用的模型名（缺省为 `whisper-1`）
+    public static let cloudModel = "speech.cloud_model"
+}
+
+extension SpeechRunMode {
+    /// 从设置值解析运行方式。
+    ///
+    /// 未知值一律按设备端处理：不能因为一条脏设置就把音频悄悄推到云端。
+    public init(settingValue: String?) {
+        let raw = (settingValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        switch raw {
+        case SpeechRunMode.cloud.rawValue: self = .cloud
+        case SpeechRunMode.unavailable.rawValue: self = .unavailable
+        default: self = .onDevice
+        }
+    }
+
+    /// 可被用户选择的运行方式（"不可用"不是用户选项）
+    public static var selectable: [SpeechRunMode] { [.onDevice, .cloud] }
+}
+
 public enum SpeechInputPolicy {
     /// 文字兜底：任何情况下都存在
     public static let textAlternative = "可以直接输入文字；语音输入只影响录入方式，不影响聊天"

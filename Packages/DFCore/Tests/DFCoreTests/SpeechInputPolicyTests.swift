@@ -61,4 +61,25 @@ final class SpeechInputPolicyTests: XCTestCase {
     func testTextAlternativeIsAlwaysAvailable() {
         XCTAssertFalse(SpeechInputPolicy.textAlternative.isEmpty)
     }
+
+    // MARK: - 设置值解析（W9R）
+
+    func testRunModeParsesKnownValues() {
+        XCTAssertEqual(SpeechRunMode(settingValue: "on_device"), .onDevice)
+        XCTAssertEqual(SpeechRunMode(settingValue: " cloud "), .cloud)
+        XCTAssertEqual(SpeechRunMode(settingValue: "unavailable"), .unavailable)
+    }
+
+    func testRunModeFallsBackToOnDeviceForUnknownValues() {
+        // 脏设置不能把音频推到云端
+        XCTAssertEqual(SpeechRunMode(settingValue: nil), .onDevice)
+        XCTAssertEqual(SpeechRunMode(settingValue: ""), .onDevice)
+        XCTAssertEqual(SpeechRunMode(settingValue: "CLOUD"), .onDevice)
+        XCTAssertEqual(SpeechRunMode(settingValue: "whatever"), .onDevice)
+    }
+
+    func testSelectableModesExcludeUnavailable() {
+        XCTAssertEqual(SpeechRunMode.selectable, [.onDevice, .cloud])
+        XCTAssertFalse(SpeechRunMode.selectable.contains(.unavailable))
+    }
 }

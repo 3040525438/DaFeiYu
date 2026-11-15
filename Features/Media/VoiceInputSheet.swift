@@ -1,11 +1,15 @@
 import SwiftUI
 import DFData
 import DFCore
+import DFAI
 
-/// 语音输入（D28）：录制 → 设备端转写 → 可回放 → 填入聊天框。
+/// 语音输入（D28 / D16）：录制 → 按当前运行方式转写 → 可回放 → 填入聊天框。
 /// 原始音频保存在附件库，转写文本落 `attachment_texts`；
 /// 填入时把附件 id 一并交给调用方，发送后由聊天页挂到该条消息上。
-/// 转写固定在设备端完成，音频不上传。
+///
+/// 运行方式（D16）：
+/// - 设备端：音频不出设备，默认方式；
+/// - 云端：必须先在隐私授权里显式同意上传，未授权或拒绝一律不开始，并给文字兜底。
 @MainActor
 struct VoiceInputSheet: View {
     @EnvironmentObject private var container: AppContainer
@@ -22,9 +26,15 @@ struct VoiceInputSheet: View {
     @State private var busy = false
     @State private var message: String?
 
+    /// D16：运行方式与本次输入的处理方案
+    @State private var mode: SpeechRunMode = .onDevice
+    @State private var consent: SpeechUploadConsent = .undetermined
+    @State private var plan: SpeechInputPlan?
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 18) {
+                modeSection
                 levelMeter
                 Text(timeText(recorder.elapsed))
                     .font(.system(size: 30, weight: .light, design: .rounded))
@@ -62,11 +72,28 @@ struct VoiceInputSheet: View {
                 }
 
                 if busy {
-                    ProgressView("正在本机转写…")
+                    ProgressView(plan?.mode == .cloud ? "正在云端转写…" : "正在本机转写…")
                 }
-                Text("转写在设备端完成，音频不会上传。")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                if let plan {
+                    if SpeechInputPolicy.needsConsentPrompt(plan) {
+                        Button("允许上传音频并识别") {
+                            Task { await grantUploadConsent() }
+                        }
+                        .font(.footnote)
+                        .buttonStyle(.borderedProminent)
+                        .tint(DFColor.primary)
+                    }
+                    Text(plan.explanation)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                    if let alternative = plan.alternative {
+                        Text(alternative)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .multilineTextAlignment(.center)
+                    }
+                }
                 if let message {
                     Text(message)
                         .font(.footnote)
@@ -78,6 +105,7 @@ struct VoiceInputSheet: View {
             }
             .padding(20)
             .background(DFColor.canvas.ignoresSafeArea())
+            .task { await refreshPlan() }
             .navigationTitle("语音输入")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -99,6 +127,20 @@ struct VoiceInputSheet: View {
                 }
             }
         }
+    }
+
+    /// D16：运行方式切换（切换即落库，下次打开沿用）
+    private var modeSection: some View {
+        Picker("转写方式", selection: Binding(
+            get: { mode },
+            set: { value in Task { await selectMode(value) } }
+        )) {
+            ForEach(SpeechRunMode.selectable, id: \.self) { item in
+                Text(item.displayName).tag(item)
+            }
+        }
+        .pickerStyle(.segmented)
+        .disabled(busy || recorder.isRecording)
     }
 
     private var levelMeter: some View {
@@ -152,6 +194,15 @@ struct VoiceInputSheet: View {
     }
 
     private func transcribe(url: URL) async {
+        guard let plan else {
+            message = "转写方式尚未就绪，请稍后重试"
+            return
+        }
+        guard plan.allowed else {
+            message = plan.explanation
+            return
+        }
+
         busy = true
         defer { busy = false }
         do {
@@ -164,14 +215,95 @@ struct VoiceInputSheet: View {
                 at: timestamp
             )
             ingestedAttachmentID = record.id
-            let result = try await container.media.runTranscription(attachment: record, at: timestamp)
-            transcript = result?.text ?? ""
+
+            switch plan.mode {
+            case .onDevice:
+                let result = try await container.media.runTranscription(attachment: record, at: timestamp)
+                transcript = result?.text ?? ""
+            case .cloud:
+                transcript = try await transcribeOnCloud(data: data, record: record)
+            case .unavailable:
+                transcript = ""
+            }
+
             if transcript.isEmpty {
                 message = "没有识别到语音内容"
             }
         } catch {
             message = "转写失败：\(error.localizedDescription)"
         }
+    }
+
+    /// D16：云端转写。只有 `plan.allowed == true`（已显式授权）时才会走到这里。
+    private func transcribeOnCloud(data: Data, record: AttachmentRecord) async throws -> String {
+        guard let config = try await container.modelConfigs.defaultConfig() else {
+            throw DFError.notConfigured("默认模型（请到设置页添加）")
+        }
+        guard let baseURL = URL(string: config.baseURL), baseURL.scheme?.hasPrefix("http") == true else {
+            throw DFError.invalidURL(config.baseURL)
+        }
+        let configuredModel = (try? await container.settings.string(for: SpeechSettingsKey.cloudModel))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let model = (configuredModel?.isEmpty == false ? configuredModel : nil)
+            ?? SpeechTranscriptionWire.defaultModel
+
+        let transcriber = CloudSpeechTranscriber(
+            baseURL: baseURL,
+            apiKey: try container.apiKey(for: config),
+            model: model
+        )
+        let text = try await transcriber.transcribe(
+            audio: data,
+            fileName: (record.relPath as NSString).lastPathComponent
+        )
+        try await container.media.saveCloudTranscript(
+            attachment: record,
+            text: text,
+            model: model,
+            at: Clock.nowMillis()
+        )
+        return text
+    }
+
+    // MARK: - D16 运行方式与授权
+
+    private func refreshPlan() async {
+        mode = SpeechRunMode(settingValue: try? await container.settings.string(for: SpeechSettingsKey.mode))
+        let all = (try? await container.privacy.consents()) ?? []
+        if let record = all.first(where: { $0.kind == .speechRecognition }) {
+            consent = record.granted ? .granted : .denied
+        } else {
+            consent = .undetermined
+        }
+        rebuildPlan()
+    }
+
+    private func selectMode(_ value: SpeechRunMode) async {
+        mode = value
+        try? await container.settings.set(value.rawValue, for: SpeechSettingsKey.mode)
+        rebuildPlan()
+    }
+
+    private func grantUploadConsent() async {
+        do {
+            _ = try await container.privacy.setConsent(
+                .speechRecognition,
+                granted: true,
+                note: "语音输入：允许把录音上传到当前模型服务商转写"
+            )
+            consent = .granted
+            rebuildPlan()
+        } catch {
+            message = "授权记录失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func rebuildPlan() {
+        plan = SpeechInputPolicy.plan(
+            preferred: mode,
+            deviceOnDeviceAvailable: MediaProcessing.onDeviceSpeechAvailable(),
+            consent: consent
+        )
     }
 
     private func timeText(_ seconds: TimeInterval) -> String {

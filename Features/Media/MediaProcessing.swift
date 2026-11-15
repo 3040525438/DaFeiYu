@@ -154,6 +154,14 @@ enum MediaProcessing {
 
     // MARK: - 语音转写（设备端优先）
 
+    /// 设备端转写能力探测（只读能力位，不弹系统授权框、不联网）。
+    static func onDeviceSpeechAvailable(localeIdentifier: String = "zh-CN") -> Bool {
+        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeIdentifier)) else {
+            return false
+        }
+        return recognizer.isAvailable && recognizer.supportsOnDeviceRecognition
+    }
+
     /// 设备端转写。若设备不支持端上识别，则显式抛错，绝不静默改为云端上传。
     static func transcribe(fileURL: URL, localeIdentifier: String = "zh-CN") async throws -> String {
         guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeIdentifier)),

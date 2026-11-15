@@ -117,4 +117,29 @@ struct AttachmentIngestService: Sendable {
             at: millis
         )
     }
+
+    /// D16：云端转写结果落库。
+    ///
+    /// 只有用户显式授权后才会走到这里；引擎名带上模型，
+    /// 便于用户与诊断包区分"这段文字来自设备端还是云端"。
+    @discardableResult
+    func saveCloudTranscript(
+        attachment record: AttachmentRecord,
+        text: String,
+        model: String,
+        at millis: Int64,
+        localeIdentifier: String = "zh-CN"
+    ) async throws -> AttachmentTextRecord? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return try await textRepository.upsert(
+            attachmentID: record.id,
+            kind: .transcript,
+            text: trimmed,
+            language: localeIdentifier,
+            engine: "speech-cloud:\(model)",
+            confidence: nil,
+            at: millis
+        )
+    }
 }
