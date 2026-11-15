@@ -174,6 +174,17 @@ struct SpaceView: View {
             .buttonStyle(.plain)
 
             NavigationLink {
+                RelationshipCenterView()
+            } label: {
+                actionRow(
+                    icon: "heart.text.square",
+                    title: "关系回顾",
+                    detail: "阶段历程、共同经历、重要转折与纪念日"
+                )
+            }
+            .buttonStyle(.plain)
+
+            NavigationLink {
                 AttachmentLibraryView(container: container)
             } label: {
                 actionRow(
