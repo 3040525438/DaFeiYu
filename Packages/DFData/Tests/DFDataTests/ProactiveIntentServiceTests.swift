@@ -231,7 +231,11 @@ final class ProactiveIntentServiceTests: XCTestCase {
             XCTAssertNotNil(Int64.fromDatabaseValue(message?["sent_at"] ?? .null))
             XCTAssertEqual(record?["status"], "sent")
             XCTAssertNotNil(Int64.fromDatabaseValue(record?["sent_at"] ?? .null))
-            return (message?["origin"] ?? "", record?["status"] ?? "", intent?["status"] ?? "")
+            return (
+                String.fromDatabaseValue(message?["origin"] ?? .null) ?? "",
+                String.fromDatabaseValue(record?["status"] ?? .null) ?? "",
+                String.fromDatabaseValue(intent?["status"] ?? .null) ?? ""
+            )
         }
         XCTAssertEqual(snapshot.0, "proactive")
         XCTAssertEqual(snapshot.1, "sent")
@@ -266,7 +270,11 @@ final class ProactiveIntentServiceTests: XCTestCase {
                 arguments: [proposal.intent.id]
             )
             let messages = try Int.fetchOne(db, sql: "SELECT count(*) FROM messages") ?? -1
-            return (intent?["status"] ?? "", intent?["suppress_reason"] ?? "", messages)
+            return (
+                String.fromDatabaseValue(intent?["status"] ?? .null) ?? "",
+                String.fromDatabaseValue(intent?["suppress_reason"] ?? .null) ?? "",
+                messages
+            )
         }
         XCTAssertEqual(snapshot.0, ProactiveIntentStatus.suppressed.rawValue)
         XCTAssertTrue(snapshot.1.contains("总开关"))
