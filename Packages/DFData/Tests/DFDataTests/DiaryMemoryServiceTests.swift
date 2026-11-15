@@ -54,10 +54,13 @@ final class DiaryMemoryServiceTests: XCTestCase {
         XCTAssertTrue(proposalIDs.isEmpty)
 
         let memoryID = try XCTUnwrap(memoryIDs.first)
-        let refreshed = try XCTUnwrap(try await diary.entry(id: entry.id))
+        // XCTUnwrap 的 autoclosure 不能放 await，先取值再解包
+        let maybeRefreshed = try await diary.entry(id: entry.id)
+        let refreshed = try XCTUnwrap(maybeRefreshed)
         XCTAssertEqual(refreshed.memoryID, memoryID)
 
-        let record = try XCTUnwrap(try await memories.memory(id: memoryID))
+        let maybeRecord = try await memories.memory(id: memoryID)
+        let record = try XCTUnwrap(maybeRecord)
         XCTAssertEqual(record.layer, "episodic")
         XCTAssertEqual(record.scope, .shared)
 
@@ -82,7 +85,10 @@ final class DiaryMemoryServiceTests: XCTestCase {
     }
 
     func testDistillRejectsMissingOrDeletedEntry() async throws {
-        await XCTAssertThrowsErrorAsync(try await service.distill(entryID: "missing", at: now)) { error in
+        do {
+            _ = try await service.distill(entryID: "missing", at: now)
+            XCTFail("不存在的日记应抛 notFound")
+        } catch {
             XCTAssertEqual(error as? DiaryError, .notFound)
         }
 
@@ -92,7 +98,10 @@ final class DiaryMemoryServiceTests: XCTestCase {
         )
         try await diary.softDelete(id: entry.id, at: now + 1)
 
-        await XCTAssertThrowsErrorAsync(try await service.distill(entryID: entry.id, at: now + 2)) { error in
+        do {
+            _ = try await service.distill(entryID: entry.id, at: now + 2)
+            XCTFail("已删除的日记应抛 notFound")
+        } catch {
             XCTAssertEqual(error as? DiaryError, .notFound)
         }
     }
@@ -123,20 +132,5 @@ final class DiaryMemoryServiceTests: XCTestCase {
             deletedAt: nil
         )
         XCTAssertEqual(DiaryMemoryService.title(for: entry), "2026-11-15")
-    }
-}
-
-/// XCTest 没有内置的 async throws 断言，这里补一个最小实现。
-private func XCTAssertThrowsErrorAsync<T>(
-    _ expression: @autoclosure () async throws -> T,
-    file: StaticString = #filePath,
-    line: UInt = #line,
-    _ handler: (Error) -> Void
-) async {
-    do {
-        _ = try await expression()
-        XCTFail("应抛出错误", file: file, line: line)
-    } catch {
-        handler(error)
     }
 }
