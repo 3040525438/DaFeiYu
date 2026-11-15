@@ -5,7 +5,7 @@ import DFCore
 
 /// 通知设置（N-08）：授权、通知档位说明、链路自检与清空。
 ///
-/// 说明：主动内容生成（N-20）尚未接入，本页负责权限与投递通道；
+/// 说明：主动消息链路（N-20）已接入，真正投递由 `ProactiveIntentRunner` 在后台决定；
 /// “发送测试通知”只验证系统通道，不会写主动消息表。
 @MainActor
 struct NotificationSettingsView: View {
@@ -96,7 +96,7 @@ struct NotificationSettingsView: View {
 
     private var noteSection: some View {
         Section {
-            Text("主动消息生成尚未接入（N-20 未完成），所以这里只会收到测试通知；当前不会自动推送任何内容。")
+            Text("主动消息由后台任务按策略生成并投递；测试通知只验证系统通道，不会写入聊天记录。")
         } footer: {
             Text("通知开关始终尊重系统授权；被拒绝时不会绕过，也不会静默改设置。")
         }

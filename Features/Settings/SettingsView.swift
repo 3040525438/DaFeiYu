@@ -295,6 +295,11 @@ struct SettingsView: View {
             } label: {
                 Label("通知", systemImage: "bell.badge")
             }
+            NavigationLink {
+                PermissionCenterView()
+            } label: {
+                Label("权限", systemImage: "hand.raised")
+            }
         } header: {
             sectionHeader("隐私与数据", icon: "shield.lefthalf.filled")
         } footer: {
@@ -328,6 +333,11 @@ struct SettingsView: View {
                 ChangelogView()
             } label: {
                 Label("更新日志", systemImage: "clock.arrow.circlepath")
+            }
+            NavigationLink {
+                FeedbackView()
+            } label: {
+                Label("反馈与诊断报告", systemImage: "envelope")
             }
             Text("大肥鱼 · V2.0 实验版")
                 .font(.footnote)
