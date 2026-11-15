@@ -113,7 +113,7 @@
 | 编号 | 决策摘要 | 状态 | 代码证据 | 测试证据 | 承载任务 |
 |---|---|---|---|---|---|
 | D30 | 核心人格只用户改；AI 仅建议；留版本与回退 | 已实现 | `PersonaGrowthService`（核心写保护 + 提案 + 版本回退）+ `ApprovalCenterView` | `PersonaGrowthServiceTests`(9) | W6-1、W6-3（已完成） |
-| D31 | 自主记录关系阶段/共同经历/重要转折，可回顾 | 已实现 | `RelationshipService`（阶段提案→确认、历史、里程碑）+ 审批中心 | `RelationshipServiceTests`(11) | W6-6（已完成，五类视图未做） |
+| D31 | 自主记录关系阶段/共同经历/重要转折，可回顾 | 已实现 | `RelationshipService`（阶段提案→确认、历史、里程碑）+ 审批中心 + 关系回顾页五类独立视图（概览/阶段历程/共同经历/重要转折/纪念日，`RelationshipOverview` 统一分组、排序、精度文案） | `RelationshipServiceTests`(11)、`RelationshipOverviewTests`(13)，commit `78680b6` | W6-6、W9P（已完成） |
 | D32 | AI 自身观察/兴趣/观点/经历总结，连续成长记录 | 已实现 | `MemoryProcessingService.reflect` + `ReflectionPolicy` + `reflections` 表 + self 记忆沉淀 | `MemoryProcessingServiceTests.testReflectStoresReflectionsAndDepositsSelfMemory` | W8-4（已完成） |
 | D33 | 用户与 AI 都可编辑日记；留版本；AI 修订需确认 | 已实现 | `Diary.swift`（`generatedBy`/`isUserEdited`/`memoryID`/全量版本表）+ `GRDBDiaryRepository` | `DiaryTests`(13) | W6-7（已完成） |
 | D34 | 日记第一人称记录共同经历/观察/感受/关系变化 | 已实现 | `V12DiaryStructure.swift`（`shared_experience`/`observation`/`feeling`/`relationship_change` + 确认标记，版本快照同步扩列）+ `Features/Diary/*` 列表与编辑界面 | `MigrationV12Tests`(9)、`DiaryTests`(13)，run `43680552034` | W6-7（已完成） |
