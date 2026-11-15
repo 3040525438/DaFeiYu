@@ -328,18 +328,25 @@ public final class MemoryProcessingService: @unchecked Sendable {
     @discardableResult
     public func approveProposal(id: String, at millis: Int64? = nil) async throws -> String {
         let timestamp = millis ?? now()
-        let row = try await database.dbQueue.read { db in
-            try Row.fetchOne(
+        // 注意：异步 read 的泛型返回值要求 Sendable，不能直接返回 GRDB 的 Row
+        let record = try await database.dbQueue.read { db -> (status: String, payload: String)? in
+            guard let row = try Row.fetchOne(
                 db,
                 sql: "SELECT payload_json, status FROM proposals WHERE id = ? AND kind = 'memory'",
                 arguments: [id]
+            ) else {
+                return nil
+            }
+            return (
+                status: String.fromDatabaseValue(row["status"]) ?? "",
+                payload: String.fromDatabaseValue(row["payload_json"]) ?? ""
             )
         }
-        guard let row else { throw MemoryProcessingError.proposalNotFound(id) }
-        guard String.fromDatabaseValue(row["status"]) == "pending" else {
+        guard let record else { throw MemoryProcessingError.proposalNotFound(id) }
+        guard record.status == "pending" else {
             throw MemoryProcessingError.proposalNotPending(id)
         }
-        let json = String.fromDatabaseValue(row["payload_json"]) ?? ""
+        let json = record.payload
         guard let data = json.data(using: .utf8),
               let payload = try? JSONDecoder().decode(MemoryProposalPayload.self, from: data) else {
             throw MemoryProcessingError.proposalNotFound(id)
