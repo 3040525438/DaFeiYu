@@ -1,4 +1,8 @@
 import Foundation
+#if !canImport(Darwin)
+// Linux 上 URLRequest / HTTPURLResponse 在 FoundationNetworking 里
+import FoundationNetworking
+#endif
 import DFCore
 
 // MARK: - 云端语音识别（D16）

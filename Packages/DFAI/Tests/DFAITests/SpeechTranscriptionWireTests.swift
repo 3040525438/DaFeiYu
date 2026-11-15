@@ -5,7 +5,8 @@ import DFCore
 /// 云端语音识别请求构造与响应解析（D16）。全部为纯数据逻辑，CI 可覆盖。
 final class SpeechTranscriptionWireTests: XCTestCase {
 
-    private let audio = Data([0x00, 0x01, 0x02, 0xFF, 0x10])
+    /// 用可打印字节：测试里要把整个 multipart 当 UTF-8 文本检查
+    private let audio = Data([0x41, 0x42, 0x43, 0x44, 0x45])
 
     // MARK: - multipart 组装
 
