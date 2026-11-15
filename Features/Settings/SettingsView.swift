@@ -25,6 +25,7 @@ struct SettingsView: View {
                 environmentSection
                 modelSection
                 personaSection
+                pendingSection
                 privacySection
                 maintenanceSection
                 aboutSection
@@ -230,6 +231,25 @@ struct SettingsView: View {
                 .foregroundStyle(.tertiary)
         } header: {
             sectionHeader("核心人格", icon: "person.text.rectangle")
+        }
+    }
+
+    private var pendingSection: some View {
+        Section {
+            NavigationLink {
+                ApprovalCenterView()
+            } label: {
+                Label("待确认事项", systemImage: "checkmark.seal")
+            }
+            NavigationLink {
+                AstrBotImportView()
+            } label: {
+                Label("AstrBot 迁移", systemImage: "tray.and.arrow.down")
+            }
+        } header: {
+            sectionHeader("确认与迁移", icon: "arrow.triangle.branch")
+        } footer: {
+            Text("人格成长、关系阶段与重要记忆都必须由你确认；AstrBot 导入先预演再落库，可回滚。")
         }
     }
 

@@ -58,7 +58,8 @@ final class MemoryProcessingServiceTests: XCTestCase {
         XCTAssertTrue(report.proposalIDs.isEmpty)
         let id = try XCTUnwrap(report.writtenMemoryIDs.first)
 
-        let record = try XCTUnwrap(try await repo.memory(id: id))
+        let loaded = try await repo.memory(id: id)
+        let record = try XCTUnwrap(loaded)
         XCTAssertEqual(record.scope, .user)
         XCTAssertEqual(record.layer, "semantic")
         XCTAssertEqual(record.version, 1)

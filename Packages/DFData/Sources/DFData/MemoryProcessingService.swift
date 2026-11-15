@@ -143,12 +143,54 @@ public struct MemoryGraphResult: Sendable, Equatable {
 public enum MemoryProcessingError: Error, Equatable, CustomStringConvertible {
     case emptySource
     case memoryNotFound(String)
+    case proposalNotFound(String)
+    case proposalNotPending(String)
 
     public var description: String {
         switch self {
         case .emptySource: return "本轮原文为空，无法校验证据"
         case .memoryNotFound(let id): return "记忆不存在：\(id)"
+        case .proposalNotFound(let id): return "提案不存在或格式损坏：\(id)"
+        case .proposalNotPending(let id): return "提案已处理过，不能重复确认：\(id)"
         }
+    }
+}
+
+/// 待确认的记忆提案（D12：重要修改需用户确认后才生效）
+public struct MemoryProposalItem: Sendable, Equatable, Identifiable {
+    public var id: String
+    public var title: String
+    public var content: String
+    public var evidenceQuote: String
+    public var scope: MemoryScope
+    public var layer: String
+    public var category: String
+    public var risk: String
+    public var reason: String
+    public var createdAt: Int64
+
+    public init(
+        id: String,
+        title: String,
+        content: String,
+        evidenceQuote: String,
+        scope: MemoryScope,
+        layer: String,
+        category: String,
+        risk: String,
+        reason: String,
+        createdAt: Int64
+    ) {
+        self.id = id
+        self.title = title
+        self.content = content
+        self.evidenceQuote = evidenceQuote
+        self.scope = scope
+        self.layer = layer
+        self.category = category
+        self.risk = risk
+        self.reason = reason
+        self.createdAt = createdAt
     }
 }
 
@@ -243,6 +285,136 @@ public final class MemoryProcessingService: @unchecked Sendable {
             rejections: screened.rejections,
             droppedByBudget: screened.droppedByBudget
         )
+    }
+
+    // MARK: - 记忆提案（用户确认后才生效）
+
+    public func pendingProposals(limit: Int = 50) async throws -> [MemoryProposalItem] {
+        try await database.dbQueue.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT id, payload_json, reason, risk, created_at
+                FROM proposals
+                WHERE kind = 'memory' AND status = 'pending'
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                arguments: [limit]
+            )
+            return rows.compactMap { row -> MemoryProposalItem? in
+                guard let json = String.fromDatabaseValue(row["payload_json"]),
+                      let data = json.data(using: .utf8),
+                      let payload = try? JSONDecoder().decode(MemoryProposalPayload.self, from: data) else {
+                    return nil
+                }
+                return MemoryProposalItem(
+                    id: String.fromDatabaseValue(row["id"]) ?? "",
+                    title: payload.title,
+                    content: payload.content,
+                    evidenceQuote: payload.evidenceQuote,
+                    scope: MemoryScope(rawValue: payload.scope) ?? .shared,
+                    layer: payload.layer,
+                    category: payload.category,
+                    risk: String.fromDatabaseValue(row["risk"]) ?? "medium",
+                    reason: String.fromDatabaseValue(row["reason"]) ?? "",
+                    createdAt: Int64.fromDatabaseValue(row["created_at"]) ?? 0
+                )
+            }
+        }
+    }
+
+    /// 确认提案 → 真正写入记忆；重复确认会被拒绝。
+    @discardableResult
+    public func approveProposal(id: String, at millis: Int64? = nil) async throws -> String {
+        let timestamp = millis ?? now()
+        let row = try await database.dbQueue.read { db in
+            try Row.fetchOne(
+                db,
+                sql: "SELECT payload_json, status FROM proposals WHERE id = ? AND kind = 'memory'",
+                arguments: [id]
+            )
+        }
+        guard let row else { throw MemoryProcessingError.proposalNotFound(id) }
+        guard String.fromDatabaseValue(row["status"]) == "pending" else {
+            throw MemoryProcessingError.proposalNotPending(id)
+        }
+        let json = String.fromDatabaseValue(row["payload_json"]) ?? ""
+        guard let data = json.data(using: .utf8),
+              let payload = try? JSONDecoder().decode(MemoryProposalPayload.self, from: data) else {
+            throw MemoryProcessingError.proposalNotFound(id)
+        }
+
+        let scope = MemoryScope(rawValue: payload.scope) ?? .shared
+        let layer = MemoryLayer(rawValue: payload.layer) ?? .semantic
+        var sources = [
+            MemorySourceRef(
+                sourceType: "message",
+                sourceID: payload.userMessageID,
+                excerpt: payload.evidenceQuote,
+                at: timestamp
+            )
+        ]
+        if let assistant = payload.assistantMessageID, !assistant.isEmpty {
+            sources.append(
+                MemorySourceRef(
+                    sourceType: "message",
+                    sourceID: assistant,
+                    excerpt: payload.evidenceQuote,
+                    at: timestamp
+                )
+            )
+        }
+
+        let record = try await repository.insert(
+            MemoryDraft(
+                type: layer.rawValue,
+                title: payload.title,
+                content: payload.content,
+                scope: scope,
+                layer: layer.rawValue,
+                category: payload.category,
+                sourceKind: payload.sourceKind,
+                epistemicStatus: payload.epistemicStatus,
+                importance: Self.importanceLabel(payload.importance),
+                confidence: payload.confidence,
+                salience: payload.importance,
+                dedupeKey: payload.dedupeKey,
+                sources: sources
+            ),
+            at: timestamp
+        )
+        try await recordImportance(record.id, score: payload.importance, at: timestamp)
+
+        try await database.write { db in
+            try db.execute(
+                sql: """
+                UPDATE proposals
+                SET status = 'approved', resolved_at = ?, decided_by = 'user',
+                    resolution_note = '用户确认写入'
+                WHERE id = ? AND status = 'pending'
+                """,
+                arguments: [timestamp, id]
+            )
+        }
+        return record.id
+    }
+
+    public func rejectProposal(id: String, note: String = "用户驳回", at millis: Int64? = nil) async throws {
+        let timestamp = millis ?? now()
+        try await database.write { db in
+            try db.execute(
+                sql: """
+                UPDATE proposals
+                SET status = 'rejected', resolved_at = ?, decided_by = 'user', resolution_note = ?
+                WHERE id = ? AND status = 'pending'
+                """,
+                arguments: [timestamp, note, id]
+            )
+            guard db.changesCount > 0 else {
+                throw MemoryProcessingError.proposalNotPending(id)
+            }
+        }
     }
 
     // MARK: - 整理（去重 / 冲突 / 归档 / 索引 / 统计）
