@@ -81,13 +81,33 @@ public final class AppDatabase: @unchecked Sendable {
         upgradeOnLaunch()
     }
 
-    /// 启动升级：先迁移，再做台账自检。
+    /// 启动升级：版本兼容判断 → 迁移 → 台账自检，全程写 `upgrade_records` 审计。
     /// 迁移失败**不抛错**：事务已整体回滚，库仍是升级前结构，
     /// 这里降级为 `migrationFailed`（禁止一切写入），由界面提示恢复与重试。
     private func upgradeOnLaunch() {
+        let latest = Migrations.latest.rawValue
+        let plan = UpgradeGuard.plan(
+            currentVersion: currentSchemaVersion,
+            knownVersions: MigrationID.allCases.map(\.rawValue),
+            latestVersion: latest
+        )
+        if case .blocked(let reason) = plan {
+            // 版本未知或库比 App 新：宁可不迁移，也不能用旧结构写坏新库
+            integrityMode = .readOnly(reason: reason)
+            return
+        }
+
+        var auditID: String?
+        if case .upgrade(let from, let to) = plan {
+            auditID = recordUpgradeStart(from: from, to: to)
+        }
+
         do {
             try makeMigrator().migrate(dbQueue)
         } catch {
+            if let auditID {
+                recordUpgradeFinish(id: auditID, status: .failed, error: error.localizedDescription)
+            }
             integrityMode = .migrationFailed(reason: error.localizedDescription)
             return
         }
@@ -95,8 +115,54 @@ public final class AppDatabase: @unchecked Sendable {
         do {
             _ = try dbQueue.read { db in try SchemaMeta.verify(db) }
             try dbQueue.read { db in try SchemaMeta.verifyRequiredObjects(db) }
+            if let auditID {
+                recordUpgradeFinish(id: auditID, status: .succeeded)
+            }
         } catch {
+            if let auditID {
+                recordUpgradeFinish(id: auditID, status: .failed, error: error.localizedDescription)
+            }
             integrityMode = .readOnly(reason: error.localizedDescription)
+        }
+    }
+
+    // MARK: - 升级审计
+
+    /// 记录一次升级开始；`upgrade_records` 尚不存在（从 v1–v6 升级）时返回 nil，不伪造记录。
+    private func recordUpgradeStart(from: String, to: String) -> String? {
+        let id = UUID().uuidString
+        do {
+            try dbQueue.write { db in
+                guard try db.tableExists("upgrade_records") else {
+                    throw DFError.database("upgrade_records 尚未创建，跳过本次审计")
+                }
+                try db.execute(
+                    sql: """
+                    INSERT INTO upgrade_records
+                        (id, from_version, to_version, batch, status, started_at)
+                    VALUES (?, ?, ?, '', 'running', ?)
+                    """,
+                    arguments: [id, from, to, Clock.nowMillis()]
+                )
+            }
+            return id
+        } catch {
+            return nil
+        }
+    }
+
+    /// 收尾升级记录：只更新仍在 `running` 的行，避免覆盖已终态记录。
+    private func recordUpgradeFinish(id: String, status: UpgradeAuditStatus, error: String? = nil) {
+        try? dbQueue.write { db in
+            guard try db.tableExists("upgrade_records") else { return }
+            try db.execute(
+                sql: """
+                UPDATE upgrade_records
+                   SET status = ?, error = ?, finished_at = ?
+                 WHERE id = ? AND status = 'running'
+                """,
+                arguments: [status.rawValue, error, Clock.nowMillis(), id]
+            )
         }
     }
 
@@ -110,12 +176,32 @@ public final class AppDatabase: @unchecked Sendable {
         // 重试前检查：台账必须可读（只读，不写入任何内容）
         _ = try await dbQueue.read { db in try SchemaMeta.appliedIdentifiers(db) }
 
+        let plan = UpgradeGuard.plan(
+            currentVersion: currentSchemaVersion,
+            knownVersions: MigrationID.allCases.map(\.rawValue),
+            latestVersion: Migrations.latest.rawValue
+        )
+        if case .blocked(let reason) = plan {
+            integrityMode = .migrationFailed(reason: reason)
+            throw DFError.database("数据库升级重试被拒绝：\(reason)")
+        }
+        var auditID: String?
+        if case .upgrade(let from, let to) = plan {
+            auditID = recordUpgradeStart(from: from, to: to)
+        }
+
         do {
             try makeMigrator().migrate(dbQueue)
             _ = try await dbQueue.read { db in try SchemaMeta.verify(db) }
             try await dbQueue.read { db in try SchemaMeta.verifyRequiredObjects(db) }
+            if let auditID {
+                recordUpgradeFinish(id: auditID, status: .succeeded)
+            }
             integrityMode = .healthy
         } catch {
+            if let auditID {
+                recordUpgradeFinish(id: auditID, status: .failed, error: error.localizedDescription)
+            }
             integrityMode = .migrationFailed(reason: error.localizedDescription)
             throw DFError.database("数据库升级重试失败：\(error.localizedDescription)")
         }
