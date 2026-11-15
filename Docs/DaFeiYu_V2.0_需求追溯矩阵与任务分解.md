@@ -158,7 +158,7 @@
 | D58 | 按运行模式说明离线能力；联网后安全恢复任务 | 部分实现（本地离线部分暂缓，ADR-08） | 本地模型管理页（登记/下载/续传/校验/删除，`813b0ad`）+ 后台唤醒补算（`6c33f4f`）；本地离线闭环依赖 N-18，本阶段不投入 | App 编译 `6c33f4f` | W5-6（推理内核 N-18 暂缓） |
 | D59 | 隐私说明/数据流向/授权记录/撤销/导出入口 | 已实现有证据（App 层未编译） | `PrivacyConsentKind` 6 类说明与授权记录 + 撤销 + 删除入口；**数据流向**：`DataFlowCatalog` 固定 9 类数据、去向（仅本机/云端模型服务商/用户选择位置）、静态加密、可否撤销与撤销入口，其中 4 类可能离开设备；**导出**：`UserDataExporter` 白名单导出聊天/记忆/日记/人格与关系/附件元数据/提案为单个 JSON，`settings` 与本地模型表整表排除、凭据列名黑名单剔除、空库拒绝；隐私页新增「数据流向」与「导出（含分享）」区块（`858bffe`/`69ae3f1`/`c81f5e2`） | `PrivacyGateTests`(6)、`PrivacyGateServiceTests`(7)、`DataFlowCatalogTests`(6)、`UserDataExporterTests`(6)，run 43715978437 | W9-4、W9L |
 | D60 | 模型下载默认 Wi-Fi、可蜂窝、暂停续传、显示存储 | 已实现（含 App 接线） | 下载器（`f8a1693`）+ `WiFiOnlyNetworkGate`（`NWPathMonitor`）+ 模型管理页进度/存储（`813b0ad`） | `LocalModelTests`(10) | W5-1（已完成） |
-| D61 | 模型文件可独立选择备份；版本/来源/校验和/兼容性 | 部分实现 | 注册表含版本/来源/校验和/上下文；独立备份选择未做 | `LocalModelTests`(10) | W5-1、W9-2 |
+| D61 | 模型文件可独立选择备份；版本/来源/校验和/兼容性 | 已实现 | `LocalModelBackupPolicy`（GGUF/已就绪/校验和三门禁 + 勾选与体积上限）+ `LocalModelBackupService`（复制前流式重算 SHA-256、失败整体清理、清单含版本/来源/校验和）+ 本地模型页"独立备份"勾选 | `LocalModelBackupPolicyTests`(12)、`LocalModelBackupServiceTests`(7)，commit `9c3e2e0` | W5-1、W9Q（已完成） |
 | D62 | 高度自主验收（主动聊天/记忆整理/回顾/独立思考/关联/建议 + 记录） | 已实现有证据（服务级闭环 + 五类内容能力；真机 UI/后台唤醒待验） | `HighAutonomyAcceptanceTests` 服务级端到端 7 场景：主动聊天闭环、通知未授权拦截、免打扰只拦打扰类、超预算拦截、自主建会话+复用、行为记录可回溯、五类洞察提案（`dd00bc2`/`1e98014`/`c123e2a`/`8f0a289`）。内容能力：`ReflectionInsight`（闭集 5 类 + 严格 JSON + 证据逐字校验 + 置信度夹取 + 必须用户确认规则）+ `AutonomyInsightService`（证据过滤 → 目标记忆存在性校验 → 只落 `proposals` 待确认提案，不写记忆、不直接打扰、同类不重复）。**剩余缺口**：真机 UI 展示与 iOS 后台唤醒验收（非代码缺口） | `ReflectionInsightTests`(20)、`AutonomyInsightServiceTests`(9)、`HighAutonomyAcceptanceTests`(7) | W8C、W9D |
 
 ### 3.8 第八轮（D63–D70）：安全、设置、长期维护
