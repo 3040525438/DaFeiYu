@@ -25,7 +25,7 @@ final class PreUpgradeBackupPolicyTests: XCTestCase {
         XCTAssertEqual(PreUpgradeBackupPolicy.sanitized(""), "unknown")
         // 中日韩字母属于字母，允许保留
         XCTAssertEqual(PreUpgradeBackupPolicy.sanitized("中文版本"), "中文版本")
-        XCTAssertEqual(PreUpgradeBackupPolicy.sanitized("  "), "___")
+        XCTAssertEqual(PreUpgradeBackupPolicy.sanitized("  "), "__")
     }
 
     func testLongVersionIsTruncated() {

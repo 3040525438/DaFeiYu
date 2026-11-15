@@ -456,6 +456,8 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         let systemPrompt = prompt.system
             + "\n\n" + ReferenceProtocol.systemFragment
             + "\n\n" + SegmentProtocol.systemFragment
+            // D37：允许情绪/异议/拒绝/幽默，同时强制区分真实、推断与想象
+            + "\n\n" + SelfExpressionProtocol.systemFragment
 
         // 取消发生在 openTurn 之前：不得创建消息组（时序 A）
         if shouldStop() {
