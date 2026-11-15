@@ -304,6 +304,11 @@ struct SettingsView: View {
 
     private var aboutSection: some View {
         Section {
+            NavigationLink {
+                ChangelogView()
+            } label: {
+                Label("更新日志", systemImage: "clock.arrow.circlepath")
+            }
             Text("大肥鱼 · V2.0 实验版")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
