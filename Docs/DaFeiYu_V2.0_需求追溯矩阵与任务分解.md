@@ -88,7 +88,7 @@
 | D13 | 主动消息通知可切换，默认仅重要 | 已实现（数据层） | `NotificationLevel` + `NotificationTiering` + `proactive_messages.notify_level` | `testNotificationTiering` | W7-3、W7-4 |
 | D14 | 勿扰 23:00–08:00、最小间隔 2h、每日上限 5，可调 | 已实现 | `AutonomyPolicy` 默认值 + `AutonomyGate` | `AutonomyGateTests` + `AutonomyServiceTests` 六项闸门用例 | W7-3 |
 | D15 | 一天未开 App 后台整理；失败下次启动补算；不私换模型 | 已实现（数据层） | `AutonomyService.backfill` + `AutonomyBackfill` | `testBackfillCreatesMissingDailyTasks`、`testBackfillReportsOverdueAndExpiresStale` | W7-5 |
-| D16 | 语音转文字跟随当前运行模式；上传需授权 | 部分实现（策略与文案完成；当前仅设备端转写，云端路径未接入） | `SpeechInputPolicy`：设备端/云端/不可用三态，云端必须显式授权，未授权或拒绝一律不启动并给文字兜底；语音页明确"设备端转写、音频不会上传"（`f62aca2`） | `SpeechInputPolicyTests`(7) | W4-4、W9G |
+| D16 | 语音转文字跟随当前运行模式；上传需授权 | 已实现（App 层改动未编译） | `SpeechTranscriptionWire`（multipart 构造、文件名/模型名剔除换行与引号防表单注入、错误信息脱敏截断）+ `CloudSpeechTranscriber`（`POST {baseURL}/audio/transcriptions`，Linux 补 `FoundationNetworking`）+ `SpeechInputPolicy` 运行方式解析（脏设置回落设备端）+ 语音页运行方式切换与云端授权（`PrivacyConsentKind.speechRecognition`），云端结果以 `speech-cloud:<model>` 落 `attachment_texts`（`d70e6dc`、`ffc7e21`） | `SpeechTranscriptionWireTests`(14)、`SpeechInputPolicyTests`(10)，run 43732457414 | W4-4、W9G、W9R |
 | D17 | 图片 OCR + 文字搜索，优先设备端 | 已实现 | Vision OCR（`MediaProcessing`）+ `attachment_texts` FTS + `ImageUnderstandingSheet` | `MultimodalTests`(14)（OCR 真机待验） | W4-2（已完成） |
 | D18 | 日记可触发外围人格成长提案，重要需确认 | 已实现 | `DiaryPersonaProposalService`（观察/关系变化 → 待审批提案，正文与感受不直接变人格，证据含日记 id 与原文，重复即跳过）+ 日记编辑页入口 | `DiaryPersonaProposalServiceTests`(5) | W6-5（完成） |
 | D19 | 单条/分类/三套记忆管理 + 按来源批量删除 | 已实现 | `memory_scopes`、`v_memory_*`、`GRDBMemoryRepository.softDelete(sourceType:sourceID:)`、`MemoryProcessingService` | `MigrationV2Tests.testT09`、`MemoryRepositoryTests`(11) | W8-5、W8-6（已完成） |
@@ -118,8 +118,8 @@
 | D33 | 用户与 AI 都可编辑日记；留版本；AI 修订需确认 | 已实现 | `Diary.swift`（`generatedBy`/`isUserEdited`/`memoryID`/全量版本表）+ `GRDBDiaryRepository` | `DiaryTests`(13) | W6-7（已完成） |
 | D34 | 日记第一人称记录共同经历/观察/感受/关系变化 | 已实现 | `V12DiaryStructure.swift`（`shared_experience`/`observation`/`feeling`/`relationship_change` + 确认标记，版本快照同步扩列）+ `Features/Diary/*` 列表与编辑界面 | `MigrationV12Tests`(9)、`DiaryTests`(13)，run `43680552034` | W6-7（已完成） |
 | D35 | 日记可成为长期记忆来源，重要变更需确认 | 已实现（自动沉淀） | `DiaryMemoryService.distill`：正文首段→情景候选→证据逐字筛查→写记忆/提案→回填 `memory_id`；已沉淀不重复 | `DiaryTests`(13)、`DiaryMemoryServiceTests`(5) | W6-7、W8-2（`87e19b9`） |
-| D36 | 动态表情/动作/情绪/互动动画，分阶段交付 | 已实现有证据（界面渲染未接） | `CharacterMood`（与 `character_states.mood_code` 对齐，未知值回落 neutral，可由 D37 `EmotionKind` 映射）+ `CharacterAction`/`CharacterAnimation`（时长/次数/缩放/幅度全部夹取，支持减弱动态效果）+ `CharacterPresentationPolicy`（精力 <0.25 入休息、高唤醒挥手、焦虑思考、低唤醒静立、亲和 <0.3 幅度减半、无随机确定性输出）+ `InteractionAnimationPolicy`（`ChatTurnPhase` 七态一一对应，进行中/待机循环、终态 ≤0.5s）+ `CharacterStateService`（默认态、单事务更新、状态历史留痕、幂等、空原因拒绝、越界夹取、可由 `EmotionState` 更新） | `CharacterPresentationTests`(15)、`CharacterStateServiceTests`(10)，run 43723798853 | W6-8、W9M（`cc7f91b`） |
-| D37 | 情绪/异议/拒绝/幽默；区分真实互动、推断、想象 | 已实现有证据（情绪状态数据源未接） | `DFCore/Persona/SelfExpression.swift`：`EpistemicStance`（observed/inferred/imagined，未知值按推断）+ `EpistemicDisclosure`（事实断言词只能用于真实、想象必须带框架词）+ `ExpressionStance`/`ExpressionPolicy`（拒绝须给理由、异议须说清分歧、幽默禁侮辱、任何态度禁情感施压）+ `EmotionState`（强度夹取 0–1、分档、语气引导）+ `SelfExpressionProtocol.systemFragment` 已接进 `ChatOrchestratorImpl` 每次请求的 system prompt；`memories.epistemic_status` 沿用三态取值 | `SelfExpressionTests`(18)，run 43714304218 | W6-9、W8-3（`ddadfdc`） |
+| D36 | 动态表情/动作/情绪/互动动画，分阶段交付 | 已实现（界面渲染已接；App 层未编译） | 纯逻辑与状态服务见 `cc7f91b`；本轮补 `CharacterProfileService`（无角色时补建内置角色、任意时刻只一个 `is_active=1`）+ `Features/Chat/CharacterPresenceView.swift`（表情色点、动作语义、循环呼吸、终态一次性强调、尊重减弱动态效果），已接入聊天页头部（`8eacbb6`、`e1c157c`） | `CharacterPresentationTests`(15)、`CharacterStateServiceTests`(10)、`CharacterProfileServiceTests`(5)，run 43732457414 | W6-8、W9M、W9R |
+| D37 | 情绪/异议/拒绝/幽默；区分真实互动、推断、想象 | 已实现（情绪数据源已接；App 层未编译） | 纯逻辑见 `ddadfdc`；本轮补 `EmotionSignal`（按用户原话规则推断难受/亲近/开心/着急，无线索按 0.2 步长衰减回平静，同输入同结果）+ `EmotionKind(mood:)` 反推 + `ChatOrchestratorDependencies.currentEmotion`（system prompt 改用 `promptFragment(emotion:)`，nil 时与旧版一致）+ App 每轮结束后推断并 `CharacterStateService.update(emotion:source:"chat")` 落库（`8eacbb6`） | `SelfExpressionTests`(18)、`EmotionSignalTests`(12)、`ChatOrchestratorEmotionTests`(3)，run 43732457414 | W6-9、W8-3、W9R |
 
 ### 3.5 第五轮（D38–D45）：迁移、备份、恢复、数据安全
 
@@ -128,7 +128,7 @@
 | D38 | AstrBot 完整迁移 + 自动分类/去重/关联/质检 + 报告 | 已实现 | `AstrBotImporter`（聊天/记忆/日记/人格/信件/读书笔记/关系账本）+ `AstrBotImportReport` + `AstrBotImportView` | `AstrBotImporterTests`(7) | W9-5（已完成） |
 | D39 | 无法识别数据进待处理区，禁止静默丢弃 | 已实现 | `astrbot_import_pending` + 15 类原因码 + 覆盖校验（`coverageProblems`） | `AstrBotImporterTests`(7) | W9-6（已完成） |
 | D40 | 迁移前后数量/记录/附件/时间/关联/完整性校验 + 回滚 | 已实现 | 源文件 SHA256 前后比对 + `astrbot_id_map` 精准回滚 + `legacyFingerprint` 校验 | `AstrBotImporterTests`(7) | W9-6（已完成） |
-| D41 | 本地/手动导出/授权外部云盘/多位置备份 | 部分实现 | 本地备份 + 导出加密容器（`fileExporter`）+ 授权外部目录（安全作用域书签，可选 iCloud Drive / 第三方网盘在「文件」中的位置）复制备份；厂商 OAuth SDK 仍在缺口 | `BackupServiceTests`(8)，commit `100c85d` | W9-2（导出/外部目录完成） |
+| D41 | 本地/手动导出/授权外部云盘/多位置备份 | 部分实现（多位置已完成；厂商 OAuth 仍阻塞） | 本地备份 + 导出加密容器（`fileExporter`）+ 授权外部目录（安全作用域书签）；本轮补多位置：`BackupLocationBook`（清单编解码、按 id/名称/书签去重、上限 5、旧版单目录一次性迁移、多位置结果文案）+ `BackupMirrorService.copyToAll`（逐位置复制、大小校验、单点失败不影响其他）+ 备份页位置列表与逐条结果（`fee06dc`） | `BackupServiceTests`(8)、`BackupLocationBookTests`(19)，run 43732457414 | W9-2、W9R（厂商 OAuth 需 App 注册与密钥，外部阻塞） |
 | D42 | 换机与重装恢复、范围选择、预览、兼容、空间检查 | 已实现（数据层） | `BackupService.importBackupFile`（加密容器/明文导入、密钥与未知表校验）+ `previewRestore` + 单事务恢复 + 自动安全备份 + `BackupCenterView` 从文件导入；真机换机流程待验 | `BackupServiceTests`(12) | W9-3（真机待验收） |
 | D43 | 保留数量、重要版本保护、按时间/版本/类型管理 | 已实现 | `BackupService` 保留策略（`keepCount`、重要版本不清理） | `BackupServiceTests`(8) | W9-2（已完成） |
 | D44 | 本地敏感数据加密、备份默认加密、用户控密钥、数据流向 | 已实现 | `BackupContainer`（AES-256-GCM）+ `KeychainBackupKeyStore` + 默认加密 | `BackupCryptoTests`(8)（AES 真机待验） | W9-1、W9-4（已完成） |
@@ -346,6 +346,7 @@
 | 批次 | 日期 | 结论 |
 |---|---|---|
 | R1 | 2026-11-15 | 首次建立 72 项逐条追溯；确认 10 项仅为工作包；缺口 7 项（阻塞 3、缺口 3、待确认 2）；v4_persona 代码完成待 CI |
+| R3 | 2026-11-15 | W9R：D16 云端语音通道、D36 角色在场渲染、D37 情绪数据源、D41 多位置备份补齐；72 项中 70 项有证据，剩 D41 厂商 OAuth（需 App 注册与密钥，外部阻塞）、D01/D02/D05/D58/D71 本地推理部分（暂缓）与真机验收 |
 
 ### R2 审查增量（2026-11-15）
 
@@ -365,7 +366,7 @@
 | 反思节奏与紧迫度 | W7-AI 自主（N-20 投递侧）、D13、D14、D68 | `DFCore/Autonomy/ReflectionCadence.swift`、`AutonomyGate.swift`、`DFData/AutonomyService.swift`、`ProactiveIntentService.swift` | `ReflectionCadenceTests`(21)、`AutonomyGateRhythmTests`(8)、`AutonomyServiceRhythmTests`(5) | 通过（`236cd8c`） |
 | 生成状态与历史分页 | D49、D52、D56 | `DFCore/Chat/ChatTurnPhase.swift`、`ChatOrchestrator.swift`、`DFData/ChatOrchestratorImpl.swift`、`App/Coordination/ConversationCoordinator.swift`、`Features/Chat/*` | `ChatTurnPhaseTests`(8)、`MessageDateJumpTests`(4)、`MessagePagingTests` | 通过（`236cd8c`）；App 编译未触发（无令牌） |
 
-**仍未闭环（不得标记完成）**：以第三节各条"状态"列为准。当前硬缺口是 N-18 本地推理内核（连带 D01/D03/D04/D05 本地部分）、N-17 真机验收；意图生成（N-20）已接线但依赖可用模型通道；次要缺口包括 D41 厂商 OAuth 云盘、D72 多设备恢复验收。D06 人格文件导入、D18 日记触发人格提案、D42 从文件导入备份、D10 预算与成本控制已实现并有单测（真机交互待验）。
+**仍未闭环（不得标记完成）**：以第三节各条"状态"列为准。当前硬缺口是 N-18 本地推理内核（连带 D01/D03/D04/D05 本地部分）、N-17 真机验收；意图生成（N-20）已接线但依赖可用模型通道；次要缺口只剩 D41 的厂商 OAuth SDK（需 App 注册与密钥，属外部权限）与 D72 多设备恢复验收。D06 人格文件导入、D18 日记触发人格提案、D42 从文件导入备份、D10 预算与成本控制已实现并有单测（真机交互待验）。W9R 之后 D16/D36/D37 已补齐全链路，D41 多位置备份已落地（`fee06dc`，run 43732457414）。
 
 **当前可交付性结论**：核心存储、业务规则、意图生成/闸门接线与 App 层编译均已具备可验证证据；**真机行为与本地推理仍未闭环**，本地推理内核（N-18）是 V2.0 完整性的硬缺口，未签名 IPA 不构成完整交付。
 
