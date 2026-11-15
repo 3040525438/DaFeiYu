@@ -70,8 +70,8 @@
 |---|---|---|---|---|---|
 | D01 | 纯本地模式尽可能支持全部核心功能，遵守 iOS 限制 | **暂缓（本地模型决策，ADR-08）** | 无本地推理层；本地模型注册表/迁移/接口保留不删 | — | W5-1（本阶段不投入，不计完成） |
 | D02 | 本地模型上下文长度由实测决定 | **暂缓（本地模型决策，ADR-08）** | — | — | W5-2（需真机，本阶段不投入） |
-| D03 | 不要求模型原生工具调用，应用层兼容 | 尚未开发 | — | — | W5-4 |
-| D04 | 结构化输出实现方式不限定 | 尚未开发 | — | — | W5-4 |
+| D03 | 不要求模型原生工具调用，应用层兼容 | 已实现有证据 | `DFCore/AI/ToolCall.swift`：`ToolDefinition`（必需/可选参数与类型）+ `ToolCallProtocol.parse`（```tool 代码块信封、name/tool 别名、未知工具拒绝、缺少必需参数拒绝、未声明参数拒绝、参数类型校验）+ `promptFragment`（无工具时返回空串，不污染提示词）；不执行任何副作用，由调用方按 `ToolInvocation` 决定 | `ToolCallTests`(14)，run 43714304218 | W5-4（`a4a1f1e`） |
+| D04 | 结构化输出实现方式不限定 | 已实现有证据 | `DFCore/AI/StructuredOutput.swift`：`JSONValue` 强类型 + `extractObject`（容忍代码块/前后说明/字符串内花括号/转义引号，未闭合返回 nil）+ `StructuredSchema`（必需/可选字段、类型、未声明字段）+ `parse(_:schema:)`；`ChatRequest.responseFormat` + `OpenAIWireCodec` 仅在声明时发送 `response_format`（Provider 不支持时仍可走文本提取） | `StructuredOutputTests`(17)、`ProviderRequestBodyTests`(4)，run 43714304218 | W5-4（`d0a8f5b`/`a4a1f1e`） |
 | D05 | 本地多模态第一版：文字/图片理解/ASR；不做 TTS | 部分实现（本地推理部分暂缓，ADR-08） | 端上 ASR（`SpeechTranscriber`）、Vision OCR、云端视觉通道（`ImageUnderstandingSheet`、`ChatImage`）；本地推理未做且本阶段不投入 | `ChatTurnImageTests`(4) | W4-1、W5-3（本地部分依赖 N-18，暂缓） |
 | D06 | 人格导入支持 AstrBot/JSON/MD/TXT | 已实现 | `persona_imports` 表 + `AstrBotImporter`；`PersonaFileParser`（JSON/MD/TXT，去重/截断/代码块跳过）+ `PersonaFileImportService`（只生成待审批提案，核心人格不受影响）+ `PersonaImportView` | `PersonaFileParserTests`(12)、`PersonaFileImportServiceTests`(6) | W6-4（完成） |
 | D07 | 外围人格可成长，留版本/查看/回退；核心不可自动改写 | 已实现 | `PersonaGrowthService`（提案/审批/版本/回退/指纹）+ `ApprovalCenterView` | `PersonaGrowthServiceTests`(9) | W6-2、W6-3（已完成） |
@@ -119,7 +119,7 @@
 | D34 | 日记第一人称记录共同经历/观察/感受/关系变化 | 已实现 | `V12DiaryStructure.swift`（`shared_experience`/`observation`/`feeling`/`relationship_change` + 确认标记，版本快照同步扩列）+ `Features/Diary/*` 列表与编辑界面 | `MigrationV12Tests`(9)、`DiaryTests`(13)，run `43680552034` | W6-7（已完成） |
 | D35 | 日记可成为长期记忆来源，重要变更需确认 | 已实现（自动沉淀） | `DiaryMemoryService.distill`：正文首段→情景候选→证据逐字筛查→写记忆/提案→回填 `memory_id`；已沉淀不重复 | `DiaryTests`(13)、`DiaryMemoryServiceTests`(5) | W6-7、W8-2（`87e19b9`） |
 | D36 | 动态表情/动作/情绪/互动动画，分阶段交付 | 部分实现 | v6 `character_*` / `character_states` / 表情表结构就位；动画未做 | `MigrationV6Tests` | W6-8 |
-| D37 | 情绪/异议/拒绝/幽默；区分真实互动、推断、想象 | 部分实现 | `memories.epistemic_status/source_kind`、`PromptComposer` | `PromptComposerTests` | W6-9、W8-3 |
+| D37 | 情绪/异议/拒绝/幽默；区分真实互动、推断、想象 | 已实现有证据（情绪状态数据源未接） | `DFCore/Persona/SelfExpression.swift`：`EpistemicStance`（observed/inferred/imagined，未知值按推断）+ `EpistemicDisclosure`（事实断言词只能用于真实、想象必须带框架词）+ `ExpressionStance`/`ExpressionPolicy`（拒绝须给理由、异议须说清分歧、幽默禁侮辱、任何态度禁情感施压）+ `EmotionState`（强度夹取 0–1、分档、语气引导）+ `SelfExpressionProtocol.systemFragment` 已接进 `ChatOrchestratorImpl` 每次请求的 system prompt；`memories.epistemic_status` 沿用三态取值 | `SelfExpressionTests`(18)，run 43714304218 | W6-9、W8-3（`ddadfdc`） |
 
 ### 3.5 第五轮（D38–D45）：迁移、备份、恢复、数据安全
 
@@ -169,7 +169,7 @@
 | D64 | 首启向导（可跳过非必要步骤） | 已实现 | `OnboardingView`（4 步，可跳过）+ `onboarding.completed.v1` + `RootView` 引导 | 编译期校验 | W10-1（已完成） |
 | D65 | 主题/背景/气泡/字体/头像 + 恢复默认 | 已实现有证据（App 编译待手动触发） | `ChatTheme`（主题/背景/气泡/字号/头像 + **appearance：跟随系统/浅色/深色**，旧 JSON 缺键回落、非法值归一）+ `RootView.preferredColorScheme` 全局应用 + `.chatThemeChanged` 广播 + 聊天页外观弹层 + 设置页外观入口（`AppearanceSettingsView`，含当前摘要与恢复默认），`5d2e6be` | `ChatThemeAppearanceTests`(5)、`ChatInteractionTests` 主题用例 | W2-7、W9D |
 | D66 | 存储分类展示、清理建议、空间预警、不自动删重要数据 | 已实现 | `DiagnosticsView`（数据库/附件/备份分类 + 空间预警）+ `DiagnosticsService.storageUsage`；不自动删除 | `DiagnosticsTests`(7) | W10-4（已完成） |
-| D67 | 升级前检查/备份/迁移/兼容/失败恢复/记录/回退 | 部分实现（版本兼容 + 迁移 + 审计 + 失败降级已完成；升级前自动备份与真机升级演练待补） | `UpgradeGuard`（全新/升级/已最新/拒绝四类计划、未知版本与降级拒绝、备份要求、状态机）+ `UpgradeRecordService`（running→succeeded/failed→rolled_back）+ `AppDatabase.upgradeOnLaunch/retryMigration`（先判断再迁移，拒绝时只读不迁移，全过程写 `upgrade_records`，早于 v7 的库跳过不伪造）（`67d51bc`） | `UpgradeGuardTests`(7)、`UpgradeRecordServiceTests`(6)、`MigrationSafetyTests` | W1-7、W9E |
+| D67 | 升级前检查/备份/迁移/兼容/失败恢复/记录/回退 | 已实现有证据（真机升级演练待执行） | `UpgradeGuard`（全新/升级/已最新/拒绝四类计划、未知版本与降级拒绝、备份要求、状态机）+ `UpgradeRecordService` + `AppDatabase.upgradeOnLaunch/retryMigration`（先判断再迁移，拒绝时只读不迁移，全过程写 `upgrade_records`）（`67d51bc`）；**升级前自动备份**：`PreUpgradeBackupPolicy`（是否备份/目录名安全化/保留清理纯逻辑）+ `PreUpgradeBackupService`（主库 + WAL/SHM 一起复制 + manifest.json + 保留最近 5 份）+ 启动升级前执行备份并登记 `backup_manifests(kind=pre_upgrade)`，`upgrade_records.pre_upgrade_backup_id` 与 `integrity_json` 记录结果；备份失败不阻断启动但留痕（`fc56e3f`/`76e6c9f`） | `UpgradeGuardTests`(7)、`UpgradeRecordServiceTests`(6)、`PreUpgradeBackupPolicyTests`(9)、`PreUpgradeBackupServiceTests`(7，含 v13→v14 真实升级自动备份与审计断言)，run 43714304218 | W1-7、W9E、W9H（`fc56e3f`） |
 | D68 | 自主程度分项控制、暂停、恢复默认、执行记录 | 已实现（数据层） | `AutonomyService.savePolicy/pause/resume/resetToDefault` + `autonomy_controls` + `autonomy_runs` | `testSavePolicyPersistsAndIsReadBack`、`testPauseBlocksThenResumeAllows`、`testResetToDefault` | W7-2 |
 | D69 | 权限按需申请、管理、状态说明、拒绝后替代方案 | 已实现有证据（App 编译待手动触发） | `PermissionAdvisor`（三类权限、状态归一、启动永不申请、仅首次使用可申请、拒绝→系统设置、系统限制不重复询问、每类用途与替代方案）+ `PermissionCenterView`（真实系统状态 + 按需申请 + 去系统设置）；设置页入口（`abf2940`） | `PermissionAdvisorTests`(8) | W10-2、W9D |
 | D70 | 版本号/更新日志/反馈/诊断/兼容/健康检查/风险提示 | 已实现有证据（App 编译待手动触发） | 版本号 + `ChangelogView` + `IntegrityChecker` 健康检查 + `DiagnosticsView` + `FeedbackReportBuilder`（只含版本与计数、描述截断、固定隐私声明）+ `FeedbackView`（预览/分享/复制）；设置页入口（`abf2940`） | `FeedbackReportTests`(5)、`DiagnosticsTests`(7) | W10-3、W9D |
