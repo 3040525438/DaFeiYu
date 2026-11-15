@@ -31,6 +31,9 @@ struct BackupCenterView: View {
     @State private var busy = false
     @State private var status: String?
     @State private var restoreCandidate: BackupManifest?
+    /// D72：跨设备/来源未知恢复的二次确认
+    @State private var showCrossDeviceConfirm = false
+    @State private var crossDeviceMessage = ""
     @State private var precheck: RestorePrecheck?
     @State private var showRestoreConfirm = false
     @State private var exportDocument: BackupExportDocument?
@@ -150,6 +153,14 @@ struct BackupCenterView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text(restoreMessage)
+        }
+        .alert("这是其他位置或设备的备份", isPresented: $showCrossDeviceConfirm) {
+            Button("整体替换本机数据", role: .destructive) {
+                Task { await restore(confirmedCrossDevice: true) }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text(crossDeviceMessage)
         }
         .fileExporter(
             isPresented: $showExporter,
@@ -359,16 +370,25 @@ struct BackupCenterView: View {
         }
     }
 
-    private func restore() async {
+    private func restore(confirmedCrossDevice: Bool = false) async {
         guard let candidate = restoreCandidate else { return }
         busy = true
         defer { busy = false }
         do {
-            let log = try await container.backupService.restore(manifestID: candidate.id)
+            let log = try await container.backupService.restore(
+                manifestID: candidate.id,
+                confirmedCrossDevice: confirmedCrossDevice
+            )
             status = log.status == "completed"
                 ? "恢复完成，已重建检索索引。"
                 : "恢复未完成：\(log.error ?? "未知原因")"
             await reload()
+        } catch BackupService.RestoreGuardError.confirmationRequired(let reason) {
+            // 跨设备 / 来源未知：必须由用户明确同意整体替换
+            crossDeviceMessage = reason
+            showCrossDeviceConfirm = true
+        } catch BackupService.RestoreGuardError.blocked(let reason) {
+            status = "无法恢复：\(reason)"
         } catch {
             status = "恢复失败（原数据未受影响）：\(error.localizedDescription)"
         }

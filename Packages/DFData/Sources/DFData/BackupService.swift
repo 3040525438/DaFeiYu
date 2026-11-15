@@ -51,6 +51,24 @@ public final class BackupService: @unchecked Sendable {
     private let now: @Sendable () -> Int64
     private let fileManager = FileManager.default
 
+    /// 本机安装标识在 `settings` 中的键（D72）
+    static let deviceIDKey = "device.install_id"
+
+    /// 恢复被拒绝或需要用户确认时抛出的错误（D72）
+    public enum RestoreGuardError: Error, Equatable, CustomStringConvertible {
+        /// 版本降级、空间不足、缺少保护备份等硬性拒绝
+        case blocked(String)
+        /// 跨设备或来源未知，必须用户明确确认
+        case confirmationRequired(String)
+
+        public var description: String {
+            switch self {
+            case .blocked(let reason): return reason
+            case .confirmationRequired(let reason): return reason
+            }
+        }
+    }
+
     public init(
         database: AppDatabase,
         keyStore: BackupKeyStoring,
@@ -110,8 +128,22 @@ public final class BackupService: @unchecked Sendable {
             appVersion: appVersion,
             createdAt: timestamp,
             tables: tables,
-            counts: counts
+            counts: counts,
+            sourceDeviceID: await deviceID()
         )
+    }
+
+    /// 本机安装标识（D72）：首次使用时生成并存入 `settings`，失败返回 nil（不阻塞备份）。
+    public func deviceID() async -> String? {
+        let settings = GRDBSettingsRepository(database: database)
+        if let existing = try? await settings.string(for: Self.deviceIDKey),
+           let trimmed = existing?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !trimmed.isEmpty {
+            return trimmed
+        }
+        let generated = UUID().uuidString
+        try? await settings.set(generated, for: Self.deviceIDKey)
+        return generated
     }
 
     // MARK: - 创建备份
@@ -332,6 +364,7 @@ public final class BackupService: @unchecked Sendable {
     public func restore(
         manifestID: String,
         mode: String = "replace",
+        confirmedCrossDevice: Bool = false,
         at millis: Int64? = nil
     ) async throws -> RestoreLog {
         let timestamp = millis ?? now()
@@ -342,6 +375,9 @@ public final class BackupService: @unchecked Sendable {
         guard precheck.isSpaceOK else { throw BackupError.insufficientSpace }
 
         let snapshot = try await readSnapshot(manifestID: manifestID)
+
+        // D72：跨设备 / 来源未知必须用户确认；版本与保护备份门禁在此统一判定
+        try await assertRestoreAllowed(snapshot: snapshot, confirmedCrossDevice: confirmedCrossDevice)
 
         // 恢复前必须留下安全备份：恢复失败或恢复结果不满意时可退回
         let safety = try await createBackup(
@@ -389,6 +425,30 @@ public final class BackupService: @unchecked Sendable {
     }
 
     // MARK: - 内部
+
+    /// 恢复门禁（D72）。
+    ///
+    /// `hasSafetyBackup` 传 true：紧随其后就会创建保护备份，创建失败会直接中止且不写任何业务数据。
+    private func assertRestoreAllowed(snapshot: BackupSnapshot, confirmedCrossDevice: Bool) async throws {
+        let facts = RestoreFacts(
+            backupDeviceID: snapshot.sourceDeviceID,
+            currentDeviceID: await deviceID(),
+            backupSchemaVersion: snapshot.schemaVersion,
+            currentSchemaVersion: database.currentSchemaVersion,
+            isSpaceOK: true,
+            hasSafetyBackup: true
+        )
+        switch RestoreOriginPolicy.decision(facts: facts) {
+        case .allowed:
+            return
+        case .blocked(let reason):
+            throw RestoreGuardError.blocked(reason)
+        case .requiresConfirmation(let reason):
+            guard confirmedCrossDevice else {
+                throw RestoreGuardError.confirmationRequired(reason)
+            }
+        }
+    }
 
     private func apply(snapshot: BackupSnapshot) async throws -> [String: Int] {
         let known = Set(Self.tableOrder)

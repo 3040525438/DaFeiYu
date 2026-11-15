@@ -87,6 +87,18 @@ public enum RestoreOriginPolicy {
         return backup == current ? .sameDevice : .otherDevice
     }
 
+    /// 结构版本兼容判定：与 `previewRestore` 保持一致——必须完全相等；
+    /// 全新安装（当前版本为 `none`/空）可以恢复任意备份。
+    public static func isSchemaCompatible(backup: String, current: String) -> Bool {
+        let normalizedBackup = backup.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedBackup.isEmpty else { return false }
+        let normalizedCurrent = current.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalizedCurrent.isEmpty || normalizedCurrent == "none" || normalizedCurrent == "unknown" {
+            return true
+        }
+        return normalizedBackup == current.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// 版本比较：只有 `a` 不旧于 `b` 才返回 true；无法解析时按"不可比"处理（保守拒绝）
     public static func isVersion(_ a: String, atLeast b: String) -> Bool {
         compareVersions(a, b) >= 0
@@ -94,9 +106,12 @@ public enum RestoreOriginPolicy {
 
     /// 完整判定
     public static func decision(origin: RestoreOrigin, facts: RestoreFacts) -> RestoreDecision {
-        guard isVersion(facts.currentSchemaVersion, atLeast: facts.backupSchemaVersion) else {
+        guard isSchemaCompatible(
+            backup: facts.backupSchemaVersion,
+            current: facts.currentSchemaVersion
+        ) else {
             return .blocked(
-                reason: "该备份由更新的 App 创建（结构版本 \(facts.backupSchemaVersion) 高于当前 \(facts.currentSchemaVersion)），请先升级 App 再恢复。"
+                reason: "该备份的结构版本（\(facts.backupSchemaVersion)）与当前 App（\(facts.currentSchemaVersion)）不一致，无法直接恢复；请使用创建该备份时对应的 App 版本。"
             )
         }
         guard facts.isSpaceOK else {

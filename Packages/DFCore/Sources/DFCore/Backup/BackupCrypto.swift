@@ -140,6 +140,8 @@ public struct BackupSnapshot: Codable, Sendable, Equatable {
     public var tables: [BackupTableSnapshot]
     /// 表名 → 行数（恢复预览与完整性核对）
     public var counts: [String: Int]
+    /// 产生该备份的设备标识（D72 跨设备恢复判定）；历史备份为 nil
+    public var sourceDeviceID: String?
 
     public init(
         format: Int = BackupSnapshot.currentFormat,
@@ -147,7 +149,8 @@ public struct BackupSnapshot: Codable, Sendable, Equatable {
         appVersion: String,
         createdAt: Int64,
         tables: [BackupTableSnapshot],
-        counts: [String: Int]
+        counts: [String: Int],
+        sourceDeviceID: String? = nil
     ) {
         self.format = format
         self.schemaVersion = schemaVersion
@@ -155,6 +158,7 @@ public struct BackupSnapshot: Codable, Sendable, Equatable {
         self.createdAt = createdAt
         self.tables = tables
         self.counts = counts
+        self.sourceDeviceID = sourceDeviceID
     }
 
     public var totalRows: Int { counts.values.reduce(0, +) }

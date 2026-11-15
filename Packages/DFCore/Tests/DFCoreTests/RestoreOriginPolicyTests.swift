@@ -60,19 +60,18 @@ final class RestoreOriginPolicyTests: XCTestCase {
             facts: facts(backupSchema: "v15_future", currentSchema: "v14_message_organization")
         )
         guard case .blocked(let reason) = decision else {
-            return XCTFail("备份结构更新时应拒绝，实际 \(decision)")
+            return XCTFail("备份结构不同应拒绝，实际 \(decision)")
         }
-        XCTAssertTrue(reason.contains("请先升级 App"))
+        XCTAssertTrue(reason.contains("不一致"))
         XCTAssertTrue(decision.isBlocked)
     }
 
-    func testOlderBackupSchemaIsAllowedOnSameDevice() {
-        XCTAssertEqual(
-            RestoreOriginPolicy.decision(
-                facts: facts(backupSchema: "v13_cost_ledger", currentSchema: "v14_message_organization")
-            ),
-            .allowed
+    func testOlderBackupSchemaIsAlsoBlocked() {
+        // 与 previewRestore 一致：结构版本必须完全相等，避免恢复缺表快照
+        let decision = RestoreOriginPolicy.decision(
+            facts: facts(backupSchema: "v13_cost_ledger", currentSchema: "v14_message_organization")
         )
+        XCTAssertTrue(decision.isBlocked)
     }
 
     func testFreshInstallCanRestoreAnyBackup() {
@@ -87,6 +86,10 @@ final class RestoreOriginPolicyTests: XCTestCase {
         guard case .requiresConfirmation = decision else {
             return XCTFail("全新安装恢复其他设备备份应要求确认，实际 \(decision)")
         }
+        XCTAssertTrue(RestoreOriginPolicy.isSchemaCompatible(backup: "v9_any", current: "none"))
+        XCTAssertTrue(RestoreOriginPolicy.isSchemaCompatible(backup: "v9_any", current: ""))
+        XCTAssertFalse(RestoreOriginPolicy.isSchemaCompatible(backup: "v14_x", current: "v13_y"))
+        XCTAssertTrue(RestoreOriginPolicy.isSchemaCompatible(backup: "v14_x", current: "v14_x"))
     }
 
     func testInsufficientSpaceIsBlocked() {
