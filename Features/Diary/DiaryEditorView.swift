@@ -1,5 +1,6 @@
 import SwiftUI
 import DFCore
+import DFData
 
 /// 日记编辑：正文 + 结构化记录（共同经历 / 观察 / 感受 / 关系变化）。
 /// 保存会追加一版全量快照；关系变化必须由用户勾选确认后才算生效。
