@@ -218,4 +218,26 @@ final class AttachmentReferenceServiceTests: XCTestCase {
         XCTAssertEqual(second.count, 1)
         XCTAssertTrue(Set(first.map(\.id)).isDisjoint(with: Set(second.map(\.id))), "分页不得重复")
     }
+
+    // MARK: - D27 按 id 取记录
+
+    func testRecordReturnsExistingAttachment() async throws {
+        let record = try await service.record(id: inUseID)
+        XCTAssertEqual(record?.id, inUseID)
+        XCTAssertEqual(record?.kind, "image")
+        XCTAssertEqual(record?.relPath, "ab/cd/sha-in-use.png")
+        XCTAssertNil(record?.deletedAt)
+    }
+
+    func testRecordReturnsSoftDeletedAttachment() async throws {
+        try await service.deleteAttachment(id: orphanID, at: 9000, force: false)
+        let record = try await service.record(id: orphanID)
+        XCTAssertNotNil(record, "软删附件仍可取到记录，供预览判断文件是否还在")
+        XCTAssertNotNil(record?.deletedAt)
+    }
+
+    func testRecordReturnsNilForUnknownID() async throws {
+        let record = try await service.record(id: "不存在")
+        XCTAssertNil(record)
+    }
 }

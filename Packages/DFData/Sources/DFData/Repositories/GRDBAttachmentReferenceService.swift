@@ -72,6 +72,26 @@ public struct GRDBAttachmentReferenceService: AttachmentReferenceService, Sendab
         }
     }
 
+    public func record(id: String) async throws -> AttachmentRecord? {
+        do {
+            return try await database.dbQueue.read { db in
+                guard let row = try Row.fetchOne(
+                    db,
+                    sql: """
+                    SELECT id, sha256, kind, rel_path, byte_size, mime,
+                           width, height, duration_ms, thumbnail_rel_path,
+                           created_at, deleted_at
+                    FROM attachments WHERE id = ?
+                    """,
+                    arguments: [id]
+                ) else { return nil }
+                return try Self.decodeRecord(row)
+            }
+        } catch let error as DatabaseError {
+            throw DFError.database(error.message ?? "数据库操作失败")
+        }
+    }
+
     public func deleteAttachment(id: String, at millis: Int64, force: Bool) async throws {
         do {
             try await database.write { db in

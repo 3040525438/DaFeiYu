@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import DFCore
 
 /// D57：附件库与清理。
@@ -15,6 +16,10 @@ final class AttachmentLibraryViewModel: ObservableObject {
     @Published private(set) var lastMessage: String?
     /// 待确认删除的附件
     @Published var pendingDelete: AttachmentLibraryItem?
+    /// D27：图片缩略图缓存（key = 附件 id），只存缩小后的图，不长期持有原图
+    @Published private(set) var thumbnails: [String: UIImage] = [:]
+    /// D27：正在预览的附件
+    @Published var previewing: AttachmentLibraryItem?
 
     private let container: AppContainer
 
@@ -101,6 +106,54 @@ final class AttachmentLibraryViewModel: ObservableObject {
     func clearLastMessage() {
         lastMessage = nil
     }
+
+    // MARK: - D27 原图与缩略图
+
+    /// 附件的磁盘绝对路径（预览、分享都用它）
+    func fileURL(for item: AttachmentLibraryItem) -> URL {
+        container.attachments.fileURL(forRelativePath: item.record.relPath)
+    }
+
+    /// 是否可预览原图：图片且文件仍在磁盘上
+    func canPreview(_ item: AttachmentLibraryItem) -> Bool {
+        guard item.record.kind == "image" else { return false }
+        return FileManager.default.fileExists(atPath: fileURL(for: item).path)
+    }
+
+    /// 是否可分享：磁盘文件存在即可（图片、语音、文件都支持）
+    func canShare(_ item: AttachmentLibraryItem) -> Bool {
+        FileManager.default.fileExists(atPath: fileURL(for: item).path)
+    }
+
+    /// 异步加载缩略图；失败不报错（界面回退到类型图标）
+    func loadThumbnailIfNeeded(_ item: AttachmentLibraryItem) async {
+        guard item.record.kind == "image" else { return }
+        guard thumbnails[item.id] == nil else { return }
+        let url = fileURL(for: item)
+        let size = Self.thumbnailSize
+        let image: UIImage? = await Task.detached(priority: .utility) {
+            guard let data = try? Data(contentsOf: url) else { return nil }
+            guard let full = UIImage(data: data) else { return nil }
+            return full.preparingThumbnail(of: size) ?? full
+        }.value
+        guard let image else { return }
+        thumbnails[item.id] = image
+    }
+
+    /// 文件名（列表与预览标题共用）
+    func fileName(_ item: AttachmentLibraryItem) -> String {
+        item.record.relPath.split(separator: "/").last.map(String.init) ?? item.record.id
+    }
+
+    func openPreview(_ item: AttachmentLibraryItem) {
+        guard canPreview(item) else {
+            errorText = "原图不在本机，可能已被清理"
+            return
+        }
+        previewing = item
+    }
+
+    private static let thumbnailSize = CGSize(width: 120, height: 120)
 
     // MARK: - 展示辅助
 

@@ -145,12 +145,12 @@ final class ProactiveConversationServiceTests: XCTestCase {
     }
 
     func testDailyLimitBlocksThirdConversation() async throws {
-        // 今天已建 2 个主动会话
-        _ = try await conversations.create(title: "话题一", kind: ProactiveConversationService.conversationKind, at: Self.now - 7_200_000)
-        _ = try await conversations.create(title: "话题二", kind: ProactiveConversationService.conversationKind, at: Self.now - 3_600_000)
+        // 今天已建 2 个主动会话（标题互不相关，避免被判为同主题）
+        _ = try await conversations.create(title: "去看牙医", kind: ProactiveConversationService.conversationKind, at: Self.now - 7_200_000)
+        _ = try await conversations.create(title: "周末露营", kind: ProactiveConversationService.conversationKind, at: Self.now - 3_600_000)
 
         let outcome = try await service.evaluateAndCreate(
-            candidate: candidate(title: "话题三", key: "topic:三")
+            candidate: candidate(title: "学吉他", key: "topic:吉他")
         )
         guard case .skipped(let reason, _) = outcome else {
             return XCTFail("达日上限应跳过，实际 \(outcome)")
@@ -161,12 +161,12 @@ final class ProactiveConversationServiceTests: XCTestCase {
 
     func testMinIntervalBlocksTooSoon() async throws {
         _ = try await conversations.create(
-            title: "话题一",
+            title: "去看牙医",
             kind: ProactiveConversationService.conversationKind,
             at: Self.now - 60 * 60_000
         )
         let outcome = try await service.evaluateAndCreate(
-            candidate: candidate(title: "全新话题", key: "topic:全新")
+            candidate: candidate(title: "学吉他", key: "topic:吉他")
         )
         guard case .skipped(let reason, _) = outcome else {
             return XCTFail("间隔不足应跳过，实际 \(outcome)")

@@ -70,6 +70,14 @@ struct AttachmentLibraryView: View {
         } message: {
             Text(deleteMessage)
         }
+        .fullScreenCover(item: $viewModel.previewing) { item in
+            AttachmentPreviewView(
+                item: item,
+                fileURL: viewModel.fileURL(for: item),
+                title: viewModel.fileName(item),
+                onClose: { viewModel.previewing = nil }
+            )
+        }
     }
 
     private var deleteBinding: Binding<Bool> {
@@ -158,41 +166,84 @@ struct AttachmentLibraryView: View {
     }
 
     private func row(_ item: AttachmentLibraryItem) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(DFColor.primarySoft)
-                .frame(width: 34, height: 34)
-                .overlay(
-                    Image(systemName: icon(item.record.kind))
-                        .font(.system(size: 14))
-                        .foregroundStyle(DFColor.primary)
-                )
+        Button {
+            if viewModel.canPreview(item) {
+                viewModel.openPreview(item)
+            }
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                thumbnail(item)
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(item.record.relPath.split(separator: "/").last.map(String.init) ?? item.record.id)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(DFColor.ink)
-                    .lineLimit(1)
-                Text("\(viewModel.kindText(item.record.kind)) · \(viewModel.sizeText(item.record.byteSize)) · \(Self.dateText(item.record.createdAt))")
-                    .font(.caption2)
-                    .foregroundStyle(DFColor.inkMuted)
-                HStack(spacing: 6) {
-                    Text(viewModel.referenceText(item))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(viewModel.fileName(item))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(DFColor.ink)
+                        .lineLimit(1)
+                    Text("\(viewModel.kindText(item.record.kind)) · \(viewModel.sizeText(item.record.byteSize)) · \(Self.dateText(item.record.createdAt))")
                         .font(.caption2)
-                        .foregroundStyle(item.isInUse ? DFColor.primary : DFColor.inkMuted)
-                    if item.record.isDeleted {
-                        Text("已删除")
+                        .foregroundStyle(DFColor.inkMuted)
+                    HStack(spacing: 6) {
+                        Text(viewModel.referenceText(item))
                             .font(.caption2)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(DFColor.surfaceAlt)
-                            .foregroundStyle(DFColor.inkMuted)
-                            .clipShape(Capsule())
+                            .foregroundStyle(item.isInUse ? DFColor.primary : DFColor.inkMuted)
+                        if item.record.isDeleted {
+                            Text("已删除")
+                                .font(.caption2)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(DFColor.surfaceAlt)
+                                .foregroundStyle(DFColor.inkMuted)
+                                .clipShape(Capsule())
+                        }
                     }
                 }
+                Spacer(minLength: 4)
+
+                if viewModel.canPreview(item) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(DFColor.inkMuted)
+                        .padding(.top, 8)
+                }
             }
-            Spacer(minLength: 4)
         }
+        .buttonStyle(.plain)
+        .task { await viewModel.loadThumbnailIfNeeded(item) }
+        .contextMenu {
+            if viewModel.canShare(item) {
+                ShareLink(item: viewModel.fileURL(for: item)) {
+                    Label("分享文件", systemImage: "square.and.arrow.up")
+                }
+            }
+            if !item.record.isDeleted {
+                Button(role: .destructive) {
+                    viewModel.pendingDelete = item
+                } label: {
+                    Label("删除", systemImage: "trash")
+                }
+            }
+        }
+    }
+
+    /// D27：图片显示缩略图，其余类型显示类型图标
+    @ViewBuilder
+    private func thumbnail(_ item: AttachmentLibraryItem) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(DFColor.primarySoft)
+            if let image = viewModel.thumbnails[item.id] {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            } else {
+                Image(systemName: icon(item.record.kind))
+                    .font(.system(size: 14))
+                    .foregroundStyle(DFColor.primary)
+            }
+        }
+        .frame(width: 34, height: 34)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private func icon(_ kind: String) -> String {

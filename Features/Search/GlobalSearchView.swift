@@ -12,11 +12,17 @@ struct GlobalSearchView: View {
 
     /// 打开会话并定位消息（由聊天页实现）
     private let onOpenMessage: (String, String) -> Void
+    /// D27：附件命中后预览原图所需的容器
+    private let container: AppContainer
 
     @State private var detail: GlobalSearchDetail?
+    /// D27：待预览的附件
+    @State private var previewingAttachment: AttachmentLibraryItem?
+    @State private var attachmentNotice: String?
 
     init(container: AppContainer, onOpenMessage: @escaping (String, String) -> Void) {
         _viewModel = StateObject(wrappedValue: GlobalSearchViewModel(container: container))
+        self.container = container
         self.onOpenMessage = onOpenMessage
     }
 
@@ -38,6 +44,19 @@ struct GlobalSearchView: View {
             }
             .sheet(item: $detail) { item in
                 GlobalSearchDetailSheet(detail: item)
+            }
+            .fullScreenCover(item: $previewingAttachment) { item in
+                AttachmentPreviewView(
+                    item: item,
+                    fileURL: container.attachments.fileURL(forRelativePath: item.record.relPath),
+                    title: item.record.relPath.split(separator: "/").last.map(String.init) ?? item.record.id,
+                    onClose: { previewingAttachment = nil }
+                )
+            }
+            .alert("附件", isPresented: attachmentNoticeBinding) {
+                Button("知道了", role: .cancel) { attachmentNotice = nil }
+            } message: {
+                Text(attachmentNotice ?? "")
             }
         }
         .task(id: viewModel.query) {
@@ -165,6 +184,15 @@ struct GlobalSearchView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            if hit.domain == .attachment {
+                Button {
+                    previewAttachment(hit)
+                } label: {
+                    Label("查看原图", systemImage: "photo")
+                }
+            }
+        }
     }
 
     private func sourceText(_ hit: UnifiedSearchHit) -> String {
@@ -199,6 +227,38 @@ struct GlobalSearchView: View {
         case .memory, .diary:
             Task { detail = await viewModel.detail(for: hit) }
         }
+    }
+
+    /// D27 / I-02：附件命中直接预览原图（不经过会话定位）。
+    private func previewAttachment(_ hit: UnifiedSearchHit) {
+        Task {
+            do {
+                guard let record = try await container.attachmentReferences.record(id: hit.targetID),
+                      record.kind == "image" else {
+                    attachmentNotice = "这个附件不是图片，或已经不存在"
+                    return
+                }
+                let url = container.attachments.fileURL(forRelativePath: record.relPath)
+                guard FileManager.default.fileExists(atPath: url.path) else {
+                    attachmentNotice = "原图不在本机，可能已被清理"
+                    return
+                }
+                previewingAttachment = AttachmentLibraryItem(
+                    record: record,
+                    totalReferences: 0,
+                    liveReferences: 0
+                )
+            } catch {
+                attachmentNotice = "读取附件失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private var attachmentNoticeBinding: Binding<Bool> {
+        Binding(
+            get: { attachmentNotice != nil },
+            set: { if !$0 { attachmentNotice = nil } }
+        )
     }
 
     private func emptyState(icon: String, title: String, message: String) -> some View {

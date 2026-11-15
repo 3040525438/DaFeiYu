@@ -82,6 +82,9 @@ public protocol AttachmentReferenceService: Sendable {
     /// `includeDeleted == false` 时只返回未软删附件。
     func library(includeDeleted: Bool, limit: Int, offset: Int) async throws -> [AttachmentLibraryItem]
 
+    /// D27：按 id 取附件记录（搜索命中后预览原图用）。不存在或已硬删返回 nil。
+    func record(id: String) async throws -> AttachmentRecord?
+
     /// 删除附件（软删）。被引用且 `force == false` 时抛 `inUse`。
     func deleteAttachment(id: String, at millis: Int64, force: Bool) async throws
 

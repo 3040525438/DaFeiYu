@@ -73,11 +73,13 @@ public enum NewConversationPolicy {
 
     /// 标题规范化：去换行与连续空白、去首尾标点、截断。
     ///
+    /// 换行与制表符直接删除（中文标题里换行不承担空格语义），
+    /// 其余连续空格折叠为一个。
     /// - Returns: 不足 `minTitleLength` 时返回空串（表示没有可用话题）
     public static func normalizeTitle(_ raw: String) -> String {
         let flattened = raw
-            .replacingOccurrences(of: "\r", with: " ")
-            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: "")
+            .replacingOccurrences(of: "\n", with: "")
             .replacingOccurrences(of: "\t", with: " ")
         let collapsed = flattened
             .split(whereSeparator: { $0.isWhitespace })
@@ -100,14 +102,35 @@ public enum NewConversationPolicy {
         return ""
     }
 
-    /// 标题是否指向同一主题：规范化后相等，或一方完整包含另一方（长度均达下限）。
+    /// 标题是否指向同一主题。
+    ///
+    /// 依次判断：完全相等 → 一方包含另一方 → 存在长度 ≥ 2 的公共实词片段。
+    /// 公共片段用于识别「聊聊体检」与「体检结果」这类同主题的不同说法；
+    /// 停用词（"今天""我们"等）不计入，避免把任意两句话判成同一话题。
     public static func titlesOverlap(_ lhs: String, _ rhs: String) -> Bool {
         let a = normalizeTitle(lhs)
         let b = normalizeTitle(rhs)
         guard !a.isEmpty, !b.isEmpty else { return false }
         if a == b { return true }
         guard min(a.count, b.count) >= minTitleLength else { return false }
-        return a.contains(b) || b.contains(a)
+        if a.contains(b) || b.contains(a) { return true }
+        return sharesTopicFragment(a, b)
+    }
+
+    /// 是否存在长度 ≥ 2 的公共非停用词片段
+    static func sharesTopicFragment(_ a: String, _ b: String) -> Bool {
+        let short = Array(a.count <= b.count ? a : b)
+        let long = a.count <= b.count ? b : a
+        guard short.count >= minTitleLength else { return false }
+        for length in stride(from: short.count, through: minTitleLength, by: -1) {
+            guard short.count >= length else { continue }
+            for start in 0...(short.count - length) {
+                let piece = String(short[start..<(start + length)])
+                guard !stopWords.contains(piece) else { continue }
+                if long.contains(piece) { return true }
+            }
+        }
+        return false
     }
 
     /// 核心决策。
@@ -174,6 +197,16 @@ public enum NewConversationPolicy {
     )
     /// 连续重复的句末标点折叠为一个，避免标题读起来像噪声
     private static let repeatedPunctuation: [Character] = ["。", "！", "？", "…", "!", "?", "."]
+
+    /// 判同主题时忽略的常见虚词 / 时间词，避免"今天怎么样"与"今天累吗"被判成同一话题
+    private static let stopWords: Set<String> = [
+        "我的", "你的", "我们", "你们", "他们", "自己",
+        "今天", "明天", "昨天", "现在", "最近", "刚才",
+        "这个", "那个", "一个", "什么", "怎么", "为什么",
+        "可以", "还是", "就是", "不是", "真的", "有点",
+        "一下", "然后", "因为", "所以", "但是", "如果",
+        "聊聊", "说说", "关于", "一些", "事情"
+    ]
 
     private static func collapseRepeatedPunctuation(_ text: String) -> String {
         var result = ""
