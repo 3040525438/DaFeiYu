@@ -145,7 +145,8 @@ final class HighAutonomyAcceptanceTests: XCTestCase {
         XCTAssertEqual(enqueued.kind, ProactiveTrigger.message.rawValue)
 
         // 2) 认领并生成意图
-        let claimed = try await autonomy.claim(taskID: enqueued.id)
+        let claimedMaybe = try await autonomy.claim(taskID: enqueued.id)
+        let claimed = try XCTUnwrap(claimedMaybe, "任务应可被认领")
         let proposal = try await intents.generate(
             trigger: .message,
             context: context(),
@@ -264,7 +265,9 @@ final class HighAutonomyAcceptanceTests: XCTestCase {
 
         let task = try await scheduler.enqueueNewConversationIfDue()
         XCTAssertNotNil(task, "开启分项且久未说话时应排新会话评估")
-        try await autonomy.claim(taskID: task?.id ?? "")
+        if let task {
+            _ = try await autonomy.claim(taskID: task.id)
+        }
 
         let conversationService = ProactiveConversationService(
             database: database,
