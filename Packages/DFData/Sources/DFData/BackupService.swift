@@ -237,10 +237,13 @@ public final class BackupService: @unchecked Sendable {
         at millis: Int64? = nil
     ) async throws -> BackupManifest {
         let timestamp = millis ?? now()
+        // 安全作用域书签只在 Apple 平台可用；Linux CI 直接按普通文件读取
+        #if canImport(Darwin)
         let accessing = url.startAccessingSecurityScopedResource()
         defer {
             if accessing { url.stopAccessingSecurityScopedResource() }
         }
+        #endif
 
         let data = try Data(contentsOf: url)
         guard !data.isEmpty else { throw BackupCipherError.truncatedContainer }
