@@ -118,7 +118,13 @@ struct DiagnosticsView: View {
         guard !isWorking else { return }
         isWorking = true
         defer { isWorking = false }
-        let current = report ?? (await container.diagnostics.buildReport())
+        // `??` 右侧是 autoclosure，不能直接放 await
+        let current: DiagnosticReport
+        if let report {
+            current = report
+        } else {
+            current = await container.diagnostics.buildReport()
+        }
         report = current
         do {
             exportURL = try container.diagnostics.write(current)

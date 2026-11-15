@@ -36,7 +36,7 @@ struct DiagnosticsService: Sendable {
 
         var notes: [String] = []
         if let check {
-            if !check.healthy { notes.append("完整性检查未通过：\(check.databaseCheck)") }
+            if !check.isHealthy { notes.append("完整性检查未通过：\(check.databaseCheck)") }
             if !check.missingAttachmentFiles.isEmpty {
                 notes.append("缺失附件文件 \(check.missingAttachmentFiles.count) 个")
             }

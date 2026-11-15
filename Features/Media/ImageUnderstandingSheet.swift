@@ -172,8 +172,13 @@ struct ImageUnderstandingSheet: View {
 
     private func analyze() async {
         guard let attachmentID, let imageData else { return }
-        if !(try await container.privacy.isGranted(.cloudModel)) {
-            message = "当前未授权云端模型。请到「设置 → 隐私与安全 → 授权记录」开启，或稍后用本地模型。"
+        do {
+            guard try await container.privacy.isGranted(.cloudModel) else {
+                message = "当前未授权云端模型。请到「设置 → 隐私与安全 → 授权记录」开启，或稍后用本地模型。"
+                return
+            }
+        } catch {
+            message = "授权检查失败：\(error.localizedDescription)"
             return
         }
         busy = true

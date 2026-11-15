@@ -143,10 +143,15 @@ struct SettingsView: View {
                     modelRow(config)
                 }
             }
+            NavigationLink {
+                LocalModelsView()
+            } label: {
+                Label("本地模型文件", systemImage: "internaldrive")
+            }
         } header: {
             sectionHeader("模型配置", icon: "cpu")
         } footer: {
-            Text("密钥保存在系统 Keychain，不写入数据库，也不会随备份导出。")
+            Text("密钥保存在系统 Keychain，不写入数据库，也不会随备份导出。本地模型只管理文件与下载任务，推理内核尚未接入。")
         }
     }
 

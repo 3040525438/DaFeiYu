@@ -175,6 +175,23 @@ final class AppContainer: ObservableObject {
         )
     }
 
+    /// 本地模型文件目录（W5 / D58）
+    var localModelsDirectory: URL {
+        let directory = database.paths.workspace.appendingPathComponent("Models", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    /// 本地模型下载器（W5 / D58–D61）：断点续传 + 校验和 + 仅 Wi-Fi。
+    func makeLocalModelDownloader() -> LocalModelDownloader {
+        LocalModelDownloader(
+            repository: localModels,
+            fetcher: URLSessionLocalModelFetcher(),
+            network: WiFiOnlyNetworkGate(),
+            rootDirectory: localModelsDirectory
+        )
+    }
+
     var schemaVersion: String {
         database.currentSchemaVersion
     }
