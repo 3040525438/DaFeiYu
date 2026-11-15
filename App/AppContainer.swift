@@ -166,6 +166,15 @@ final class AppContainer: ObservableObject {
         database.paths.root.path
     }
 
+    /// 诊断包与存储分类（W10-3）
+    var diagnostics: DiagnosticsService {
+        DiagnosticsService(
+            database: database,
+            integrity: integrityChecker,
+            appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
+        )
+    }
+
     var schemaVersion: String {
         database.currentSchemaVersion
     }
