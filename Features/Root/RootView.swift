@@ -8,6 +8,8 @@ struct RootView: View {
     @State private var selection: Int = 0
     @State private var showOnboarding = false
     @State private var didBootstrap = false
+    /// D65：界面外观模式（system / light / dark）
+    @State private var appearanceMode: String = "system"
 
     var body: some View {
         ZStack {
@@ -18,12 +20,16 @@ struct RootView: View {
             }
         }
         .animation(.easeInOut(duration: 0.18), value: lock.isLocked)
+        .preferredColorScheme(preferredScheme)
         .task { await bootstrap() }
         .onChange(of: scenePhase) { _, phase in
             Task { await lock.handle(phase: phase) }
         }
         .onReceive(NotificationCenter.default.publisher(for: .privacySettingsChanged)) { _ in
             Task { await lock.reload() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .chatThemeChanged)) { _ in
+            Task { await reloadAppearance() }
         }
         .fullScreenCover(isPresented: $showOnboarding) {
             OnboardingView {
@@ -84,11 +90,26 @@ struct RootView: View {
 
     private func bootstrap() async {
         await lock.prepare(container)
+        await reloadAppearance()
         guard !didBootstrap else { return }
         didBootstrap = true
         let completed = (try? await container.settings.string(for: "onboarding.completed.v1")) == "1"
         if !completed {
             showOnboarding = true
         }
+    }
+
+    /// D65：`nil` 交给系统决定，其余显式覆盖整个 App 的明暗。
+    private var preferredScheme: ColorScheme? {
+        switch appearanceMode {
+        case "light": return .light
+        case "dark": return .dark
+        default: return nil
+        }
+    }
+
+    private func reloadAppearance() async {
+        let theme = (try? await container.chatTheme.load()) ?? .default
+        appearanceMode = theme.normalized().appearance
     }
 }

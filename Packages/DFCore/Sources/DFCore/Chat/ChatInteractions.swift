@@ -139,6 +139,8 @@ public struct ChatTheme: Codable, Sendable, Equatable {
     public static let backgrounds = ["cream", "plain", "dark"]
     public static let bubbleStyles = ["bubble", "plain"]
     public static let avatarStyles = ["fish", "initial"]
+    /// D65：界面外观模式（跟随系统 / 浅色 / 深色）
+    public static let appearances = ["system", "light", "dark"]
     public static let fontScaleRange: ClosedRange<Double> = 0.85...1.3
 
     public var themeID: String
@@ -146,13 +148,16 @@ public struct ChatTheme: Codable, Sendable, Equatable {
     public var bubbleStyle: String
     public var fontScale: Double
     public var avatarStyle: String
+    /// 界面外观；`system` 表示跟随系统
+    public var appearance: String
 
     public static let `default` = ChatTheme(
         themeID: "classic",
         background: "cream",
         bubbleStyle: "bubble",
         fontScale: 1.0,
-        avatarStyle: "fish"
+        avatarStyle: "fish",
+        appearance: "system"
     )
 
     public init(
@@ -160,13 +165,35 @@ public struct ChatTheme: Codable, Sendable, Equatable {
         background: String,
         bubbleStyle: String,
         fontScale: Double,
-        avatarStyle: String
+        avatarStyle: String,
+        appearance: String = "system"
     ) {
         self.themeID = themeID
         self.background = background
         self.bubbleStyle = bubbleStyle
         self.fontScale = fontScale
         self.avatarStyle = avatarStyle
+        self.appearance = appearance
+    }
+
+    /// 旧版本存的是没有 `appearance` 字段的 JSON：缺键时回落"跟随系统"，不判坏数据。
+    private enum CodingKeys: String, CodingKey {
+        case themeID
+        case background
+        case bubbleStyle
+        case fontScale
+        case avatarStyle
+        case appearance
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        themeID = try container.decode(String.self, forKey: .themeID)
+        background = try container.decode(String.self, forKey: .background)
+        bubbleStyle = try container.decode(String.self, forKey: .bubbleStyle)
+        fontScale = try container.decode(Double.self, forKey: .fontScale)
+        avatarStyle = try container.decode(String.self, forKey: .avatarStyle)
+        appearance = try container.decodeIfPresent(String.self, forKey: .appearance) ?? "system"
     }
 
     /// 逐字段校验：非法枚举值回落默认，字号夹取到合法区间，NaN 视为默认。
@@ -176,6 +203,7 @@ public struct ChatTheme: Codable, Sendable, Equatable {
         if !Self.backgrounds.contains(copy.background) { copy.background = Self.default.background }
         if !Self.bubbleStyles.contains(copy.bubbleStyle) { copy.bubbleStyle = Self.default.bubbleStyle }
         if !Self.avatarStyles.contains(copy.avatarStyle) { copy.avatarStyle = Self.default.avatarStyle }
+        if !Self.appearances.contains(copy.appearance) { copy.appearance = Self.default.appearance }
         if !copy.fontScale.isFinite {
             copy.fontScale = Self.default.fontScale
         } else {

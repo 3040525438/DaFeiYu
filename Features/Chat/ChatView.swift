@@ -790,6 +790,12 @@ struct ThemeSettingsSheet: View {
         NavigationStack {
             Form {
                 Section("主题") {
+                    Picker("外观", selection: $draft.appearance) {
+                        Text("跟随系统").tag("system")
+                        Text("浅色").tag("light")
+                        Text("深色").tag("dark")
+                    }
+                    .pickerStyle(.segmented)
                     Picker("主题", selection: $draft.themeID) {
                         Text("经典").tag("classic")
                         Text("暖调").tag("warm")

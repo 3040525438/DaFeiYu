@@ -500,6 +500,7 @@ final class ChatViewModel: ObservableObject {
         do {
             try await container.chatTheme.save(theme)
             self.theme = theme.normalized()
+            NotificationCenter.default.post(name: .chatThemeChanged, object: nil)
         } catch {
             errorText = Self.interactionMessage(error)
         }
@@ -508,6 +509,7 @@ final class ChatViewModel: ObservableObject {
     func resetTheme() async {
         do {
             theme = try await container.chatTheme.reset()
+            NotificationCenter.default.post(name: .chatThemeChanged, object: nil)
         } catch {
             errorText = Self.interactionMessage(error)
         }
@@ -1063,4 +1065,9 @@ final class ChatViewModel: ObservableObject {
             return "生成失败，请稍后重试"
         }
     }
+}
+
+extension Notification.Name {
+    /// D65：外观设置变更；RootView 据此刷新首选明暗，其他页面可据此重载主题。
+    static let chatThemeChanged = Notification.Name("dafeiyu.chat.theme.changed")
 }

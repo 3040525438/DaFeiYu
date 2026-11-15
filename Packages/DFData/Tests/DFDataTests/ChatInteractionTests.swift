@@ -225,6 +225,7 @@ final class ChatInteractionTests: XCTestCase {
         var theme = ChatTheme.default
         theme.themeID = "night"
         theme.fontScale = 1.2
+        theme.appearance = "dark"
         try await store.save(theme)
         let loaded = try await store.load()
         XCTAssertEqual(loaded, theme)

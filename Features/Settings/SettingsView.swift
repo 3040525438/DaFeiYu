@@ -22,6 +22,7 @@ struct SettingsView: View {
         NavigationStack {
             List {
                 profileSection
+                appearanceSection
                 environmentSection
                 modelSection
                 personaSection
@@ -113,6 +114,20 @@ struct SettingsView: View {
     private var appVersion: String {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
         return "v\(version)"
+    }
+
+    private var appearanceSection: some View {
+        Section {
+            NavigationLink {
+                AppearanceSettingsView()
+            } label: {
+                Label("外观", systemImage: "paintbrush")
+            }
+        } header: {
+            sectionHeader("外观", icon: "paintpalette")
+        } footer: {
+            Text("浅色 / 深色 / 跟随系统、聊天背景、气泡样式、字号与头像；可一键恢复默认。")
+        }
     }
 
     private var environmentSection: some View {
