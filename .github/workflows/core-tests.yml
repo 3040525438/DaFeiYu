@@ -4,9 +4,12 @@ name: core-tests
 # 避免消耗昂贵的 macOS 构建额度。
 on:
   push:
-    branches: ['**']
+    branches: ['**', '!ci-logs']
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   test:
@@ -32,7 +35,9 @@ jobs:
         run: swift test --package-path Packages/DFAI
 
       - name: DFData 单元测试
-        # 失败时把尾部日志写进 Job Summary，便于在无登录环境下定位失败用例
+        # 失败时把尾部日志写进 Job Summary / ci-logs 分支，便于无登录环境定位失败用例
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
           swift test --package-path Packages/DFData 2>&1 | tee /tmp/dfdata.log
@@ -43,6 +48,15 @@ jobs:
               tail -n 150 /tmp/dfdata.log
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
+            # 同时把失败日志推到 ci-logs 分支，便于在无登录环境下定位（该分支已被 on.push 排除）
+            git config --global user.name "ci-log"
+            git config --global user.email "ci-log@users.noreply.github.com"
+            git checkout -q --orphan ci-logs
+            git rm -rq --cached . >/dev/null 2>&1 || true
+            cp /tmp/dfdata.log ./dfdata-failure.log
+            git add -f dfdata-failure.log
+            git commit -q -m "ci: DFData 失败日志 ${GITHUB_SHA}"
+            git push -q --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ci-logs
           fi
           exit "$status"
 
