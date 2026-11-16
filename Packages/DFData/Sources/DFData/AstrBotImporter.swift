@@ -749,7 +749,8 @@ extension AstrBotImporter {
                     plan.conversations.append(
                         PlannedConversation(
                             id: conversationID,
-                            title: "\(options.conversationTitlePrefix) · \(platform)",
+                            // 带上首条消息日期：同一平台可能有多个历史会话，只看"迁移 · QQ"无法区分
+                            title: "\(options.conversationTitlePrefix) · \(platform) · \(LocalDay.dayKey(millis: createdAt))",
                             createdAt: createdAt,
                             updatedAt: createdAt
                         )
@@ -1727,6 +1728,22 @@ extension AstrBotImporter {
                 text: message.text
             )
             try map(db, batchID: batchID, kind: .message, sourceID: message.id, targetID: message.id, at: now)
+        }
+
+        // 会话时间对齐：导入或补齐消息后把 updated_at 提到该会话最后一条消息的时间。
+        // 否则会话列表按 updated_at 排序会把导入会话压到最底部，看起来像"没导入"。
+        for conversation in plan.conversations {
+            try db.execute(
+                sql: """
+                UPDATE conversations
+                SET updated_at = max(updated_at, COALESCE(
+                    (SELECT max(m.created_at) FROM messages m
+                      WHERE m.conversation_id = conversations.id AND m.deleted_at IS NULL),
+                    updated_at))
+                WHERE id = ?
+                """,
+                arguments: [conversation.id]
+            )
         }
 
         // 记忆

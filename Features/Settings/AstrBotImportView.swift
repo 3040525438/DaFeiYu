@@ -311,7 +311,7 @@ struct AstrBotImportView: View {
             } else {
                 result = report
                 preview = nil
-                message = "正式导入完成：批次 \(report.batchID)"
+                message = "正式导入完成：批次 \(report.batchID)。\(report.counts.messagesNew) 条历史消息已写入，回到聊天页 → 会话列表可看到「AstrBot 迁移」会话（按首条消息日期命名）。"
             }
             await reload()
         } catch {

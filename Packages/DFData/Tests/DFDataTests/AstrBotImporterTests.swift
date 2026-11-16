@@ -371,6 +371,41 @@ final class AstrBotImporterTests: XCTestCase {
         XCTAssertFalse(report.sourceHash.isEmpty)
     }
 
+    // MARK: - 导入后可见性（历史聊天必须真的能进会话）
+
+    /// 真机反馈"导入的历史聊天不显示"：这里从仓储层完整走一遍
+    /// 预演→正式导入→会话列表→消息分页，确认历史确实能被 UI 读到。
+    func testImportedConversationsAreVisibleInActiveListAndMessagePage() async throws {
+        let database = try makeDatabase("visible")
+        let importer = AstrBotImporter(database: database)
+        let source = try makeSources()
+
+        let report = try await importer.run(source: source, options: AstrBotImportOptions(isDryRun: false))
+        XCTAssertEqual(report.status, .succeeded)
+
+        // 1) 会话列表（active）必须能取到导入会话
+        let admin = GRDBConversationAdminRepository(database: database)
+        let active = try await admin.list(.active)
+        let imported = try XCTUnwrap(
+            active.first { $0.kind == "imported" },
+            "导入会话必须出现在 active 列表，实际：\(active.map { "\($0.id)/\($0.kind)" })"
+        )
+        XCTAssertEqual(imported.messageCount, 6)
+
+        // 2) 进入会话后的首屏分页必须能取到历史消息，且保持原始时间升序
+        let pages = GRDBMessageRepository(database: database)
+        let page = try await pages.page(in: imported.id, before: nil, limit: 100)
+        XCTAssertEqual(page.items.count, 6)
+        XCTAssertEqual(page.items.map(\.createdAt), page.items.map(\.createdAt).sorted(), "历史消息必须按原始时间升序")
+        XCTAssertTrue(page.items.allSatisfy { $0.origin == .imported })
+        XCTAssertTrue(page.items.allSatisfy { $0.createdAt > 0 })
+
+        // 3) 会话更新时间必须对齐最后一条消息，避免列表把它压到最底部
+        let lastTime = try XCTUnwrap(page.items.last?.createdAt)
+        XCTAssertEqual(imported.updatedAt, lastTime)
+        XCTAssertEqual(imported.lastMessageAt, lastTime)
+    }
+
     // MARK: - 待处理区
 
     func testUnknownRowsLandInPendingWithRawJSON() async throws {

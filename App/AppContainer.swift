@@ -341,7 +341,7 @@ final class AppContainer: ObservableObject {
         }
         let ownerToken = UUID()
         let orchestrator = ChatOrchestratorImpl(
-            dependencies: makeOrchestratorDependencies(),
+            dependencies: makeOrchestratorDependencies(conversationID: conversationID),
             pageToken: ownerToken
         )
         let coordinator = ConversationCoordinator(
@@ -360,7 +360,7 @@ final class AppContainer: ObservableObject {
     /// 页面不再创建编排器，也不持有任何 owner token。
     ///
     /// 闭包只捕获 Sendable 的仓储/存储值，不捕获 `self`，避免把非 Sendable 的容器带进并发域。
-    func makeOrchestratorDependencies() -> ChatOrchestratorDependencies {
+    func makeOrchestratorDependencies(conversationID: String? = nil) -> ChatOrchestratorDependencies {
         let modelConfigs = self.modelConfigs
         let personas = self.personas
         let secureStore = self.secureStore
@@ -368,8 +368,8 @@ final class AppContainer: ObservableObject {
         // D36 / D37：角色与状态（闭包只捕获服务值，不捕获容器）
         let charactersService = self.characters
         let statesService = self.characterStates
-        // 聊天上下文里的相关记忆检索（L4）
-        let memoryRepo = self.memories
+        // 记忆召回兜底：泛问句时补日记 / 高显著度记忆 / 跨会话历史
+        let recall = RecallContextBuilder(database: self.database, memories: self.memories, diary: self.diary)
         // 回合后置：记忆抽取（W8-3）。关掉开关即完全跳过，不影响聊天。
         let extraction = MemoryExtractionCoordinator(
             processing: memoryProcessing,
@@ -426,16 +426,14 @@ final class AppContainer: ObservableObject {
             },
             // L3：注入本地时间，模型自身没有系统时钟
             currentStateText: { Self.localStateText() },
-            // L4：按本轮输入检索相关记忆，命中才注入
+            // L4：先按本轮输入检索；命中为空或问句在问过去时，兜底补日记 / 重要记忆 / 跨会话历史
             retrieveMemories: { query, limit in
-                guard let records = try? await memoryRepo.search(query: query, scope: nil, limit: limit) else {
-                    return []
-                }
-                return records.map { record in
-                    let text = record.content.isEmpty ? record.title : record.content
-                    let tag = record.type.isEmpty ? "记忆" : record.type
-                    return "[\(tag)] \(text)"
-                }
+                await recall.recall(
+                    query: query,
+                    currentConversationID: conversationID,
+                    now: Clock.nowMillis(),
+                    limit: max(limit, 12)
+                )
             },
             rules: PromptComposer.defaultRules,
             limitGroups: 20,
@@ -471,13 +469,9 @@ final class AppContainer: ObservableObject {
 
     // MARK: - D10 聊天预算接线
 
-    /// L3 当前状态文本：模型没有系统时钟，必须显式告诉它"现在几点、星期几"。
+    /// L3 当前状态文本：模型没有系统时钟，必须显式告诉它"现在几点、星期几、今天/昨天是哪天"。
     static func localStateText(now: Date = Date(), timeZone: TimeZone = .current) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = timeZone
-        formatter.dateFormat = "yyyy年M月d日 HH:mm EEEE"
-        return "当前时间：\(formatter.string(from: now))（\(timeZone.identifier)）"
+        CurrentTimeContext.describe(now: now, timeZone: timeZone)
     }
 
     /// 聊天请求前预占：有单价按"输入估算 + 最大输出"预估，无单价时预估为 0（结算记为无法计量）。
