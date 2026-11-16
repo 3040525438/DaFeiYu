@@ -685,6 +685,56 @@ final class AstrBotImporterTests: XCTestCase {
         XCTAssertTrue(raw?.contains("segmented_reply") == true)
     }
 
+    // MARK: - 关系档案同组多条（真实数据形态，防唯一索引冲突）
+
+    func testCompanionMemoriesInSameGroupDoNotCollide() async throws {
+        let database = try makeDatabase("app")
+        let importer = AstrBotImporter(database: database)
+
+        let ledgerURL = root.appendingPathComponent("companions-group.json")
+        let ledger = """
+        {"users":{"3040525438":{
+          "relationship_positive_stage_cap_key":"close",
+          "relationship_score":111,
+          "last_seen":1793684159.7,
+          "companion_memory":{
+            "profile":{
+              "strong_memories":["签名时用尾巴尖蘸墨画圈","被子分你一半的那晚"],
+              "boundaries":["不愿做的事要明确拒绝"]
+            },
+            "items":[
+              {"text":"喜欢被摸头","kind":"preference","created_ts":1792928813.3},
+              {"text":"怕打雷","kind":"fact","created_ts":1792928830.1}
+            ]
+          },
+          "open_loops":[
+            {"text":"改口叫小肥还没兑现","created_ts":1792839778.9},
+            {"text":"答应教他画尾巴","created_ts":1792839800.2}
+          ]
+        }}}
+        """
+        try ledger.write(to: ledgerURL, atomically: true, encoding: .utf8)
+
+        let report = try await importer.run(
+            source: AstrBotSourcePaths(companionLedgerJSON: ledgerURL),
+            options: AstrBotImportOptions(isDryRun: false)
+        )
+
+        // 2 条 strong_memories + 1 条 boundaries + 2 条 items + 2 条 open_loops
+        XCTAssertEqual(report.counts.sourceCompanionMemories, 7)
+        XCTAssertEqual(report.counts.companionMemoriesNew, 7)
+        XCTAssertEqual(report.counts.coverageProblems, [])
+
+        let memories = try await count(database, "SELECT count(*) FROM memories")
+        XCTAssertEqual(memories, 7)
+        // 同一分组内 original_external_id 必须各不相同
+        let uniqueSources = try await count(
+            database,
+            "SELECT count(DISTINCT original_external_id) FROM memories"
+        )
+        XCTAssertEqual(uniqueSources, 7)
+    }
+
     // MARK: - 预演
 
     func testDryRunWritesNoBusinessData() async throws {

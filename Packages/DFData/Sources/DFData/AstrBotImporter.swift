@@ -1254,7 +1254,7 @@ extension AstrBotImporter {
                                     content: content,
                                     category: mapping.category,
                                     dedupeKey: "astrbot:companion:\(SHA256.hash(key).prefix(16))",
-                                    sourceID: "companion:\(identity):\(mapping.field)",
+                                    sourceID: "companion:\(identity):\(mapping.field):\(SHA256.hash(key).prefix(16))",
                                     createdAt: profileAt
                                 )
                             )
@@ -1288,7 +1288,7 @@ extension AstrBotImporter {
                                 content: text,
                                 category: memoryCategory(forItemKind: kind),
                                 dedupeKey: "astrbot:companion:\(SHA256.hash(key).prefix(16))",
-                                sourceID: "companion:\(identity):items",
+                                sourceID: "companion:\(identity):items:\(SHA256.hash(key).prefix(16))",
                                 createdAt: anyMillis(item["created_ts"]) ?? fallbackAt
                             )
                         )
@@ -1321,7 +1321,7 @@ extension AstrBotImporter {
                             content: text,
                             category: "promise",
                             dedupeKey: "astrbot:companion:\(SHA256.hash(key).prefix(16))",
-                            sourceID: "companion:\(identity):open_loops",
+                            sourceID: "companion:\(identity):open_loops:\(SHA256.hash(key).prefix(16))",
                             createdAt: anyMillis(loop["created_ts"])
                                 ?? parser.millis(from: loop["created_at"] as? String)
                                 ?? fallbackAt
