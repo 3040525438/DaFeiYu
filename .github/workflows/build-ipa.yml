@@ -14,8 +14,11 @@ concurrency:
 
 jobs:
   build:
-    # macos-15 曾排队 15 分钟未分配即被取消（run 43875830564），改用 macos-14 稳定池
-    runs-on: macos-14
+    # 运行器获取说明（2026-11-16 实测）：
+    # - macos-15：run 43875830564 排队 15 分钟后因 "not acquired by Runner" 被取消；
+    # - macos-14：run 43881720723 / 43882458170 均在 1 秒内被取消（同样拿不到 arm64 机器）；
+    # - 同一时刻 app-build-check（macos-15）可正常分配 → 属临时容量问题，回到 macos-15 并重试。
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - name: 检出代码
