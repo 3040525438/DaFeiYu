@@ -21,6 +21,7 @@ public enum MigrationID: String, CaseIterable, Sendable {
     case v12_diary_structure
     case v13_cost_ledger
     case v14_message_organization
+    case v15_stickers
 }
 
 public enum MigrationOrderError: Error, Equatable, CustomStringConvertible {

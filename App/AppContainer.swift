@@ -56,6 +56,8 @@ final class AppContainer: ObservableObject {
     let characters: CharacterProfileService
     /// D36 / D37：角色状态读写（表情、精力、亲和与历史）
     let characterStates: CharacterStateService
+    /// D73：表情包（内置 Emoji / 本地导入 / 在线下载 / 收藏 / 最近使用）
+    let stickers: StickerRepository
 
     // MARK: - W6~W9 服务层
 
@@ -168,6 +170,7 @@ final class AppContainer: ObservableObject {
         self.attachmentReferences = GRDBAttachmentReferenceService(database: database)
         self.characters = CharacterProfileService(database: database)
         self.characterStates = CharacterStateService(database: database)
+        self.stickers = GRDBStickerRepository(database: database)
         self.budget = BudgetService(
             database: database,
             settings: GRDBSettingsRepository(database: database)
@@ -277,6 +280,35 @@ final class AppContainer: ObservableObject {
             )
         } catch {
             NSLog("初始化核心人格失败：\(error.localizedDescription)")
+        }
+    }
+
+    /// D73：内置表情入库（幂等）。离线可用，不依赖网络；不覆盖用户已有表情。
+    func bootstrapStickers() async {
+        do {
+            let pack = try await stickers.ensurePack(
+                name: BuiltInStickerCatalog.packName,
+                source: .builtin,
+                sourceURL: nil,
+                license: nil
+            )
+            let now = Clock.nowMillis()
+            for entry in BuiltInStickerCatalog.entries {
+                _ = try await stickers.insert(
+                    NewSticker(
+                        packID: pack.id,
+                        kind: .emoji,
+                        name: entry.name,
+                        tags: entry.tags,
+                        emoji: entry.emoji,
+                        semantics: entry.semantics,
+                        semanticsSource: .catalog
+                    ),
+                    at: now
+                )
+            }
+        } catch {
+            NSLog("内置表情初始化失败：\(error.localizedDescription)")
         }
     }
 

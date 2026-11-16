@@ -113,6 +113,8 @@ final class AppBootstrap: ObservableObject {
             holder.set(container)
             Task {
                 await container.bootstrap()
+                // D73：内置表情入库（幂等，离线可用）
+                await container.bootstrapStickers()
                 // D09：启动时补一次自动备份检查（每日一次完整备份由策略保证）
                 _ = try? await container.backupScheduler.runIfDue()
                 // N-20：满足"久未说话"时尝试生成一条主动消息（闸门仍会二次校验）

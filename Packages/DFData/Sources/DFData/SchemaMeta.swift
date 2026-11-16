@@ -253,6 +253,16 @@ public enum SchemaMeta {
             "ux_message_tags",
             "ix_message_tags_tag",
             "ix_messages_important"
+        ]),
+        (.v15_stickers, [
+            "sticker_packs",
+            "stickers",
+            "sticker_usage",
+            "ix_stickers_pack",
+            "ix_stickers_kind",
+            "ix_stickers_favorite",
+            "ix_stickers_alive",
+            "ix_sticker_usage_time"
         ])
     ]
 
@@ -262,7 +272,8 @@ public enum SchemaMeta {
     ///
     /// 数量演进：v3 由 10 项扩为 16 项；v4 再扩 11 项（共 27）；v5 再扩 16 项（共 43）；v6 再扩 9 项（共 52）；
     /// v7 再扩 9 项（共 61）；v8 再扩 12 项（共 73）；v9 再扩 8 项（共 81）；v10 再扩 8 项（共 89）；
-    /// v11 再扩 6 项（共 95）；v12 再扩 1 项（共 96）；v13 再扩 3 项（共 99）；v14 再扩 4 项（共 103）。
+    /// v11 再扩 6 项（共 95）；v12 再扩 1 项（共 96）；v13 再扩 3 项（共 99）；v14 再扩 4 项（共 103）；
+    /// v15 再扩 8 项（共 111）。
     public static func verifyRequiredObjects(_ db: Database, upTo last: MigrationID = Migrations.latest) throws {
         let allCases = MigrationID.allCases
         guard let boundary = allCases.firstIndex(of: last) else { return }

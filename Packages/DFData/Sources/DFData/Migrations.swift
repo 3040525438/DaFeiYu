@@ -11,7 +11,7 @@ import DFCore
 public enum Migrations {
     /// 当前**已发布**的最终迁移版本（唯一事实源）。
     /// `MigrationID` 里可能有尚未发布的后续阶段，因此判定"库应为哪个版本"必须看这里，而不是 `allCases.last`。
-    public static let latest: MigrationID = .v14_message_organization
+    public static let latest: MigrationID = .v15_stickers
 
     /// 已发布版本对应的规范台账前缀（按 `MigrationID` 规范顺序截断）
     public static var releasedPrefix: [String] {
@@ -292,6 +292,12 @@ public enum Migrations {
         if includes(.v14_message_organization, upTo: last) {
             migrator.registerMigration("v14_message_organization") { db in
                 try V14MessageOrganization.migrate(db)
+            }
+        }
+
+        if includes(.v15_stickers, upTo: last) {
+            migrator.registerMigration("v15_stickers") { db in
+                try V15Stickers.migrate(db)
             }
         }
 

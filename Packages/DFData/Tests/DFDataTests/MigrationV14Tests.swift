@@ -5,9 +5,9 @@ import DFCore
 
 /// v14（D26 消息整理）迁移安全
 final class MigrationV14Tests: XCTestCase {
-    func testLatestIsV14() {
-        XCTAssertEqual(Migrations.latest, .v14_message_organization)
-        XCTAssertEqual(MigrationID.allCases.last, .v14_message_organization)
+    func testLatestIsAtLeastV14() {
+        XCTAssertEqual(Migrations.latest, MigrationID.allCases.last)
+        XCTAssertTrue(MigrationLedger.canonicalIdentifiers.contains(MigrationID.v14_message_organization.rawValue))
     }
 
     func testMigrationCreatesOrganizationObjectsAndPassesGate() async throws {
