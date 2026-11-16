@@ -39,7 +39,7 @@ public struct GRDBStickerRepository: StickerRepository {
                 sql: "SELECT * FROM sticker_packs WHERE name = ? AND source = ?",
                 arguments: [trimmed, source.rawValue]
             ) {
-                return Self.decodePack(row)
+                return try Self.decodePack(row)
             }
             let now = Clock.nowMillis()
             let pack = StickerPack(
@@ -85,7 +85,7 @@ public struct GRDBStickerRepository: StickerRepository {
                    sql: "SELECT * FROM stickers WHERE attachment_id = ? AND deleted_at IS NULL LIMIT 1",
                    arguments: [attachmentID]
                ) {
-                return Self.decodeSticker(row)
+                return try Self.decodeSticker(row)
             }
             // Emoji 去重：同一字符只保留一条
             if sticker.kind == .emoji, let emoji = sticker.emoji,
@@ -94,7 +94,7 @@ public struct GRDBStickerRepository: StickerRepository {
                    sql: "SELECT * FROM stickers WHERE kind = 'emoji' AND emoji = ? AND deleted_at IS NULL LIMIT 1",
                    arguments: [emoji]
                ) {
-                return Self.decodeSticker(row)
+                return try Self.decodeSticker(row)
             }
 
             let record = Sticker(
@@ -339,7 +339,7 @@ public struct GRDBStickerRepository: StickerRepository {
                 StickerUsage(
                     stickerID: try row.decode(String.self, forColumn: "sticker_id"),
                     usedAt: try row.decode(Int64.self, forColumn: "used_at"),
-                    messageID: try row.decodeIfPresent(String.self, forColumn: "message_id")
+                    messageID: row.stickerOptionalString("message_id")
                 )
             }
         }
@@ -353,8 +353,8 @@ public struct GRDBStickerRepository: StickerRepository {
             id: try row.decode(String.self, forColumn: "id"),
             name: try row.decode(String.self, forColumn: "name"),
             source: StickerSource(rawValue: rawSource) ?? .local,
-            sourceURL: try row.decodeIfPresent(String.self, forColumn: "source_url"),
-            license: try row.decodeIfPresent(String.self, forColumn: "license"),
+            sourceURL: row.stickerOptionalString("source_url"),
+            license: row.stickerOptionalString("license"),
             createdAt: try row.decode(Int64.self, forColumn: "created_at"),
             updatedAt: try row.decode(Int64.self, forColumn: "updated_at")
         )
@@ -363,21 +363,40 @@ public struct GRDBStickerRepository: StickerRepository {
     private static func decodeSticker(_ row: Row) throws -> Sticker {
         let rawKind = try row.decode(String.self, forColumn: "kind")
         let rawSource = try row.decode(String.self, forColumn: "semantics_source")
-        let favorite = try row.decodeIfPresent(Int.self, forColumn: "is_favorite") ?? 0
+        let favorite = row.stickerOptionalInt("is_favorite") ?? 0
         return Sticker(
             id: try row.decode(String.self, forColumn: "id"),
-            packID: try row.decodeIfPresent(String.self, forColumn: "pack_id"),
+            packID: row.stickerOptionalString("pack_id"),
             kind: StickerKind(rawValue: rawKind) ?? .staticImage,
             name: try row.decode(String.self, forColumn: "name"),
             tags: try row.decode(String.self, forColumn: "tags"),
-            emoji: try row.decodeIfPresent(String.self, forColumn: "emoji"),
-            attachmentID: try row.decodeIfPresent(String.self, forColumn: "attachment_id"),
+            emoji: row.stickerOptionalString("emoji"),
+            attachmentID: row.stickerOptionalString("attachment_id"),
             semantics: try row.decode(String.self, forColumn: "semantics"),
             semanticsSource: StickerSemanticsSource(rawValue: rawSource) ?? .none,
             isFavorite: favorite != 0,
             createdAt: try row.decode(Int64.self, forColumn: "created_at"),
             updatedAt: try row.decode(Int64.self, forColumn: "updated_at"),
-            deletedAt: try row.decodeIfPresent(Int64.self, forColumn: "deleted_at")
+            deletedAt: row.stickerOptionalInt64("deleted_at")
         )
+    }
+}
+
+/// 可空列读取：`Row` 同时遵循 `Decoder`，直接用 `decodeIfPresent(_:forColumn:)`
+/// 会被解析到 `Decodable` 的同名重载（与 Records.swift 同一处理方式）。
+private extension Row {
+    func stickerOptionalString(_ column: String) -> String? {
+        guard hasColumn(column) else { return nil }
+        return String.fromDatabaseValue(self[column])
+    }
+
+    func stickerOptionalInt(_ column: String) -> Int? {
+        guard hasColumn(column) else { return nil }
+        return Int.fromDatabaseValue(self[column])
+    }
+
+    func stickerOptionalInt64(_ column: String) -> Int64? {
+        guard hasColumn(column) else { return nil }
+        return Int64.fromDatabaseValue(self[column])
     }
 }

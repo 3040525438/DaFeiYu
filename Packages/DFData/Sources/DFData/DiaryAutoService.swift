@@ -229,7 +229,6 @@ public struct DiaryAutoService: Sendable {
     public func runCompensation(
         lookbackDays: Int = DiarySchedulePolicy.defaultLookbackDays,
         timeZoneIdentifier: String? = nil,
-        distill: Bool = false,
         generate: (String) async throws -> Report
     ) async -> [Report] {
         let timeZone = LocalDay.resolvedTimeZone(timeZoneIdentifier)
