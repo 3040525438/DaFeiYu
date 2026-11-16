@@ -15,10 +15,15 @@
 **仍未完成**：本地模型真实推理内核（N-18，**已暂缓**）、D41 厂商 OAuth 云盘（需 App 注册与密钥，外部权限）、D58 本地离线部分（暂缓）、真机验收（App 不签名编译已于 2026-11-16 通过：run 43872104514，覆盖 `DaFeiYu` 与 `DaFeiYuLab`）。D03/D04/D31/D36/D37/D53/D59/D61/D67/D72 已于 W9H–W9Q 补齐代码与 CI 证据（run 43714304218 / 43715978437 / 43723798853 / 43724845883 / 43728702351 / 43729249227）；**W9R 补齐 D16 云端语音识别通道、D36 界面渲染接线、D37 情绪数据源、D41 多位置备份**（`d70e6dc`/`8eacbb6`/`fee06dc`，run 43732457414 三包全绿）。上述 App 层改动已随 run 43872104514 编译通过；真机尚未验收。
 任何未签名 IPA 仅为"编译产物"，**不得视为完整 V2.0 交付**。
 
-**已产出构建物（2026-11-15）**：
-- 未签名实验版 IPA：`E:\temp_20261113_01\_deliverables\DaFeiYuLab-unsigned.ipa`（2,975,713 字节）
-- 构建记录：GitHub Actions run `43628905424`（`build-ipa`），产物名 `DaFeiYuLab-unsigned-ipa`
-- 包体核验：`Payload/DaFeiYuLab.app`，`CFBundleIdentifier = com.dafeiyu.lab`，版本 `0.1.0`，未签名（需自行签名安装）
+**已产出构建物（2026-11-16 最新，对应 commit `a54d672`）**：
+- 构建记录：GitHub Actions run `43888030211`（`build-ipa`，macos-15），**success**
+- 产物（未签名，均已在本地解包核验）：
+  - `DaFeiYuLab-unsigned-ipa`：Artifact zip 5,375,502 字节；内层 IPA 5,425,236 字节；SHA256 `178E1D70196B8B36FB851330DC260974755332B17F83F8A33BE19BC9380ADB51`
+  - `DaFeiYu-unsigned-ipa`：Artifact zip 5,374,697 字节；内层 IPA 5,423,332 字节；SHA256 `5D9C152F39D6E1A8B719E530D9B112E8624EC25EEE1131409081D68C6E626A06`
+- 本地留档：`E:\temp_20261113_01\_deliverables\DaFeiYuLab-unsigned-ipa-a54d672.ipa`、`DaFeiYu-unsigned-ipa-a54d672.ipa`
+- 包体核验：实验版 `CFBundleIdentifier = com.dafeiyu.lab`、正式版 `= com.dafeiyu.app`；两者均无 `_CodeSignature`（未签名）；版本 `0.1.0`（build 1）
+- 代码一致性：主二进制内可检出 `authorizationCode` / `code_challenge` / `unsupported_config` / `关系里程碑`，即包含当前 HEAD 的 OAuth 通用层与关系迁移代码
+- **仍未签名安装、仍未真机验收**；中间构建 run `43885246826`（`f487c25`）产物留作对照，未删除
 
 ---
 
@@ -307,7 +312,7 @@ gh workflow run build-ipa.yml --ref p1.5/b1
 | 关系账本真实迁移 | 已实现并单测通过 | `46de779`，core-tests run `43878692941` success |
 | 信件副本去重 / 脏日期记忆恢复 | 已实现并单测通过 | `c6c6412`，core-tests run `43880915289` success |
 | App 编译（含迁移计数 UI） | 通过 | app-build-check run `43882061042` success，commit `c6c6412` |
-| IPA 构建 | **未成功**：运行器未获取 | `43875830564`（macos-15 排队 15 分钟后取消）、`43881720723` / `43882458170`（macos-14 秒取消）；标注原文：“The job was not acquired by Runner of type hosted even after multiple attempts” |
+| IPA 构建 | **成功** | run `43888030211`（`a54d672`，macos-15）：正式版 + 实验版未签名 IPA；实验版 `com.dafeiyu.lab`、正式版 `com.dafeiyu.app`，均未签名；二进制含当前 HEAD 代码特征 |
 | 签名安装 / 真机验收 | 未执行 | 0/39 |
 | 主配置脱敏留档 | 已实现并单测通过 | `f487c25`，core-tests run `43884446316` success |
 | D41 OAuth 通用层（PKCE / Token / 错误） | 已实现并单测通过 | `da1e155`；不含厂商 Client ID 与 SDK，厂商 OAuth 仍未接通 |

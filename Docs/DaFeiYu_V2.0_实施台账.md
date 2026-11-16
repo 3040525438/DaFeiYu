@@ -253,3 +253,4 @@
 | 2026-11-16 | 真实迁移基线写入交付报告第七节：聊天 17,183→6,191（10,992 事件待处理）、记忆 5,121→5,101（20 待处理）、日记 22→10、信件 3→2、笔记 2、人格 1、关系档案 28、里程碑 12、阶段提案 1、媒体索引 96 待处理。**设备侧真实迁移尚未执行** |
 | 2026-11-16 | W9V：AstrBot 主配置脱敏留档（`f487c25`）。新增 `configJSON` 数据源与 `unsupported_config` 待处理原因，`cmd_config.json` 只留档不套用，key/token/secret/password 统一 `<redacted>` 并纳入覆盖校验；core-tests run `43884446316` 通过 |
 | 2026-11-16 | W9W：D41 云盘 OAuth 通用层（`da1e155`）。`CloudOAuthProvider`/`OAuthFlow`（S256 PKCE + state）/`OAuthTokenParser`/`OAuthTokenStore`（只写 SecureStore）/`CloudOAuthRegistry`；15 项单测含 RFC 7636 标准向量。**无厂商 Client ID，D41 仍为部分完成** |
+| 2026-11-16 | IPA 构建成功：run `43885246826`（`f487c25`，macos-15）双产物 5.35MB；最终 run `43888030211`（`a54d672` = HEAD，docs 提交前）双产物，实验版 `com.dafeiyu.lab`、正式版 `com.dafeiyu.app`，均无 `_CodeSignature`；二进制可检出 `authorizationCode`/`code_challenge`/`unsupported_config`/`关系里程碑`。本地留档 + SHA256 已写入交付报告。**签名安装与真机验收仍未执行** |
