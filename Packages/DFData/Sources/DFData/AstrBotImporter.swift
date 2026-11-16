@@ -881,7 +881,7 @@ extension AstrBotImporter {
                     plan.counts.memoriesPending += 1
                     continue
                 }
-                guard let seenAt = parser.dayMillis(day) else {
+                guard let seenAt = parser.dayMillis(day) ?? leadingDateMillis(in: text, parser: parser) else {
                     plan.pendings.append(
                         pending(kind: "memory", sourceID: sourceID, reason: .invalidDay, rawJSON: rawJSON(row))
                     )
@@ -905,6 +905,18 @@ extension AstrBotImporter {
                 plan.counts.memoriesNew += 1
             }
         }
+    }
+
+    /// AstrBot 的 `mem.day` 存在脏数据（真实备份里有 `FACTS`、`YYYY-MM-DD`、甚至正文片段）。
+    /// 正文若以 `- 2026-10-24｜...` 形式开头，则以正文里的日期为准；否则判定为未知日期。
+    private static func leadingDateMillis(in text: String, parser: SourceDateParser) -> Int64? {
+        var trimmed = Substring(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        while trimmed.first == "-" || trimmed.first == " " || trimmed.first == "\u{FEFF}" {
+            trimmed = trimmed.dropFirst()
+        }
+        guard trimmed.count >= 10 else { return nil }
+        let prefix = String(trimmed.prefix(10))
+        return parser.dayMillis(prefix)
     }
 
     // MARK: 人格
@@ -1151,14 +1163,17 @@ extension AstrBotImporter {
             }
             let parsed = splitDiary(raw)
             let content = parsed.content.isEmpty ? raw.trimmingCharacters(in: .whitespacesAndNewlines) : parsed.content
+            // 去重只按正文：真实数据里存在 `最新一封.md` 这类与日期文件逐字节相同的副本，
+            // 文件名参与去重会把同一封信导入两次。
+            let contentHash = String(SHA256.hash(content).prefix(16))
             plan.documents.append(
                 PlannedDocument(
-                    id: "astrbot-doc-" + String(SHA256.hash("\(category)|\(name)|\(content)").prefix(16)),
+                    id: "astrbot-doc-" + contentHash,
                     type: type,
                     title: parsed.title.isEmpty ? (name as NSString).deletingPathExtension : parsed.title,
                     content: content,
                     category: category,
-                    dedupeKey: "astrbot:doc:\(category):\(SHA256.hash("\(name)|\(content)").prefix(16))",
+                    dedupeKey: "astrbot:doc:\(category):\(contentHash)",
                     sourceID: "\(category):\(name)",
                     createdAt: 0
                 )

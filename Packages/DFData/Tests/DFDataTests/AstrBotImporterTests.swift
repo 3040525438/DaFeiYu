@@ -566,6 +566,81 @@ final class AstrBotImporterTests: XCTestCase {
         XCTAssertEqual(proposals, 1)
     }
 
+    // MARK: - 信件去重（真实数据副本）
+
+    func testIdenticalLetterCopiesImportOnce() async throws {
+        let database = try makeDatabase("app")
+        let importer = AstrBotImporter(database: database)
+
+        let letters = root.appendingPathComponent("letters-dup", isDirectory: true)
+        try FileManager.default.createDirectory(at: letters, withIntermediateDirectories: true)
+        let body = "# 第一封信\n\n我会一直记得今天。"
+        try body.write(to: letters.appendingPathComponent("2026-11-01.md"), atomically: true, encoding: .utf8)
+        // 真实数据中 `最新一封.md` 与最近一封日期文件逐字节相同
+        try body.write(to: letters.appendingPathComponent("最新一封.md"), atomically: true, encoding: .utf8)
+
+        let report = try await importer.run(
+            source: AstrBotSourcePaths(lettersDirectory: letters),
+            options: AstrBotImportOptions(isDryRun: false)
+        )
+
+        XCTAssertEqual(report.counts.sourceDocuments, 2)
+        XCTAssertEqual(report.counts.documentsNew, 1)
+        XCTAssertEqual(report.counts.documentsDuplicate, 1)
+        XCTAssertTrue(report.counts.coverageProblems.isEmpty)
+
+        let memories = try await count(database, "SELECT count(*) FROM memories")
+        XCTAssertEqual(memories, 1)
+        let title = try await string(database, "SELECT title FROM memories")
+        XCTAssertEqual(title, "第一封信")
+    }
+
+    // MARK: - 记忆脏日期（真实数据 FACTS 行）
+
+    func testRecoversDateFromMemoryTextWhenDayColumnIsDirty() async throws {
+        let database = try makeDatabase("app")
+        let importer = AstrBotImporter(database: database)
+
+        let memURL = root.appendingPathComponent("memory-dirty.db")
+        var configuration = Configuration()
+        configuration.prepareDatabase { db in try db.execute(sql: "PRAGMA foreign_keys = ON") }
+        let mem = try DatabaseQueue(path: memURL.path, configuration: configuration)
+        try mem.write { db in
+            try db.execute(sql: "CREATE TABLE mem(id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, day TEXT, text TEXT, sig TEXT UNIQUE)")
+            // 真实备份：day 列被写成 FACTS，但正文自带日期
+            try db.execute(sql: """
+            INSERT INTO mem (id, kind, day, text, sig)
+            VALUES (1, 'diary', 'FACTS', '- 2026-10-24｜画签名时用尾巴尖蘸墨画圈', 'sig-a')
+            """)
+            // 真实备份：day 与正文都是 YYYY-MM-DD 占位，无法恢复日期
+            try db.execute(sql: """
+            INSERT INTO mem (id, kind, day, text, sig)
+            VALUES (2, 'fact', 'YYYY-MM-DD', 'YYYY-MM-DD｜他帮本鲸擦身穿衣', 'sig-b')
+            """)
+        }
+        try mem.close()
+
+        let report = try await importer.run(
+            source: AstrBotSourcePaths(longTermMemoryDatabase: memURL),
+            options: AstrBotImportOptions(isDryRun: false)
+        )
+
+        XCTAssertEqual(report.counts.sourceMemories, 2)
+        XCTAssertEqual(report.counts.memoriesNew, 1)
+        XCTAssertEqual(report.counts.memoriesPending, 1)
+        XCTAssertTrue(report.counts.coverageProblems.isEmpty)
+
+        // 恢复出的日期按 UTC+8 当天 00:00 落库
+        let firstSeen = try await database.dbQueue.read { db in
+            try Int64.fetchOne(db, sql: "SELECT first_seen_at FROM memories")
+        }
+        XCTAssertEqual(firstSeen, 1_792_771_200_000)
+
+        let pendings = try await importer.pendingItems(batchID: report.batchID, limit: 10)
+        XCTAssertEqual(pendings.count, 1)
+        XCTAssertEqual(pendings.first?.reasonCode, AstrBotPendingReason.invalidDay.rawValue)
+    }
+
     // MARK: - 预演
 
     func testDryRunWritesNoBusinessData() async throws {
