@@ -327,6 +327,8 @@ struct ChatView: View {
                             onRevoke: { Task { await viewModel.revoke(message) } },
                             onToggleFavorite: { Task { await viewModel.toggleFavorite(message) } }
                         )
+                        // LazyVStack 默认按子视图理想宽度居中排列：不显式撑满会让己方气泡落在中间
+                        .frame(maxWidth: .infinity)
                         .id(message.id)
                     }
                 }

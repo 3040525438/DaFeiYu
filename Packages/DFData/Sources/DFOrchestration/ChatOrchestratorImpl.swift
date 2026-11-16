@@ -65,6 +65,10 @@ public struct ChatOrchestratorDependencies: Sendable {
     public var corePersona: @Sendable () async throws -> String
     /// D37：本轮请求时的当前情绪。为 nil 时只用静态表达准则，行为与旧版本一致。
     public var currentEmotion: (@Sendable () async -> EmotionState?)?
+    /// L3 当前状态文本（本地时间等）。模型自身没有系统时钟，不注入就会回答"看不到时间"。
+    public var currentStateText: (@Sendable () async -> String)?
+    /// L4 相关记忆：按本轮用户输入检索，返回已格式化文本（按相关度降序）。nil 表示不注入记忆。
+    public var retrieveMemories: (@Sendable (_ query: String, _ limit: Int) async -> [String])?
     public var rules: String
     public var limitGroups: Int
     public var budget: PromptBudget
@@ -91,6 +95,8 @@ public struct ChatOrchestratorDependencies: Sendable {
         makeRequest: @escaping @Sendable (String, [ChatTurn]) async throws -> ChatRequest,
         corePersona: @escaping @Sendable () async throws -> String = { "" },
         currentEmotion: (@Sendable () async -> EmotionState?)? = nil,
+        currentStateText: (@Sendable () async -> String)? = nil,
+        retrieveMemories: (@Sendable (String, Int) async -> [String])? = nil,
         rules: String = PromptComposer.defaultRules,
         limitGroups: Int = 20,
         budget: PromptBudget = PromptBudget(),
@@ -108,6 +114,8 @@ public struct ChatOrchestratorDependencies: Sendable {
         self.makeRequest = makeRequest
         self.corePersona = corePersona
         self.currentEmotion = currentEmotion
+        self.currentStateText = currentStateText
+        self.retrieveMemories = retrieveMemories
         self.rules = rules
         self.limitGroups = limitGroups
         self.budget = budget
@@ -442,8 +450,24 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         }
 
         let persona = (try? await deps.corePersona()) ?? ""
+        // L3 当前状态：注入本地时间，否则模型没有时间基准，会回答"看不到时间"
+        var stateText = ""
+        if let currentStateText = deps.currentStateText {
+            stateText = await currentStateText()
+        }
+        // L4 相关记忆：按本轮输入检索，命中才注入；检索失败不影响本轮
+        var memoryLines: [String] = []
+        if let retrieve = deps.retrieveMemories {
+            memoryLines = await retrieve(trimmed, 8)
+        }
         let prompt = PromptComposer.compose(
-            PromptInput(corePersona: persona, rules: deps.rules, history: composed.turns),
+            PromptInput(
+                corePersona: persona,
+                rules: deps.rules,
+                currentState: stateText,
+                memories: memoryLines,
+                history: composed.turns
+            ),
             budget: deps.budget
         )
         // 上下文来自库内**已关闭**的组，不含本轮刚输入的这条；

@@ -336,6 +336,8 @@ final class AppContainer: ObservableObject {
         // D36 / D37：角色与状态（闭包只捕获服务值，不捕获容器）
         let charactersService = self.characters
         let statesService = self.characterStates
+        // 聊天上下文里的相关记忆检索（L4）
+        let memoryRepo = self.memories
         // 回合后置：记忆抽取（W8-3）。关掉开关即完全跳过，不影响聊天。
         let extraction = MemoryExtractionCoordinator(
             processing: memoryProcessing,
@@ -390,6 +392,19 @@ final class AppContainer: ObservableObject {
                       let state = try? await statesService.state(for: id) else { return nil }
                 return EmotionState(kind: EmotionKind(mood: state.mood), intensity: 0.5)
             },
+            // L3：注入本地时间，模型自身没有系统时钟
+            currentStateText: { Self.localStateText() },
+            // L4：按本轮输入检索相关记忆，命中才注入
+            retrieveMemories: { query, limit in
+                guard let records = try? await memoryRepo.search(query: query, scope: nil, limit: limit) else {
+                    return []
+                }
+                return records.map { record in
+                    let text = record.content.isEmpty ? record.title : record.content
+                    let tag = record.type.isEmpty ? "记忆" : record.type
+                    return "[\(tag)] \(text)"
+                }
+            },
             rules: PromptComposer.defaultRules,
             limitGroups: 20,
             budget: PromptBudget(totalTokens: 6000),
@@ -423,6 +438,15 @@ final class AppContainer: ObservableObject {
     }
 
     // MARK: - D10 聊天预算接线
+
+    /// L3 当前状态文本：模型没有系统时钟，必须显式告诉它"现在几点、星期几"。
+    static func localStateText(now: Date = Date(), timeZone: TimeZone = .current) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "yyyy年M月d日 HH:mm EEEE"
+        return "当前时间：\(formatter.string(from: now))（\(timeZone.identifier)）"
+    }
 
     /// 聊天请求前预占：有单价按"输入估算 + 最大输出"预估，无单价时预估为 0（结算记为无法计量）。
     private static func reserveChatBudget(

@@ -51,20 +51,26 @@ struct AstrBotImportView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Button {
-                    Task { await runImport(dryRun: true) }
-                } label: {
-                    Label("预演导入（不写数据）", systemImage: "eye")
-                }
-                .disabled(sourceRoot == nil || busy)
-
-                if preview != nil {
+                if preview == nil {
                     Button {
-                        showConfirmImport = true
+                        Task { await runImport(dryRun: true) }
                     } label: {
-                        Label("正式导入", systemImage: "tray.and.arrow.down.fill")
+                        Label("预演导入（不写数据）", systemImage: "eye")
                     }
-                    .disabled(busy)
+                    .disabled(sourceRoot == nil || busy)
+                }
+
+                // 正式导入常驻显示，避免"只看到预演按钮"的误解；未预演时禁用并有说明
+                Button {
+                    showConfirmImport = true
+                } label: {
+                    Label("正式导入（写入数据）", systemImage: "tray.and.arrow.down.fill")
+                }
+                .disabled(sourceRoot == nil || busy || preview == nil)
+                if preview == nil {
+                    Text("正式导入需先完成一次预演，确认计数无误后再写入。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 if busy {
                     ProgressView()
