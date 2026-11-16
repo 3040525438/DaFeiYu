@@ -39,11 +39,19 @@ struct DiaryView: View {
     @State private var isLoading = true
     @State private var loadError: String?
     @State private var route: DiaryEditorRoute?
+    /// 需要补写的日期（23:00 已过但还没有日记）
+    @State private var pendingDays: [String] = []
+    @State private var isBackfilling = false
+    @State private var backfillMessage: String?
 
     var body: some View {
         ScrollView {
             VStack(spacing: 12) {
                 introCard
+
+                if !pendingDays.isEmpty || backfillMessage != nil {
+                    backfillCard
+                }
 
                 if isLoading {
                     ProgressView()
@@ -107,11 +115,32 @@ struct DiaryView: View {
                 to: "9999-12-31",
                 limit: 365
             )
+            pendingDays = DiarySchedulePolicy.pendingDays(
+                nowMillis: Clock.nowMillis(),
+                generatedDays: Set(entries.map(\.entryDate))
+            )
             loadError = nil
         } catch {
             loadError = error.localizedDescription
         }
         isLoading = false
+    }
+
+    private func backfill() async {
+        isBackfilling = true
+        backfillMessage = nil
+        let summary = await container.runDiaryCompensation()
+        isBackfilling = false
+        if summary.isEmpty {
+            backfillMessage = "没有需要补写的日期"
+        } else {
+            var text = "补写完成：生成 \(summary.generated) 篇，跳过 \(summary.skipped) 天"
+            if let failure = summary.failedNotes.first {
+                text += "，失败 \(summary.failedNotes.count) 天（\(failure)）"
+            }
+            backfillMessage = text
+        }
+        await reload()
     }
 
     static func todayText() -> String {
@@ -141,6 +170,10 @@ struct DiaryView: View {
                 .font(DFFont.caption)
                 .foregroundStyle(DFColor.inkMuted)
                 .lineSpacing(2)
+            Text("每天 23:00 之后会用当天真实聊天自动写一篇；iOS 后台唤醒时间由系统决定，不保证准点，错过会在下次打开 App 时补写。当天没有有效聊天就不写，也不会编造。")
+                .font(DFFont.caption)
+                .foregroundStyle(DFColor.inkMuted.opacity(0.8))
+                .lineSpacing(2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
@@ -149,6 +182,61 @@ struct DiaryView: View {
         .overlay(
             RoundedRectangle(cornerRadius: DFRadius.card, style: .continuous)
                 .stroke(DFColor.lilac.opacity(0.4), lineWidth: 1)
+        )
+    }
+
+    /// 补写卡片：只在该写没写的日子有缺失时出现
+    private var backfillCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 13))
+                    .foregroundStyle(DFColor.primaryDeep)
+                Text(pendingDays.isEmpty ? "日记补写" : "有 \(pendingDays.count) 天还没写日记")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(DFColor.ink)
+                Spacer()
+            }
+
+            if !pendingDays.isEmpty {
+                Text(pendingDays.sorted().joined(separator: "、"))
+                    .font(DFFont.caption)
+                    .foregroundStyle(DFColor.inkMuted)
+            }
+
+            if let backfillMessage {
+                Text(backfillMessage)
+                    .font(DFFont.caption)
+                    .foregroundStyle(DFColor.inkMuted)
+                    .lineSpacing(2)
+            }
+
+            Button {
+                Task { await backfill() }
+            } label: {
+                HStack(spacing: 6) {
+                    if isBackfilling {
+                        ProgressView().tint(DFColor.primary)
+                    }
+                    Text(isBackfilling ? "正在用当天聊天生成…" : "补写遗漏日记")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 9)
+                .background(DFColor.primarySoft)
+                .foregroundStyle(DFColor.primaryDeep)
+                .clipShape(RoundedRectangle(cornerRadius: DFRadius.card, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(isBackfilling)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(DFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.card, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DFRadius.card, style: .continuous)
+                .stroke(DFColor.hairline, lineWidth: 1)
         )
     }
 
@@ -204,6 +292,15 @@ struct DiaryView: View {
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(DFColor.primarySoft, in: Capsule())
+                }
+
+                if entry.source == "auto" && !entry.isUserEdited {
+                    Text("自动生成")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(DFColor.primaryDeep)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(DFColor.lilacSoft, in: Capsule())
                 }
 
                 Spacer()

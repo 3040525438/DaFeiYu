@@ -35,11 +35,14 @@ struct DaFeiYuApp: App {
             }
             .task {
                 await bootstrap.start()
+                // 安排下一次日记后台任务（真实触发时刻由系统决定）
+                background.scheduleDiary()
             }
             .onChange(of: scenePhase) { _, phase in
                 // 进入后台时安排下一次补算；回到前台不主动排，避免浪费配额
                 if phase == .background {
                     background.schedule()
+                    background.scheduleDiary()
                 }
             }
         }
@@ -115,6 +118,8 @@ final class AppBootstrap: ObservableObject {
                 await container.bootstrap()
                 // D73：内置表情入库（幂等，离线可用）
                 await container.bootstrapStickers()
+                // W6：日记补偿——"23:00 已过但没写日记"的日子在这里补齐
+                _ = await container.runDiaryCompensation()
                 // D09：启动时补一次自动备份检查（每日一次完整备份由策略保证）
                 _ = try? await container.backupScheduler.runIfDue()
                 // N-20：满足"久未说话"时尝试生成一条主动消息（闸门仍会二次校验）

@@ -5,6 +5,17 @@ import DFData
 import DFAI
 import DFOrchestration
 
+/// 日记补偿结果（界面与后台任务共用，不暴露数据层类型）
+struct DiaryCompensationSummary: Sendable, Equatable {
+    var generated = 0
+    var skipped = 0
+    var failedNotes: [String] = []
+
+    var isEmpty: Bool {
+        generated == 0 && skipped == 0 && failedNotes.isEmpty
+    }
+}
+
 /// 依赖装配：整个应用只在这里创建具体实现。
 /// 刻意不加 @MainActor：它是纯依赖容器，不含 UI 状态；
 /// 这样各层都能安全引用，UI 状态仍由 @MainActor 的 ViewModel 管理。
@@ -40,6 +51,8 @@ final class AppContainer: ObservableObject {
     let localModels: LocalModelRepository
     /// W6：每日日记
     let diary: DiaryRepository
+    /// W6 / D34：每日日记自动生成与补偿（真实聊天 + 严格 JSON）
+    let diaryAuto: DiaryAutoService
     /// W8：记忆（三主体 + 版本 + 按来源删除）
     let memories: MemoryRepository
     /// W9：备份清单与恢复日志
@@ -205,6 +218,15 @@ final class AppContainer: ObservableObject {
         self.memoryProcessing = MemoryProcessingService(database: database)
         self.privacy = PrivacyGateService(database: database)
         self.astrbotImporter = AstrBotImporter(database: database)
+        // 日记自动生成：真实聊天 → 严格 JSON → diary_entries，可选沉淀为长期记忆
+        self.diaryAuto = DiaryAutoService(
+            database: database,
+            diary: GRDBDiaryRepository(database: database),
+            distiller: DiaryMemoryService(
+                diary: GRDBDiaryRepository(database: database),
+                processing: MemoryProcessingService(database: database)
+            )
+        )
 
         let backupKeys = KeychainBackupKeyStore(store: KeychainStore(service: identity.environment.keychainService))
         self.backupKeys = backupKeys
@@ -310,6 +332,47 @@ final class AppContainer: ObservableObject {
         } catch {
             NSLog("内置表情初始化失败：\(error.localizedDescription)")
         }
+    }
+
+    // MARK: - 每日日记自动生成（W6 / D34）
+
+    /// 用当日真实聊天生成日记。未配置云端模型时抛 `notConfigured`，不写任何数据。
+    func generateDiary(dayKey: String) async throws -> DiaryAutoService.Report {
+        let config = try await Self.requireDefaultConfig(modelConfigs)
+        let provider = try Self.makeProvider(config: config, secureStore: secureStore)
+        let persona = ((try? await personas.coreSystemPrompt()) ?? nil) ?? ""
+        return try await diaryAuto.generate(
+            dayKey: dayKey,
+            timeZoneIdentifier: LocalDay.resolvedTimeZoneIdentifier(nil),
+            provider: provider,
+            model: config.modelID,
+            persona: persona,
+            distill: true
+        )
+    }
+
+    /// 补偿：把"23:00 已过但还没有日记"的日子补上。已有日记（含手写）的日期不处理。
+    ///
+    /// 返回给界面与后台任务用的**纯计数摘要**，避免 UI 层直接依赖数据层类型。
+    @discardableResult
+    func runDiaryCompensation(
+        lookbackDays: Int = DiarySchedulePolicy.defaultLookbackDays
+    ) async -> DiaryCompensationSummary {
+        let reports = await diaryAuto.runCompensation(lookbackDays: lookbackDays) { day in
+            try await generateDiary(dayKey: day)
+        }
+        var summary = DiaryCompensationSummary()
+        for report in reports {
+            switch report.status {
+            case .generated, .updated:
+                summary.generated += 1
+            case .skippedNoContent, .skippedUserEdited:
+                summary.skipped += 1
+            case .failed:
+                summary.failedNotes.append(report.note)
+            }
+        }
+        return summary
     }
 
     func apiKey(for config: ModelConfig) throws -> String {

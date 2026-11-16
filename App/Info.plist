@@ -33,6 +33,7 @@
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>com.dafeiyu.autonomy.refresh</string>
+		<string>com.dafeiyu.diary.daily</string>
 	</array>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>

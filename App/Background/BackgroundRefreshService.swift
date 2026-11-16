@@ -30,6 +30,8 @@ final class ContainerHolder: @unchecked Sendable {
 /// - 容器还没装配好时直接失败，不写入任何数据。
 final class BackgroundRefreshService: @unchecked Sendable {
     static let taskIdentifier = "com.dafeiyu.autonomy.refresh"
+    /// 每日日记：目标 23:00 之后，但触发时刻由系统决定（不保证准点）
+    static let diaryTaskIdentifier = "com.dafeiyu.diary.daily"
 
     private let holder: ContainerHolder
     private let queue = DispatchQueue(label: "com.dafeiyu.background-refresh")
@@ -49,6 +51,49 @@ final class BackgroundRefreshService: @unchecked Sendable {
                 return
             }
             self?.handle(refreshTask)
+        }
+        BGTaskScheduler.shared.register(
+            forTaskWithIdentifier: Self.diaryTaskIdentifier,
+            using: queue
+        ) { [weak self] task in
+            guard let refreshTask = task as? BGAppRefreshTask else {
+                task.setTaskCompleted(success: false)
+                return
+            }
+            self?.handleDiary(refreshTask)
+        }
+    }
+
+    /// 安排下一次日记生成：`earliestBeginDate` = 今天（或明天）的 23:00。
+    ///
+    /// 注意：这只是"最早可以开始"的时间，系统可能晚很多才唤醒；真正的补齐靠启动/回前台补偿。
+    func scheduleDiary(nowMillis: Int64 = Clock.nowMillis()) {
+        guard let next = DiarySchedulePolicy.nextTrigger(after: nowMillis) else { return }
+        let request = BGAppRefreshTaskRequest(identifier: Self.diaryTaskIdentifier)
+        request.earliestBeginDate = Date(timeIntervalSince1970: Double(next) / 1000)
+        do {
+            try BGTaskScheduler.shared.submit(request)
+        } catch {
+            NSLog("日记后台任务安排失败：\(error.localizedDescription)")
+        }
+    }
+
+    private func handleDiary(_ task: BGAppRefreshTask) {
+        // 先排下一次，保证即使这次失败也不会断链
+        scheduleDiary()
+
+        let work = Task { [holder] in
+            guard let container = holder.get() else {
+                task.setTaskCompleted(success: false)
+                return
+            }
+            let reports = await container.runDiaryCompensation()
+            // 有失败就上报 false，系统会更早再次唤醒
+            let failed = reports.contains { $0.status == .failed }
+            task.setTaskCompleted(success: !failed)
+        }
+        task.expirationHandler = {
+            work.cancel()
         }
     }
 
