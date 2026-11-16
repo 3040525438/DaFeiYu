@@ -149,6 +149,7 @@ struct AstrBotImportView: View {
             row("关系档案", "新增 \(counts.companionMemoriesNew) / 重复 \(counts.companionMemoriesDuplicate) / 待处理 \(counts.companionMemoriesPending)")
             row("关系里程碑", "新增 \(counts.relationshipMilestonesNew) / 重复 \(counts.relationshipMilestonesDuplicate)")
             row("阶段提案", "待确认 \(counts.relationshipProposalsNew)")
+            row("配置留档", "待处理 \(counts.configPending)（不自动套用）")
             row("文档", "新增 \(counts.documentsNew) / 待处理 \(counts.documentsPending)")
             row("待处理合计", "\(counts.pendingTotal)")
             if !counts.coverageProblems.isEmpty {
@@ -223,7 +224,8 @@ struct AstrBotImportView: View {
             diaryDirectory: exists("diary"),
             lettersDirectory: exists("letters"),
             bookNotesDirectory: exists("books/notes"),
-            companionLedgerJSON: exists("data/plugin_data/astrbot_plugin_private_companion/companions.json")
+            companionLedgerJSON: exists("data/plugin_data/astrbot_plugin_private_companion/companions.json"),
+            configJSON: exists("data/cmd_config.json")
         )
     }
 

@@ -19,6 +19,8 @@ public struct AstrBotSourcePaths: Sendable, Equatable {
     public var bookNotesDirectory: URL?
     /// 关系账本：`data/plugin_data/astrbot_plugin_private_companion/companions.json`
     public var companionLedgerJSON: URL?
+    /// AstrBot 主配置：`data/cmd_config.json`（含模型/压缩/分段参数；只做脱敏留档，不自动应用）
+    public var configJSON: URL?
 
     public init(
         chatMemoryDatabase: URL? = nil,
@@ -27,7 +29,8 @@ public struct AstrBotSourcePaths: Sendable, Equatable {
         diaryDirectory: URL? = nil,
         lettersDirectory: URL? = nil,
         bookNotesDirectory: URL? = nil,
-        companionLedgerJSON: URL? = nil
+        companionLedgerJSON: URL? = nil,
+        configJSON: URL? = nil
     ) {
         self.chatMemoryDatabase = chatMemoryDatabase
         self.longTermMemoryDatabase = longTermMemoryDatabase
@@ -36,12 +39,13 @@ public struct AstrBotSourcePaths: Sendable, Equatable {
         self.lettersDirectory = lettersDirectory
         self.bookNotesDirectory = bookNotesDirectory
         self.companionLedgerJSON = companionLedgerJSON
+        self.configJSON = configJSON
     }
 
     /// 至少提供一个数据源才允许启动导入
     public var hasAnySource: Bool {
         [chatMemoryDatabase, longTermMemoryDatabase, personaDatabase,
-         diaryDirectory, lettersDirectory, bookNotesDirectory, companionLedgerJSON]
+         diaryDirectory, lettersDirectory, bookNotesDirectory, companionLedgerJSON, configJSON]
             .contains { $0 != nil }
     }
 }
@@ -118,6 +122,8 @@ public enum AstrBotPendingReason: String, Sendable, Equatable, CaseIterable {
     case relationshipLedger = "relationship_ledger"
     case replyTargetMissing = "reply_target_missing"
     case unsupportedContentKind = "unsupported_content_kind"
+    /// AstrBot 主配置（模型/压缩/插件参数）：只留档，不自动套用
+    case unsupportedConfig = "unsupported_config"
 }
 
 /// 导入计数。覆盖式校验的唯一依据：每个源行必须落入"导入 / 重复 / 待处理"之一。
@@ -167,6 +173,9 @@ public struct AstrBotImportCounts: Codable, Sendable, Equatable {
     public var relationshipMilestonesPending: Int = 0
     /// 关系阶段变更提案数（一律 `pending`，必须用户确认后才生效）
     public var relationshipProposalsNew: Int = 0
+    /// AstrBot 主配置文件数（只留档，不自动应用）
+    public var sourceConfigFiles: Int = 0
+    public var configPending: Int = 0
 
     /// 附加异常（不影响源行覆盖，但必须可见）
     public var pendingMediaMissing: Int = 0
@@ -220,6 +229,9 @@ public struct AstrBotImportCounts: Codable, Sendable, Equatable {
             problems.append(
                 "关系里程碑：源 \(sourceRelationshipMilestones) ≠ 新增 \(relationshipMilestonesNew) + 重复 \(relationshipMilestonesDuplicate) + 待处理 \(relationshipMilestonesPending)"
             )
+        }
+        if sourceConfigFiles != configPending {
+            problems.append("配置文件：源 \(sourceConfigFiles) ≠ 留档 \(configPending)")
         }
         if sourceToolRecords != pendingToolRecords {
             problems.append("工具记录：源 \(sourceToolRecords) ≠ 待处理 \(pendingToolRecords)")

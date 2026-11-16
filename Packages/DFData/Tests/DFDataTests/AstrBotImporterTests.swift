@@ -646,6 +646,45 @@ final class AstrBotImporterTests: XCTestCase {
         XCTAssertEqual(pendings.first?.reasonCode, AstrBotPendingReason.invalidDay.rawValue)
     }
 
+    // MARK: - 主配置留档（脱敏）
+
+    func testConfigIsArchivedRedacted() async throws {
+        let database = try makeDatabase("app")
+        let importer = AstrBotImporter(database: database)
+
+        let configURL = root.appendingPathComponent("cmd_config.json")
+        let config = """
+        {
+          "config_version": 3,
+          "agent_runner": {"config": {"model": {"provider_id": "deepseek-chat", "api_key": "sk-should-not-leak"}}},
+          "provider_settings": {"websearch_baidu_app_builder_key": "secret-value"},
+          "platform_settings": {"segmented_reply": {"enable": true, "interval": "1,3"}}
+        }
+        """
+        try config.write(to: configURL, atomically: true, encoding: .utf8)
+
+        let report = try await importer.run(
+            source: AstrBotSourcePaths(configJSON: configURL),
+            options: AstrBotImportOptions(isDryRun: false)
+        )
+
+        XCTAssertEqual(report.counts.sourceConfigFiles, 1)
+        XCTAssertEqual(report.counts.configPending, 1)
+        XCTAssertEqual(report.counts.pendingTotal, 1)
+        XCTAssertTrue(report.counts.coverageProblems.isEmpty)
+
+        let raw = try await string(
+            database,
+            "SELECT raw_json FROM astrbot_import_pending WHERE entity_kind = 'config'"
+        )
+        XCTAssertNotNil(raw)
+        XCTAssertFalse(raw?.contains("sk-should-not-leak") == true)
+        XCTAssertFalse(raw?.contains("secret-value") == true)
+        XCTAssertTrue(raw?.contains("<redacted>") == true)
+        XCTAssertTrue(raw?.contains("deepseek-chat") == true)
+        XCTAssertTrue(raw?.contains("segmented_reply") == true)
+    }
+
     // MARK: - 预演
 
     func testDryRunWritesNoBusinessData() async throws {

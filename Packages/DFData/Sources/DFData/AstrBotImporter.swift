@@ -427,6 +427,7 @@ private struct PreparedSources {
     var lettersDirectory: URL?
     var bookNotesDirectory: URL?
     var companionLedgerJSON: URL?
+    var configJSON: URL?
 
     func cleanUpStaging() {
         if let stagingRoot {
@@ -649,6 +650,9 @@ extension AstrBotImporter {
         }
         if options.importsRelationshipLedger, let url = prepared.companionLedgerJSON {
             try readCompanionLedger(url, parser: parser, plan: &plan)
+        }
+        if let url = prepared.configJSON {
+            readConfig(url, plan: &plan)
         }
 
         plan.counts.pendingTotal = plan.pendings.count
@@ -1491,6 +1495,66 @@ extension AstrBotImporter {
         return allowed.contains(kind) ? kind : "relationship"
     }
 
+    // MARK: 主配置留档
+
+    /// AstrBot `data/cmd_config.json`：含模型、压缩、分段回复、插件参数。
+    /// 只做**脱敏留档**进待处理区，不自动套用到本 App 配置（避免擅自改变已确认的产品设置）。
+    private static func readConfig(_ url: URL, plan: inout ImportPlan) {
+        plan.counts.sourceConfigFiles += 1
+        let fallback = "{\"note\":\"cmd_config.json 无法解析，仅记录存在\"}"
+        guard let data = try? Data(contentsOf: url),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            plan.pendings.append(
+                PlannedPending(
+                    id: UUID().uuidString,
+                    entityKind: "config",
+                    sourceID: "cmd_config.json",
+                    reason: .unsupportedConfig,
+                    rawJSON: fallback
+                )
+            )
+            plan.counts.configPending += 1
+            return
+        }
+        let redacted = redactedValue(root)
+        let rawJSON = (try? JSONSerialization.data(withJSONObject: redacted, options: [.sortedKeys]))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? fallback
+        plan.pendings.append(
+            PlannedPending(
+                id: UUID().uuidString,
+                entityKind: "config",
+                sourceID: "cmd_config.json",
+                reason: .unsupportedConfig,
+                rawJSON: rawJSON
+            )
+        )
+        plan.counts.configPending += 1
+    }
+
+    /// 递归脱敏：形如 key/token/secret/password 的字段一律替换；超长文本截断
+    private static func redactedValue(_ value: Any) -> Any {
+        if let dictionary = value as? [String: Any] {
+            var output: [String: Any] = [:]
+            for (key, item) in dictionary {
+                let lowered = key.lowercased()
+                if lowered.contains("key") || lowered.contains("token")
+                    || lowered.contains("secret") || lowered.contains("password") {
+                    output[key] = "<redacted>"
+                } else {
+                    output[key] = redactedValue(item)
+                }
+            }
+            return output
+        }
+        if let array = value as? [Any] {
+            return array.map { redactedValue($0) }
+        }
+        if let text = value as? String {
+            return text.count > 200 ? String(text.prefix(200)) + "…" : text
+        }
+        return value
+    }
+
     private static func anyMillis(_ value: Any?) -> Int64? {
         guard let seconds = anyDouble(value), seconds > 0 else { return nil }
         return Int64((seconds * 1000).rounded())
@@ -2230,7 +2294,8 @@ extension AstrBotImporter {
             diaryDirectory: nil,
             lettersDirectory: nil,
             bookNotesDirectory: nil,
-            companionLedgerJSON: nil
+            companionLedgerJSON: nil,
+            configJSON: nil
         )
 
         func stage(_ url: URL?) throws -> URL? {
@@ -2281,6 +2346,7 @@ extension AstrBotImporter {
         staged.lettersDirectory = try stage(source.lettersDirectory)
         staged.bookNotesDirectory = try stage(source.bookNotesDirectory)
         staged.companionLedgerJSON = try stage(source.companionLedgerJSON)
+        staged.configJSON = try stage(source.configJSON)
 
         let combined = originalHashes
             .sorted { $0.key < $1.key }

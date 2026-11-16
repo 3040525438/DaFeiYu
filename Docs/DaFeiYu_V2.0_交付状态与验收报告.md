@@ -249,6 +249,7 @@ gh workflow run build-ipa.yml --ref p1.5/b1
 | 关系里程碑 | 12 | 12 | 0 | 对话剧集 8 + 违规/修复事件 4 |
 | 关系阶段提案 | 1 | 1（pending） | 0 | 上限 `close` → 提案 unset→close，需用户确认 |
 | 工具记录 | 0 | 0 | 0 | `chat_memory_tool_records` 为空 |
+| 主配置 `cmd_config.json` | 1（8.7 KB） | 0（不自动套用） | 1（unsupportedConfig，脱敏留档） | 含模型 provider、压缩参数、分段回复、插件开关；API Key 一律写 `<redacted>` |
 | 会话 | 1 | 1 | 0 | 单一 `conversation_id`（2026-10-24 ~ 11-03） |
 
 **关系迁移的边界（重要）**：`relationship_profile` 不预置（决策 31 / A-14），AstrBot 的关系阶段只生成 `pending` 提案；确认前关系档案保持「未设定」，核心人格不被自动改写。
@@ -296,3 +297,17 @@ gh workflow run build-ipa.yml --ref p1.5/b1
 - 商业化服务器与用户运营后台
 
 > 明确声明：本阶段不承诺上述 8.3 项任何能力；未完成项不得包装为已交付。
+
+---
+
+## 九、本轮证据（W9T / W9U，2026-11-16）
+
+| 项 | 结果 | 证据 |
+|---|---|---|
+| 关系账本真实迁移 | 已实现并单测通过 | `46de779`，core-tests run `43878692941` success |
+| 信件副本去重 / 脏日期记忆恢复 | 已实现并单测通过 | `c6c6412`，core-tests run `43880915289` success |
+| App 编译（含迁移计数 UI） | 通过 | app-build-check run `43882061042` success，commit `c6c6412` |
+| IPA 构建 | **未成功**：运行器未获取 | `43875830564`（macos-15 排队 15 分钟后取消）、`43881720723` / `43882458170`（macos-14 秒取消）；标注原文：“The job was not acquired by Runner of type hosted even after multiple attempts” |
+| 签名安装 / 真机验收 | 未执行 | 0/39 |
+
+> 说明：App 编译通过 ≠ IPA 构建成功 ≠ 签名安装成功 ≠ 真机验收通过，四者不可互相替代。
