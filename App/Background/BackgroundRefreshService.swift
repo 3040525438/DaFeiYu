@@ -87,10 +87,9 @@ final class BackgroundRefreshService: @unchecked Sendable {
                 task.setTaskCompleted(success: false)
                 return
             }
-            let reports = await container.runDiaryCompensation()
+            let summary = await container.runDiaryCompensation()
             // 有失败就上报 false，系统会更早再次唤醒
-            let failed = reports.contains { $0.status == .failed }
-            task.setTaskCompleted(success: !failed)
+            task.setTaskCompleted(success: summary.failedNotes.isEmpty)
         }
         task.expirationHandler = {
             work.cancel()
