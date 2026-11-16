@@ -14,6 +14,7 @@ struct ChatView: View {
     @State private var showConversations = false
     @State private var showVoiceInput = false
     @State private var showImageUnderstanding = false
+    @State private var showStickerPanel = false
     @State private var showDateJump = false
     @State private var jumpDate = Date()
     /// D25：全局搜索
@@ -208,6 +209,13 @@ struct ChatView: View {
                 viewModel.draft = text
             }
             .environmentObject(container)
+        }
+        .sheet(isPresented: $showStickerPanel) {
+            StickerPanelView { sticker in
+                viewModel.sendSticker(sticker)
+            }
+            .environmentObject(container)
+            .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $showDateJump) {
             NavigationStack {
@@ -507,6 +515,11 @@ struct ChatView: View {
                     showImageUnderstanding = true
                 } label: {
                     Label("图片理解", systemImage: "photo")
+                }
+                Button {
+                    showStickerPanel = true
+                } label: {
+                    Label("表情包", systemImage: "face.smiling")
                 }
             } label: {
                 Image(systemName: "plus.circle")

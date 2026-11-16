@@ -380,6 +380,51 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    // MARK: - 表情包（D73）
+
+    /// 发送一个表情：作为独立用户消息落库，不触发模型回复。
+    ///
+    /// - Emoji 表情：正文存字符，气泡按大字号显示；
+    /// - 图片 / GIF 表情：附件已在 stickers / attachments 中，这里只记索引与使用记录。
+    func sendSticker(_ sticker: Sticker) {
+        guard !conversationID.isEmpty else { return }
+        guard !isStreaming else {
+            errorText = "正在生成回复，稍后再发表情"
+            return
+        }
+        let text: String
+        if let emoji = sticker.emoji, !emoji.isEmpty {
+            text = emoji
+        } else {
+            text = sticker.name
+        }
+        Task {
+            do {
+                let now = Clock.nowMillis()
+                let message = Message(
+                    conversationID: conversationID,
+                    role: .user,
+                    kind: .sticker,
+                    text: text,
+                    status: .sent,
+                    origin: .user,
+                    createdAt: now,
+                    sentAt: now
+                )
+                try await container.messages.insert(message)
+                try? await container.stickers.recordUsage(
+                    stickerID: sticker.id,
+                    messageID: message.id,
+                    at: now
+                )
+                await reloadFirstPage()
+                scrollTargetID = message.id
+            } catch {
+                errorText = "表情发送失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
     /// 该消息是否处于"待恢复"（非终态）。冷启动无法得知 groupID，按 status 判定。
     func isPendingRecovery(_ message: Message) -> Bool {
         if let pending = pendingRecovery, pending.assistantMessageID == message.id { return true }

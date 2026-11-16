@@ -15,6 +15,8 @@ public enum MessageKind: String, Codable, Sendable, CaseIterable {
     case voice
     case mixed
     case proactive
+    /// 表情包消息（D73）：正文存 emoji 字符或表情名称，附件在 attachments 表里
+    case sticker
 }
 
 /// 消息发送状态机：draft → sending → sent / failed
