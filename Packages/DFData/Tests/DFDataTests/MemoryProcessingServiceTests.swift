@@ -100,7 +100,7 @@ final class MemoryProcessingServiceTests: XCTestCase {
         let secondTurn = MemoryTurnSource(
             conversationID: "c2",
             userMessageID: "m9",
-            text: "她又提到喜欢桂花味的一切",
+            text: "她今天又说，最近喜欢上了桂花味的一切",
             at: now + 2
         )
         let second = try await service.ingest([candidate], from: secondTurn)

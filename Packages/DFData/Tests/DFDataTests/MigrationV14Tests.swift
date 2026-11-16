@@ -28,9 +28,10 @@ final class MigrationV14Tests: XCTestCase {
             let columns = try db.columns(in: "messages").map(\.name)
             XCTAssertTrue(columns.contains("is_important"))
             XCTAssertTrue(columns.contains("important_at"))
+            // v14 之后还会继续加迁移（例如 v15 表情包），这里断言"跑到了最新版本"而不是写死 v14
             XCTAssertEqual(
                 try SchemaMeta.value(db, key: SchemaMetaKey.schemaVersion),
-                MigrationID.v14_message_organization.rawValue
+                Migrations.latest.rawValue
             )
             try SchemaMeta.verifyRequiredObjects(db)
         }

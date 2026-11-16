@@ -210,7 +210,7 @@ final class DiaryAutoServiceTests: XCTestCase {
         XCTAssertNotNil(day16)
         XCTAssertNotNil(day17)
 
-        // 再跑一次：已有日记的日期不再处理，也不会重复生成
+        // 再跑一次：已有日记的日期不再处理；15 日仍无内容，只会跳过，不会重复生成
         let second = await service.runCompensation(
             lookbackDays: 3,
             timeZoneIdentifier: timeZone
@@ -222,7 +222,8 @@ final class DiaryAutoServiceTests: XCTestCase {
                 model: "test-model"
             )
         }
-        XCTAssertTrue(second.isEmpty)
+        XCTAssertEqual(second.count, 1)
+        XCTAssertEqual(second.first?.status, .skippedNoContent)
         let day17Versions = try await diary.versions(diaryID: day17!.id)
         XCTAssertEqual(day17Versions.count, 1)
     }
