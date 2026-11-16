@@ -248,6 +248,16 @@ public struct AstrBotImporter: AstrBotImporting, Sendable {
                 try db.execute(sql: "DELETE FROM personas WHERE id = ?", arguments: [id])
                 deletedPersonas += db.changesCount
             }
+            var deletedMilestones = 0
+            for id in try targetIDs(.relationshipMilestone) {
+                try db.execute(sql: "DELETE FROM relationship_milestones WHERE id = ?", arguments: [id])
+                deletedMilestones += db.changesCount
+            }
+            var deletedProposals = 0
+            for id in try targetIDs(.relationshipStageProposal) {
+                try db.execute(sql: "DELETE FROM relationship_stage_history WHERE id = ?", arguments: [id])
+                deletedProposals += db.changesCount
+            }
 
             let deletedPending = try Int.fetchOne(
                 db,
@@ -287,6 +297,8 @@ public struct AstrBotImporter: AstrBotImporting, Sendable {
                 deletedDiaries: deletedDiaries,
                 deletedPersonaItems: deletedPersonaItems,
                 deletedPersonas: deletedPersonas,
+                deletedRelationshipMilestones: deletedMilestones,
+                deletedRelationshipProposals: deletedProposals,
                 deletedPending: deletedPending,
                 deletedIDMaps: deletedIDMaps
             )
@@ -446,11 +458,35 @@ private struct ImportPlan: Sendable {
     var conversations: [PlannedConversation]
     var messages: [PlannedMessage]
     var memories: [PlannedMemory]
+    /// 关系档案条目（companion_memory.profile / items / open_loops），与 memories 同表但单独计数
+    var companionMemories: [PlannedMemory]
+    var milestones: [PlannedMilestone]
+    var stageProposals: [PlannedStageProposal]
     var diaries: [PlannedDiary]
     var persona: PlannedPersona?
     var documents: [PlannedDocument]
     var pendings: [PlannedPending]
     var counts: AstrBotImportCounts
+}
+
+/// 关系里程碑：只记录"共同经历 / 重要转折"，不写关系档案阶段（阶段必须用户确认）
+private struct PlannedMilestone: Sendable {
+    var id: String
+    var kind: String
+    var title: String
+    var summary: String
+    var occurredAt: Int64
+    var importance: String
+}
+
+/// 关系阶段变更提案：一律 `pending`，由用户在 App 内确认后才改档案
+private struct PlannedStageProposal: Sendable {
+    var id: String
+    var fromStage: String
+    var toStage: String
+    var reason: String
+    var evidenceJSON: String
+    var createdAt: Int64
 }
 
 private struct PlannedConversation: Sendable {
@@ -580,6 +616,9 @@ extension AstrBotImporter {
             conversations: [],
             messages: [],
             memories: [],
+            companionMemories: [],
+            milestones: [],
+            stageProposals: [],
             diaries: [],
             persona: nil,
             documents: [],
@@ -609,7 +648,7 @@ extension AstrBotImporter {
             }
         }
         if options.importsRelationshipLedger, let url = prepared.companionLedgerJSON {
-            try readCompanionLedger(url, plan: &plan)
+            try readCompanionLedger(url, parser: parser, plan: &plan)
         }
 
         plan.counts.pendingTotal = plan.pendings.count
@@ -1130,7 +1169,22 @@ extension AstrBotImporter {
 
     // MARK: 关系账本
 
-    private static func readCompanionLedger(_ url: URL, plan: inout ImportPlan) throws {
+    /// `companion_memory.profile` 字段 → 记忆分类。只读映射，不做语义推断。
+    private static let profileFieldCategories: [(field: String, category: String)] = [
+        ("strong_memories", "relationship"),
+        ("weak_preferences", "preference"),
+        ("user_traits", "fact"),
+        ("interests", "preference"),
+        ("boundaries", "boundary"),
+        ("relationship_notes", "relationship"),
+        ("speaking_style", "preference")
+    ]
+
+    private static func readCompanionLedger(
+        _ url: URL,
+        parser: SourceDateParser,
+        plan: inout ImportPlan
+    ) throws {
         guard let data = try? Data(contentsOf: url) else {
             throw AstrBotImportError.sourceUnreadable(url.path)
         }
@@ -1140,20 +1194,301 @@ extension AstrBotImporter {
         }
 
         plan.counts.sourceLedgerUsers = users.count
+        var companionKeys = Set<String>()
+        var milestoneKeys = Set<String>()
+
         for identity in users.keys.sorted() {
-            let payload = users[identity] ?? [:]
-            let raw = (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]))
-                .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-            plan.pendings.append(
-                PlannedPending(
-                    id: UUID().uuidString,
-                    entityKind: "relationship_ledger",
-                    sourceID: identity,
-                    reason: .relationshipLedger,
-                    rawJSON: raw
+            guard let payload = users[identity] as? [String: Any] else {
+                appendLedgerPending(identity: identity, raw: "{}", plan: &plan)
+                continue
+            }
+
+            var migratedRows = 0
+            let fallbackAt = anyMillis(payload["last_activity_at"])
+                ?? anyMillis(payload["last_seen"])
+                ?? 0
+
+            // 1. 关系档案：companion_memory.profile 的分组条目
+            if let companionMemory = payload["companion_memory"] as? [String: Any] {
+                let profileAt = anyMillis(companionMemory["profile_updated_at"]) ?? fallbackAt
+                if let profile = companionMemory["profile"] as? [String: Any] {
+                    for mapping in profileFieldCategories {
+                        guard let values = profile[mapping.field] as? [String] else { continue }
+                        for text in values {
+                            plan.counts.sourceCompanionMemories += 1
+                            let content = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !content.isEmpty else {
+                                plan.counts.companionMemoriesPending += 1
+                                continue
+                            }
+                            let key = "\(mapping.field)|\(content)"
+                            guard !companionKeys.contains(key) else {
+                                plan.counts.companionMemoriesDuplicate += 1
+                                continue
+                            }
+                            companionKeys.insert(key)
+                            plan.companionMemories.append(
+                                PlannedMemory(
+                                    id: "astrbot-companion-mem-" + String(SHA256.hash(key).prefix(16)),
+                                    type: mapping.category,
+                                    title: String(content.prefix(40)),
+                                    content: content,
+                                    category: mapping.category,
+                                    dedupeKey: "astrbot:companion:\(SHA256.hash(key).prefix(16))",
+                                    sourceID: "companion:\(identity):\(mapping.field)",
+                                    createdAt: profileAt
+                                )
+                            )
+                            plan.counts.companionMemoriesNew += 1
+                            migratedRows += 1
+                        }
+                    }
+                }
+
+                // companion_memory.items：逐条保留 kind/weight 语义
+                if let items = companionMemory["items"] as? [[String: Any]] {
+                    for item in items {
+                        plan.counts.sourceCompanionMemories += 1
+                        let text = (item["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !text.isEmpty else {
+                            plan.counts.companionMemoriesPending += 1
+                            continue
+                        }
+                        let kind = (item["kind"] as? String ?? "relationship").lowercased()
+                        let key = "items|\(kind)|\(text)"
+                        guard !companionKeys.contains(key) else {
+                            plan.counts.companionMemoriesDuplicate += 1
+                            continue
+                        }
+                        companionKeys.insert(key)
+                        plan.companionMemories.append(
+                            PlannedMemory(
+                                id: "astrbot-companion-mem-" + String(SHA256.hash(key).prefix(16)),
+                                type: kind,
+                                title: String(text.prefix(40)),
+                                content: text,
+                                category: memoryCategory(forItemKind: kind),
+                                dedupeKey: "astrbot:companion:\(SHA256.hash(key).prefix(16))",
+                                sourceID: "companion:\(identity):items",
+                                createdAt: anyMillis(item["created_ts"]) ?? fallbackAt
+                            )
+                        )
+                        plan.counts.companionMemoriesNew += 1
+                        migratedRows += 1
+                    }
+                }
+            }
+
+            // 2. 未结约定：open_loops → promise 记忆
+            if let loops = payload["open_loops"] as? [[String: Any]] {
+                for loop in loops {
+                    plan.counts.sourceCompanionMemories += 1
+                    let text = (loop["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !text.isEmpty else {
+                        plan.counts.companionMemoriesPending += 1
+                        continue
+                    }
+                    let key = "open_loop|\(text)"
+                    guard !companionKeys.contains(key) else {
+                        plan.counts.companionMemoriesDuplicate += 1
+                        continue
+                    }
+                    companionKeys.insert(key)
+                    plan.companionMemories.append(
+                        PlannedMemory(
+                            id: "astrbot-companion-mem-" + String(SHA256.hash(key).prefix(16)),
+                            type: "promise",
+                            title: String(text.prefix(40)),
+                            content: text,
+                            category: "promise",
+                            dedupeKey: "astrbot:companion:\(SHA256.hash(key).prefix(16))",
+                            sourceID: "companion:\(identity):open_loops",
+                            createdAt: anyMillis(loop["created_ts"])
+                                ?? parser.millis(from: loop["created_at"] as? String)
+                                ?? fallbackAt
+                        )
+                    )
+                    plan.counts.companionMemoriesNew += 1
+                    migratedRows += 1
+                }
+            }
+
+            // 3. 对话剧集 → 共同经历里程碑
+            if let episodes = payload["dialogue_episodes"] as? [[String: Any]] {
+                for episode in episodes {
+                    plan.counts.sourceRelationshipMilestones += 1
+                    let summary = (episode["summary"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !summary.isEmpty else {
+                        plan.counts.relationshipMilestonesPending += 1
+                        continue
+                    }
+                    let day = episode["date"] as? String ?? ""
+                    let key = "episode|\(day)|\(summary)"
+                    guard !milestoneKeys.contains(key) else {
+                        plan.counts.relationshipMilestonesDuplicate += 1
+                        continue
+                    }
+                    milestoneKeys.insert(key)
+                    let occurredAt = anyMillis(episode["created_ts"])
+                        ?? parser.dayMillis(day)
+                        ?? fallbackAt
+                    var detail = summary
+                    if let residue = episode["emotional_residue"] as? String, !residue.isEmpty {
+                        detail += "\n情绪残留：" + residue
+                    }
+                    if let topic = episode["reusable_topic"] as? String, !topic.isEmpty {
+                        detail += "\n可复用话题：" + topic
+                    }
+                    if let promises = episode["bot_promises"] as? [String], !promises.isEmpty {
+                        detail += "\n答应过：" + promises.joined(separator: "；")
+                    }
+                    if let avoid = episode["avoid_next"] as? [String], !avoid.isEmpty {
+                        detail += "\n避免：" + avoid.joined(separator: "；")
+                    }
+                    plan.milestones.append(
+                        PlannedMilestone(
+                            id: "astrbot-milestone-" + String(SHA256.hash(key).prefix(16)),
+                            kind: "shared_experience",
+                            title: day.isEmpty ? String(summary.prefix(30)) : "\(day) · \(String(summary.prefix(24)))",
+                            summary: detail,
+                            occurredAt: occurredAt,
+                            importance: "normal"
+                        )
+                    )
+                    plan.counts.relationshipMilestonesNew += 1
+                    migratedRows += 1
+                }
+            }
+
+            // 4. 关系违规 / 修复 → 重要转折里程碑（分数变化本身不逐条入库）
+            if let ledger = payload["relationship_ledger"] as? [[String: Any]] {
+                for event in ledger {
+                    let reason = (event["reason_code"] as? String ?? "").lowercased()
+                    guard reason.contains("violation") else { continue }
+                    plan.counts.sourceRelationshipMilestones += 1
+                    let key = "ledger|\(event["event_key"] as? String ?? "")|\(reason)"
+                    guard !milestoneKeys.contains(key) else {
+                        plan.counts.relationshipMilestonesDuplicate += 1
+                        continue
+                    }
+                    milestoneKeys.insert(key)
+                    let before = anyDouble(event["score_before"]).map { Int($0.rounded()) }
+                    let after = anyDouble(event["score_after"]).map { Int($0.rounded()) }
+                    let scored = before.flatMap { b in after.map { a in "关系分 \(b) → \(a)" } } ?? ""
+                    plan.milestones.append(
+                        PlannedMilestone(
+                            id: "astrbot-milestone-" + String(SHA256.hash(key).prefix(16)),
+                            kind: "turning_point",
+                            title: reason == "relationship_violation_recovery" ? "关系修复" : "关系受损事件",
+                            summary: scored.isEmpty ? reason : "\(reason)：\(scored)",
+                            occurredAt: anyMillis(event["created_at"]) ?? fallbackAt,
+                            importance: "high"
+                        )
+                    )
+                    plan.counts.relationshipMilestonesNew += 1
+                    migratedRows += 1
+                }
+            }
+
+            // 5. 阶段提案：只提案，不改关系档案（决策 31 / A-14）
+            var proposalCreated = false
+            if let stage = relationshipStage(from: payload) {
+                let evidence: [String: Any] = [
+                    "source": "astrbot_companion_ledger",
+                    "user_id": identity,
+                    "relationship_role": payload["relationship_role"] as? String ?? "",
+                    "relationship_mode": payload["relationship_mode"] as? String ?? "",
+                    "relationship_score": anyDouble(payload["relationship_score"]) ?? 0,
+                    "stage_cap": payload["relationship_positive_stage_cap_key"] as? String ?? "",
+                    "band_cap": payload["normal_interaction_band_cap"] as? String ?? "",
+                    "nickname": payload["nickname"] as? String ?? "",
+                    "style": payload["style"] as? String ?? "",
+                    "ledger_events": (payload["relationship_ledger"] as? [[String: Any]])?.count ?? 0
+                ]
+                let evidenceJSON = (try? JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys]))
+                    .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                plan.stageProposals.append(
+                    PlannedStageProposal(
+                        id: "astrbot-stage-proposal-" + String(SHA256.hash(identity).prefix(12)),
+                        fromStage: "unset",
+                        toStage: stage.rawValue,
+                        reason: "AstrBot 关系档案显示阶段为「\(stage.displayName)」，需你确认后才会写入关系档案",
+                        evidenceJSON: evidenceJSON,
+                        createdAt: fallbackAt
+                    )
                 )
+                plan.counts.relationshipProposalsNew += 1
+                proposalCreated = true
+            }
+
+            if migratedRows == 0 && !proposalCreated {
+                let raw = (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]))
+                    .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                appendLedgerPending(identity: identity, raw: raw, plan: &plan)
+            } else {
+                plan.counts.relationshipUsersImported += 1
+            }
+        }
+    }
+
+    /// 无法迁移的用户（空档案/格式不符）进待处理区，原始内容完整保留
+    private static func appendLedgerPending(identity: String, raw: String, plan: inout ImportPlan) {
+        plan.pendings.append(
+            PlannedPending(
+                id: UUID().uuidString,
+                entityKind: "relationship_ledger",
+                sourceID: identity,
+                reason: .relationshipLedger,
+                rawJSON: raw
             )
-            plan.counts.ledgerPending += 1
+        )
+        plan.counts.ledgerPending += 1
+    }
+
+    /// AstrBot 关系阶段 → DaFeiYu 关系阶段（仅用于生成待确认提案）
+    ///
+    /// 只取 AstrBot 明确给出的阶段上限/互动档位；`relationship_role` 单独出现时不足以证明阶段，
+    /// 因此不参与映射（避免"角色=friend 就自动提案成熟关系"）。
+    private static func relationshipStage(from payload: [String: Any]) -> RelationshipStage? {
+        let cap = (payload["relationship_positive_stage_cap_key"] as? String ?? "").lowercased()
+        let band = (payload["normal_interaction_band_cap"] as? String ?? "").lowercased()
+        let label = ((payload["current_interaction"] as? [String: Any])?["label"] as? String ?? "").lowercased()
+        for raw in [cap, label, band] where !raw.isEmpty {
+            switch raw {
+            case "stable", "long_term":
+                return .stable
+            case "close", "intimate", "lover", "partner":
+                return .close
+            case "warm", "familiar", "friend", "close_friend":
+                return .familiar
+            case "normal", "cool", "stranger", "acquaintance":
+                return .acquaintance
+            default:
+                continue
+            }
+        }
+        return nil
+    }
+
+    /// 记忆分类白名单：fact / preference / relationship / boundary / promise / identity / value / emotion_pattern / event
+    private static func memoryCategory(forItemKind kind: String) -> String {
+        let allowed = ["fact", "preference", "relationship", "boundary", "promise", "identity", "value", "emotion_pattern", "event"]
+        return allowed.contains(kind) ? kind : "relationship"
+    }
+
+    private static func anyMillis(_ value: Any?) -> Int64? {
+        guard let seconds = anyDouble(value), seconds > 0 else { return nil }
+        return Int64((seconds * 1000).rounded())
+    }
+
+    private static func anyDouble(_ value: Any?) -> Double? {
+        switch value {
+        case let number as NSNumber:
+            return number.doubleValue
+        case let text as String:
+            return Double(text)
+        default:
+            return nil
         }
     }
 
@@ -1345,13 +1680,41 @@ extension AstrBotImporter {
             )
             try map(db, batchID: batchID, kind: .memory, sourceID: memory.sourceID, targetID: memory.id, at: now)
         }
+
+        // 关系档案记忆（companion_memory / open_loops）：与 memories 同表，单独计数以便追溯
+        for memory in plan.companionMemories {
+            if try String.fetchOne(
+                db,
+                sql: "SELECT id FROM memories WHERE dedupe_key = ?",
+                arguments: [memory.dedupeKey]
+            ) != nil {
+                outcome.counts.companionMemoriesNew -= 1
+                outcome.counts.companionMemoriesDuplicate += 1
+                continue
+            }
+            try insertMemory(
+                db: db,
+                id: memory.id,
+                type: memory.type,
+                title: memory.title,
+                content: memory.content,
+                category: memory.category,
+                dedupeKey: memory.dedupeKey,
+                sourceID: memory.sourceID,
+                createdAt: memory.createdAt == 0 ? now : memory.createdAt,
+                batchID: batchID,
+                now: now
+            )
+            try map(db, batchID: batchID, kind: .memory, sourceID: memory.sourceID, targetID: memory.id, at: now)
+        }
         let memoryCountAfter = try Int.fetchOne(
             db,
             sql: "SELECT count(*) FROM memories WHERE dedupe_key LIKE 'astrbot:%'"
         ) ?? 0
-        guard memoryCountAfter - memoryCountBefore == outcome.counts.memoriesNew else {
+        let expectedMemories = outcome.counts.memoriesNew + outcome.counts.companionMemoriesNew
+        guard memoryCountAfter - memoryCountBefore == expectedMemories else {
             throw AstrBotImportError.coverageMismatch([
-                "记忆写入数不符：期望 \(outcome.counts.memoriesNew)，实际 \(memoryCountAfter - memoryCountBefore)"
+                "记忆写入数不符：期望 \(expectedMemories)，实际 \(memoryCountAfter - memoryCountBefore)"
             ])
         }
 
@@ -1415,6 +1778,71 @@ extension AstrBotImporter {
                 arguments: [diary.id, V2Memory.bigram(diary.title + "\n" + diary.content)]
             )
             try map(db, batchID: batchID, kind: .diary, sourceID: diary.entryDate, targetID: diary.id, at: now)
+        }
+
+        // 关系里程碑（共同经历 / 重要转折）：只记事实，不改关系阶段
+        for milestone in plan.milestones {
+            if try String.fetchOne(
+                db,
+                sql: "SELECT id FROM relationship_milestones WHERE id = ?",
+                arguments: [milestone.id]
+            ) != nil {
+                outcome.counts.relationshipMilestonesNew -= 1
+                outcome.counts.relationshipMilestonesDuplicate += 1
+                continue
+            }
+            let at = milestone.occurredAt == 0 ? now : milestone.occurredAt
+            try db.execute(
+                sql: """
+                INSERT INTO relationship_milestones
+                    (id, kind, title, summary, occurred_at, time_precision, importance,
+                     memory_id, episode_id, source_kind, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, 'day', ?, NULL, NULL, 'import', 'active', ?, ?)
+                """,
+                arguments: [milestone.id, milestone.kind, milestone.title, milestone.summary,
+                            at, milestone.importance, now, now]
+            )
+            try map(
+                db,
+                batchID: batchID,
+                kind: .relationshipMilestone,
+                sourceID: milestone.id,
+                targetID: milestone.id,
+                at: now
+            )
+        }
+
+        // 关系阶段提案：一律 pending，必须用户在 App 内确认（决策 31 / A-14）
+        for proposal in plan.stageProposals {
+            let exists = try Int.fetchOne(
+                db,
+                sql: "SELECT count(*) FROM relationship_stage_history WHERE id = ?",
+                arguments: [proposal.id]
+            ) ?? 0
+            guard exists == 0 else {
+                // 上一批次已提案：本次不再重复写，计数回到"未新增"
+                outcome.counts.relationshipProposalsNew -= 1
+                continue
+            }
+            try db.execute(
+                sql: """
+                INSERT INTO relationship_stage_history
+                    (id, from_stage, to_stage, reason, evidence_json, decided_by, status,
+                     memory_id, created_at, resolved_at)
+                VALUES (?, ?, ?, ?, ?, 'import', 'pending', NULL, ?, NULL)
+                """,
+                arguments: [proposal.id, proposal.fromStage, proposal.toStage,
+                            proposal.reason, proposal.evidenceJSON,
+                            proposal.createdAt == 0 ? now : proposal.createdAt]
+            )
+            try map(
+                db,
+                batchID: batchID,
+                kind: .relationshipStageProposal,
+                sourceID: proposal.id,
+                targetID: proposal.id,
+                at: now
+            )
         }
 
         // 人格

@@ -14,7 +14,8 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-15
+    # macos-15 曾排队 15 分钟未分配即被取消（run 43875830564），改用 macos-14 稳定池
+    runs-on: macos-14
     timeout-minutes: 30
     steps:
       - name: 检出代码

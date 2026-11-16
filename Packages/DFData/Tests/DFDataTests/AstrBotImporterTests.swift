@@ -402,6 +402,170 @@ final class AstrBotImporterTests: XCTestCase {
         XCTAssertEqual(resolvedCount, 0)
     }
 
+    // MARK: - 关系账本（真实 AstrBot 结构）
+
+    /// 富关系账本：档案分组、陪伴记忆条目、未结约定、对话剧集、违规事件、阶段上限
+    private func makeRichLedger() throws -> URL {
+        let url = root.appendingPathComponent("companions-rich.json")
+        let ledger = """
+        {"version":1,"users":{"3040525438":{
+          "relationship_role":"friend",
+          "relationship_positive_stage_cap_key":"close",
+          "normal_interaction_band_cap":"warm",
+          "relationship_score":111,
+          "nickname":"3777",
+          "style":"温柔",
+          "last_seen":1793684159.7,
+          "relationship_ledger":[
+            {"event_key":"e1","reason_code":"fast_inbound","delta":1,"score_before":0,"score_after":1,"created_at":1792806466.9},
+            {"event_key":"e2","reason_code":"relationship_violation","delta":-6,"score_before":20,"score_after":14,"created_at":1792900000.0}
+          ],
+          "companion_memory":{
+            "profile":{
+              "strong_memories":["大名是「泡泡」，小名是「小肥」"],
+              "boundaries":["不愿做的事要明确拒绝"],
+              "user_traits":["说话短，常不用标点"]
+            },
+            "items":[{"text":"喜欢被摸头","kind":"preference","weight":2,"created_ts":1792928813.3}],
+            "items_updated_at":1792928813.3,
+            "profile_updated_at":1792928813.3
+          },
+          "dialogue_episodes":[{
+            "date":"2026-10-24",
+            "created_ts":1792831007.3,
+            "summary":"主人半开玩笑地把本鲸认成自己人。",
+            "emotional_residue":"嘴硬的小高兴",
+            "reusable_topic":"被子分你一半",
+            "bot_promises":["答应分一半被子"],
+            "avoid_next":["别反复追问归谁"]
+          }],
+          "open_loops":[{"text":"改口叫小肥还没完全兑现","status":"待自然延续","created_ts":1792839778.9}]
+        }}}
+        """
+        try ledger.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    func testMigratesRelationshipProfileMilestonesAndPendingProposal() async throws {
+        let database = try makeDatabase("app")
+        let importer = AstrBotImporter(database: database)
+
+        let report = try await importer.run(
+            source: AstrBotSourcePaths(companionLedgerJSON: try makeRichLedger()),
+            options: AstrBotImportOptions(isDryRun: false)
+        )
+
+        XCTAssertEqual(report.status, .succeeded)
+        // 用户整体：已迁移，不再进待处理区
+        XCTAssertEqual(report.counts.sourceLedgerUsers, 1)
+        XCTAssertEqual(report.counts.relationshipUsersImported, 1)
+        XCTAssertEqual(report.counts.ledgerPending, 0)
+        // 关系档案 5 条（3 分组 + 1 条目 + 1 未结约定）
+        XCTAssertEqual(report.counts.sourceCompanionMemories, 5)
+        XCTAssertEqual(report.counts.companionMemoriesNew, 5)
+        // 里程碑 2 条（1 剧集 + 1 违规）
+        XCTAssertEqual(report.counts.sourceRelationshipMilestones, 2)
+        XCTAssertEqual(report.counts.relationshipMilestonesNew, 2)
+        XCTAssertEqual(report.counts.relationshipProposalsNew, 1)
+        XCTAssertTrue(report.counts.coverageProblems.isEmpty)
+
+        // 记忆分类：relationship / boundary / fact / preference / promise 各 1
+        let memories = try await count(database, "SELECT count(*) FROM memories")
+        XCTAssertEqual(memories, 5)
+        let categories = try await database.dbQueue.read { db in
+            try String.fetchAll(db, sql: "SELECT category FROM memories ORDER BY category")
+        }
+        XCTAssertEqual(categories, ["boundary", "fact", "preference", "promise", "relationship"])
+        let promiseType = try await string(
+            database,
+            "SELECT type FROM memories WHERE category = 'promise'"
+        )
+        XCTAssertEqual(promiseType, "promise")
+
+        // 里程碑：共同经历 + 重要转折，来源一律 import
+        let milestones = try await count(database, "SELECT count(*) FROM relationship_milestones")
+        XCTAssertEqual(milestones, 2)
+        let kinds = try await database.dbQueue.read { db in
+            try String.fetchAll(db, sql: "SELECT kind FROM relationship_milestones ORDER BY kind")
+        }
+        XCTAssertEqual(kinds, ["shared_experience", "turning_point"])
+        let sources = try await database.dbQueue.read { db in
+            try String.fetchAll(db, sql: "SELECT DISTINCT source_kind FROM relationship_milestones")
+        }
+        XCTAssertEqual(sources, ["import"])
+        let precision = try await string(
+            database,
+            "SELECT time_precision FROM relationship_milestones WHERE kind = 'shared_experience'"
+        )
+        XCTAssertEqual(precision, "day")
+        let episodeSummary = try await string(
+            database,
+            "SELECT summary FROM relationship_milestones WHERE kind = 'shared_experience'"
+        )
+        XCTAssertTrue(episodeSummary?.contains("情绪残留：嘴硬的小高兴") == true)
+        XCTAssertTrue(episodeSummary?.contains("答应过：答应分一半被子") == true)
+
+        // 阶段提案：pending，decided_by=import，绝不直接写关系档案
+        let proposals = try await count(
+            database,
+            "SELECT count(*) FROM relationship_stage_history WHERE status = 'pending'"
+        )
+        XCTAssertEqual(proposals, 1)
+        let toStage = try await string(database, "SELECT to_stage FROM relationship_stage_history")
+        XCTAssertEqual(toStage, "close")
+        let decidedBy = try await string(database, "SELECT decided_by FROM relationship_stage_history")
+        XCTAssertEqual(decidedBy, "import")
+        let profiles = try await count(database, "SELECT count(*) FROM relationship_profile")
+        XCTAssertEqual(profiles, 0)
+    }
+
+    func testRollbackRemovesRelationshipMilestonesAndProposal() async throws {
+        let database = try makeDatabase("app")
+        let importer = AstrBotImporter(database: database)
+
+        let report = try await importer.run(
+            source: AstrBotSourcePaths(companionLedgerJSON: try makeRichLedger()),
+            options: AstrBotImportOptions(isDryRun: false)
+        )
+        let rollback = try await importer.rollback(batchID: report.batchID, at: 1_800_000_000_000)
+
+        XCTAssertEqual(rollback.deletedRelationshipMilestones, 2)
+        XCTAssertEqual(rollback.deletedRelationshipProposals, 1)
+        let milestones = try await count(database, "SELECT count(*) FROM relationship_milestones")
+        XCTAssertEqual(milestones, 0)
+        let proposals = try await count(database, "SELECT count(*) FROM relationship_stage_history")
+        XCTAssertEqual(proposals, 0)
+        let memories = try await count(database, "SELECT count(*) FROM memories")
+        XCTAssertEqual(memories, 0)
+    }
+
+    func testSecondImportOfRichLedgerIsIdempotent() async throws {
+        let database = try makeDatabase("app")
+        let importer = AstrBotImporter(database: database)
+        let ledger = try makeRichLedger()
+
+        _ = try await importer.run(
+            source: AstrBotSourcePaths(companionLedgerJSON: ledger),
+            options: AstrBotImportOptions(isDryRun: false)
+        )
+        let second = try await importer.run(
+            source: AstrBotSourcePaths(companionLedgerJSON: ledger),
+            options: AstrBotImportOptions(isDryRun: false)
+        )
+
+        XCTAssertEqual(second.counts.companionMemoriesNew, 0)
+        XCTAssertEqual(second.counts.companionMemoriesDuplicate, 5)
+        XCTAssertEqual(second.counts.relationshipMilestonesNew, 0)
+        XCTAssertEqual(second.counts.relationshipMilestonesDuplicate, 2)
+        XCTAssertEqual(second.counts.relationshipProposalsNew, 0)
+        let memories = try await count(database, "SELECT count(*) FROM memories")
+        XCTAssertEqual(memories, 5)
+        let milestones = try await count(database, "SELECT count(*) FROM relationship_milestones")
+        XCTAssertEqual(milestones, 2)
+        let proposals = try await count(database, "SELECT count(*) FROM relationship_stage_history")
+        XCTAssertEqual(proposals, 1)
+    }
+
     // MARK: - 预演
 
     func testDryRunWritesNoBusinessData() async throws {

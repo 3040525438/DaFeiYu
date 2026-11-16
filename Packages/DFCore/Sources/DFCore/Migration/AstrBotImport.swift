@@ -96,6 +96,10 @@ public enum AstrBotEntityKind: String, Sendable, Equatable, CaseIterable {
     case persona
     case personaItem = "persona_item"
     case document
+    /// 关系里程碑（共同经历 / 重要转折），随批次回滚
+    case relationshipMilestone = "relationship_milestone"
+    /// 关系阶段变更提案（待用户确认），随批次回滚
+    case relationshipStageProposal = "relationship_stage_proposal"
 }
 
 /// 待处理原因码。新增值只能追加，不改已有字符串。
@@ -149,6 +153,20 @@ public struct AstrBotImportCounts: Codable, Sendable, Equatable {
 
     public var sourceLedgerUsers: Int = 0
     public var ledgerPending: Int = 0
+    /// 关系账本中成功迁移的用户数（档案记忆 / 里程碑 / 阶段提案）
+    public var relationshipUsersImported: Int = 0
+    /// 关系档案条目源行：`companion_memory.profile` 各数组 + `items` + `open_loops`
+    public var sourceCompanionMemories: Int = 0
+    public var companionMemoriesNew: Int = 0
+    public var companionMemoriesDuplicate: Int = 0
+    public var companionMemoriesPending: Int = 0
+    /// 关系里程碑源行：`dialogue_episodes` + 关系违规/修复事件
+    public var sourceRelationshipMilestones: Int = 0
+    public var relationshipMilestonesNew: Int = 0
+    public var relationshipMilestonesDuplicate: Int = 0
+    public var relationshipMilestonesPending: Int = 0
+    /// 关系阶段变更提案数（一律 `pending`，必须用户确认后才生效）
+    public var relationshipProposalsNew: Int = 0
 
     /// 附加异常（不影响源行覆盖，但必须可见）
     public var pendingMediaMissing: Int = 0
@@ -188,8 +206,20 @@ public struct AstrBotImportCounts: Codable, Sendable, Equatable {
                 "文档：源 \(sourceDocuments) ≠ 新增 \(documentsNew) + 重复 \(documentsDuplicate) + 待处理 \(documentsPending)"
             )
         }
-        if sourceLedgerUsers != ledgerPending {
-            problems.append("关系账本：源 \(sourceLedgerUsers) ≠ 待处理 \(ledgerPending)")
+        if sourceLedgerUsers != relationshipUsersImported + ledgerPending {
+            problems.append(
+                "关系账本：源 \(sourceLedgerUsers) ≠ 已迁移 \(relationshipUsersImported) + 待处理 \(ledgerPending)"
+            )
+        }
+        if sourceCompanionMemories != companionMemoriesNew + companionMemoriesDuplicate + companionMemoriesPending {
+            problems.append(
+                "关系档案：源 \(sourceCompanionMemories) ≠ 新增 \(companionMemoriesNew) + 重复 \(companionMemoriesDuplicate) + 待处理 \(companionMemoriesPending)"
+            )
+        }
+        if sourceRelationshipMilestones != relationshipMilestonesNew + relationshipMilestonesDuplicate + relationshipMilestonesPending {
+            problems.append(
+                "关系里程碑：源 \(sourceRelationshipMilestones) ≠ 新增 \(relationshipMilestonesNew) + 重复 \(relationshipMilestonesDuplicate) + 待处理 \(relationshipMilestonesPending)"
+            )
         }
         if sourceToolRecords != pendingToolRecords {
             problems.append("工具记录：源 \(sourceToolRecords) ≠ 待处理 \(pendingToolRecords)")
@@ -316,6 +346,8 @@ public struct AstrBotRollbackReport: Sendable, Equatable {
     public var deletedDiaries: Int
     public var deletedPersonaItems: Int
     public var deletedPersonas: Int
+    public var deletedRelationshipMilestones: Int
+    public var deletedRelationshipProposals: Int
     public var deletedPending: Int
     public var deletedIDMaps: Int
 
@@ -328,6 +360,8 @@ public struct AstrBotRollbackReport: Sendable, Equatable {
         deletedDiaries: Int,
         deletedPersonaItems: Int,
         deletedPersonas: Int,
+        deletedRelationshipMilestones: Int = 0,
+        deletedRelationshipProposals: Int = 0,
         deletedPending: Int,
         deletedIDMaps: Int
     ) {
@@ -339,6 +373,8 @@ public struct AstrBotRollbackReport: Sendable, Equatable {
         self.deletedDiaries = deletedDiaries
         self.deletedPersonaItems = deletedPersonaItems
         self.deletedPersonas = deletedPersonas
+        self.deletedRelationshipMilestones = deletedRelationshipMilestones
+        self.deletedRelationshipProposals = deletedRelationshipProposals
         self.deletedPending = deletedPending
         self.deletedIDMaps = deletedIDMaps
     }
