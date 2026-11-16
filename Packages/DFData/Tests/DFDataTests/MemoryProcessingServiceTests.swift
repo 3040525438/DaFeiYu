@@ -73,6 +73,50 @@ final class MemoryProcessingServiceTests: XCTestCase {
         XCTAssertTrue(hits.contains { $0.id == id }, "写入后必须可检索")
     }
 
+    func testDeletedMemoryIsNotRecreatedByLaterExtraction() async throws {
+        let candidate = MemoryCandidate(
+            scope: .user,
+            layer: .semantic,
+            category: "preference",
+            title: "喜欢桂花",
+            content: "用户喜欢桂花味的一切",
+            evidenceQuote: "喜欢上了桂花味",
+            importance: 0.6,
+            confidence: 0.8
+        )
+        let firstTurn = MemoryTurnSource(
+            conversationID: "c1",
+            userMessageID: "m1",
+            text: "她说她最近喜欢上了桂花味的一切",
+            at: now
+        )
+        let first = try await service.ingest([candidate], from: firstTurn)
+        let memoryID = try XCTUnwrap(first.writtenMemoryIDs.first)
+
+        // 用户删除这条记忆
+        try await repo.softDelete(id: memoryID, at: now + 1)
+
+        // 同一内容再次被抽取：必须被抑制，不得重建
+        let secondTurn = MemoryTurnSource(
+            conversationID: "c2",
+            userMessageID: "m9",
+            text: "她又提到喜欢桂花味的一切",
+            at: now + 2
+        )
+        let second = try await service.ingest([candidate], from: secondTurn)
+        XCTAssertTrue(second.writtenMemoryIDs.isEmpty, "用户删过的记忆不能被自动重建")
+        XCTAssertEqual(second.suppressedCount, 1)
+
+        let alive = try await repo.memories(
+            scope: nil,
+            layer: nil,
+            includeArchived: true,
+            limit: 10,
+            offset: 0
+        )
+        XCTAssertTrue(alive.isEmpty, "列表里不应再出现这条记忆")
+    }
+
     func testIngestRoutesImportantCandidateToProposal() async throws {
         let turn = MemoryTurnSource(
             conversationID: "c1",

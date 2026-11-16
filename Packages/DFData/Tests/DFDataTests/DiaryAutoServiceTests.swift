@@ -127,7 +127,8 @@ final class DiaryAutoServiceTests: XCTestCase {
         XCTAssertEqual(report.status, .skippedUserEdited)
         XCTAssertEqual(report.entryID, manual.id)
 
-        let refreshed = try XCTUnwrap(try await diary.entry(date: "2026-11-17"))
+        let maybeRefreshed = try await diary.entry(date: "2026-11-17")
+        let refreshed = try XCTUnwrap(maybeRefreshed)
         XCTAssertEqual(refreshed.title, "我写的")
         XCTAssertEqual(refreshed.content, "今天很早就睡了")
     }

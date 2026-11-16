@@ -16,6 +16,18 @@ struct DiaryCompensationSummary: Sendable, Equatable {
     }
 }
 
+/// 待确认记忆提案的界面投影（不把数据层类型暴露给 UI）
+struct MemoryProposalSummary: Identifiable, Sendable, Equatable {
+    var id: String
+    var title: String
+    var content: String
+    var evidenceQuote: String
+    var scope: String
+    var risk: String
+    var reason: String
+    var createdAt: Int64
+}
+
 /// 依赖装配：整个应用只在这里创建具体实现。
 /// 刻意不加 @MainActor：它是纯依赖容器，不含 UI 状态；
 /// 这样各层都能安全引用，UI 状态仍由 @MainActor 的 ViewModel 管理。
@@ -373,6 +385,34 @@ final class AppContainer: ObservableObject {
             }
         }
         return summary
+    }
+
+    // MARK: - 记忆管理（D12 / W8）
+
+    /// 待用户确认的记忆提案（重要度高的抽取结果不会直接生效）
+    func pendingMemoryProposals(limit: Int = 50) async -> [MemoryProposalSummary] {
+        let items = (try? await memoryProcessing.pendingProposals(limit: limit)) ?? []
+        return items.map { item in
+            MemoryProposalSummary(
+                id: item.id,
+                title: item.title,
+                content: item.content,
+                evidenceQuote: item.evidenceQuote,
+                scope: item.scope.rawValue,
+                risk: item.risk,
+                reason: item.reason,
+                createdAt: item.createdAt
+            )
+        }
+    }
+
+    /// 用户确认：真正写入长期记忆
+    func approveMemoryProposal(id: String) async throws {
+        _ = try await memoryProcessing.approveProposal(id: id, at: Clock.nowMillis())
+    }
+
+    func rejectMemoryProposal(id: String, note: String = "用户驳回") async throws {
+        try await memoryProcessing.rejectProposal(id: id, note: note, at: Clock.nowMillis())
     }
 
     func apiKey(for config: ModelConfig) throws -> String {

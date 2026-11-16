@@ -95,10 +95,10 @@ final class RecallContextBuilderTests: XCTestCase {
                 entryDate: "2026-11-16",
                 title: "河边",
                 content: "今天一起去了河边公园。",
+                source: "auto",
                 sharedExperience: "一起去河边公园散步，她说风很舒服。",
                 observation: "她今天心情比前几天好。",
                 feeling: "很放松。",
-                source: "auto",
                 changedBy: "ai"
             ),
             at: now

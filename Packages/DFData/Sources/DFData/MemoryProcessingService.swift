@@ -33,6 +33,8 @@ public struct MemoryIngestReport: Sendable, Equatable {
     public var proposalIDs: [String]
     /// 命中既有去重键、只补来源的条数
     public var mergedSourceCount: Int
+    /// 命中"用户已删除"的同一条记忆、被抑制不再重建的条数
+    public var suppressedCount: Int
     public var episodeIDs: [String]
     public var rejections: [MemoryScreenRejection]
     public var droppedByBudget: Int
@@ -41,6 +43,7 @@ public struct MemoryIngestReport: Sendable, Equatable {
         writtenMemoryIDs: [String] = [],
         proposalIDs: [String] = [],
         mergedSourceCount: Int = 0,
+        suppressedCount: Int = 0,
         episodeIDs: [String] = [],
         rejections: [MemoryScreenRejection] = [],
         droppedByBudget: Int = 0
@@ -48,6 +51,7 @@ public struct MemoryIngestReport: Sendable, Equatable {
         self.writtenMemoryIDs = writtenMemoryIDs
         self.proposalIDs = proposalIDs
         self.mergedSourceCount = mergedSourceCount
+        self.suppressedCount = suppressedCount
         self.episodeIDs = episodeIDs
         self.rejections = rejections
         self.droppedByBudget = droppedByBudget
@@ -251,11 +255,17 @@ public final class MemoryProcessingService: @unchecked Sendable {
         var written: [String] = []
         var proposals: [String] = []
         var merged = 0
+        var suppressed = 0
         var episodic: [(scope: MemoryScope, memoryID: String, candidate: MemoryCandidate)] = []
 
         for candidate in screened.accepted {
             let key = candidate.dedupeKey ?? policy.normalizedDedupeKey(for: candidate)
-            if try await existingMemoryID(dedupeKey: key) != nil {
+            if let existing = try await existingMemory(dedupeKey: key) {
+                if existing.isDeleted {
+                    // 用户删过这条：不再自动重建同一条，尊重"别再记这件事"的意图
+                    suppressed += 1
+                    continue
+                }
                 merged += 1
             }
 
@@ -281,6 +291,7 @@ public final class MemoryProcessingService: @unchecked Sendable {
             writtenMemoryIDs: written,
             proposalIDs: proposals,
             mergedSourceCount: merged,
+            suppressedCount: suppressed,
             episodeIDs: episodeIDs,
             rejections: screened.rejections,
             droppedByBudget: screened.droppedByBudget
@@ -763,12 +774,22 @@ public final class MemoryProcessingService: @unchecked Sendable {
 
     // MARK: - 内部：写入辅助
 
-    private func existingMemoryID(dedupeKey: String) async throws -> String? {
+    /// 按去重键查既有记忆（**含已删除**）：已删除的命中要抑制重建，不能只看未删除。
+    private func existingMemory(dedupeKey: String) async throws -> (id: String, isDeleted: Bool)? {
         try await database.dbQueue.read { db in
-            try String.fetchOne(
+            guard let row = try Row.fetchOne(
                 db,
-                sql: "SELECT id FROM memories WHERE dedupe_key = ? AND deleted_at IS NULL",
+                sql: """
+                SELECT id, deleted_at FROM memories
+                WHERE dedupe_key = ?
+                ORDER BY (deleted_at IS NULL) DESC, updated_at DESC
+                LIMIT 1
+                """,
                 arguments: [dedupeKey]
+            ) else { return nil }
+            return (
+                id: String.fromDatabaseValue(row["id"]) ?? "",
+                isDeleted: Int64.fromDatabaseValue(row["deleted_at"]) != nil
             )
         }
     }

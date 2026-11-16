@@ -465,8 +465,9 @@ public struct GRDBMemoryRepository: MemoryRepository, Sendable {
                 ) else {
                     throw MemoryError.notFound
                 }
+                // 恢复 = 同时解除删除与归档：两者都表示"不该被检索"，恢复后要重新可检索
                 try db.execute(
-                    sql: "UPDATE memories SET deleted_at = NULL WHERE id = ?",
+                    sql: "UPDATE memories SET deleted_at = NULL, archived_at = NULL WHERE id = ?",
                     arguments: [id]
                 )
                 try Self.index(
