@@ -309,5 +309,7 @@ gh workflow run build-ipa.yml --ref p1.5/b1
 | App 编译（含迁移计数 UI） | 通过 | app-build-check run `43882061042` success，commit `c6c6412` |
 | IPA 构建 | **未成功**：运行器未获取 | `43875830564`（macos-15 排队 15 分钟后取消）、`43881720723` / `43882458170`（macos-14 秒取消）；标注原文：“The job was not acquired by Runner of type hosted even after multiple attempts” |
 | 签名安装 / 真机验收 | 未执行 | 0/39 |
+| 主配置脱敏留档 | 已实现并单测通过 | `f487c25`，core-tests run `43884446316` success |
+| D41 OAuth 通用层（PKCE / Token / 错误） | 已实现并单测通过 | `da1e155`；不含厂商 Client ID 与 SDK，厂商 OAuth 仍未接通 |
 
 > 说明：App 编译通过 ≠ IPA 构建成功 ≠ 签名安装成功 ≠ 真机验收通过，四者不可互相替代。

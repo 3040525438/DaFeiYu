@@ -251,3 +251,5 @@
 | 2026-11-16 | IPA 通道异常：`43875830564`（macos-15）排队 15 分钟后以 "The job was not acquired by Runner of type hosted" 取消；`43881720723`、`43882458170`（macos-14）1 秒内取消。同期 app-build-check 可分配 → 判定为 arm64 临时容量，工作流回到 macos-15（`4dff30a`，core-tests run `43882790004` 通过），并继续重试 IPA |
 | 2026-11-16 | 真机验收清单改为 P0（21 项）/P1（16 项）+ 补充用例 4 项，原 39 条编号全部保留；补安装前备份、爱思签名步骤、失败排查与日志截图收集；`schema_version` 更正为 v14 |
 | 2026-11-16 | 真实迁移基线写入交付报告第七节：聊天 17,183→6,191（10,992 事件待处理）、记忆 5,121→5,101（20 待处理）、日记 22→10、信件 3→2、笔记 2、人格 1、关系档案 28、里程碑 12、阶段提案 1、媒体索引 96 待处理。**设备侧真实迁移尚未执行** |
+| 2026-11-16 | W9V：AstrBot 主配置脱敏留档（`f487c25`）。新增 `configJSON` 数据源与 `unsupported_config` 待处理原因，`cmd_config.json` 只留档不套用，key/token/secret/password 统一 `<redacted>` 并纳入覆盖校验；core-tests run `43884446316` 通过 |
+| 2026-11-16 | W9W：D41 云盘 OAuth 通用层（`da1e155`）。`CloudOAuthProvider`/`OAuthFlow`（S256 PKCE + state）/`OAuthTokenParser`/`OAuthTokenStore`（只写 SecureStore）/`CloudOAuthRegistry`；15 项单测含 RFC 7636 标准向量。**无厂商 Client ID，D41 仍为部分完成** |
