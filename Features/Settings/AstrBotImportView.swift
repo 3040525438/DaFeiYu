@@ -35,6 +35,22 @@ struct AstrBotImportView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                // iOS 的文件夹选择器在部分系统版本上"点进去就没有确认按钮"，这里提供固定目录入口，
+                // 用爱思助手把整个数据目录拖进 App 沙盒 Documents 即可，完全绕开系统选择器。
+                Button {
+                    if let url = sandboxSourceURL {
+                        applySource(url)
+                    } else {
+                        message = "没找到沙盒内的数据目录：请用爱思助手把数据文件夹拖进本 App 沙盒的 Documents 下（文件夹名用 astrbot 或 _astrbot_review），再来点这里。"
+                    }
+                } label: {
+                    Label("使用 App 内已放置的数据", systemImage: "internaldrive")
+                }
+                if let sandboxSourceURL {
+                    Text("已发现沙盒数据：\(sandboxSourceURL.lastPathComponent)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Button {
                     Task { await runImport(dryRun: true) }
                 } label: {
@@ -61,7 +77,7 @@ struct AstrBotImportView: View {
             } header: {
                 Text("导入")
             } footer: {
-                Text("导入只读副本：源文件先复制到 App 沙盒再解析，原始数据包不会被修改。无法识别的数据进入待处理区，不静默丢弃。")
+                Text("导入只读副本：源文件先复制到 App 沙盒再解析，原始数据包不会被修改。无法识别的数据进入待处理区，不静默丢弃。若系统选择器无法确认文件夹，可用爱思助手把数据目录拖进本 App 沙盒 Documents，再点「使用 App 内已放置的数据」。")
             }
 
             if let report = result ?? preview {
@@ -112,10 +128,9 @@ struct AstrBotImportView: View {
         ) { outcome in
             switch outcome {
             case .success(let urls):
-                sourceRoot = urls.first
-                preview = nil
-                result = nil
-                message = nil
+                if let url = urls.first {
+                    applySource(url)
+                }
             case .failure(let error):
                 message = "选择目录失败：\(error.localizedDescription)"
             }
@@ -136,6 +151,35 @@ struct AstrBotImportView: View {
         } message: {
             Text("只删除该批次导入的实体，导入前的数据不受影响。")
         }
+    }
+
+    // MARK: - 数据源
+
+    /// App 沙盒 Documents 下的候选目录名（用户用爱思助手把整个 AstrBot 目录拖进来即可）
+    private var sandboxCandidates: [URL] {
+        guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return []
+        }
+        return ["astrbot", "_astrbot_review", "AstrBot", "AstrBotData"].map {
+            documents.appendingPathComponent($0, isDirectory: true)
+        }
+    }
+
+    /// 只有确实存在 `data/` 或 `diary/` 才认作有效数据目录，避免误选空文件夹
+    private var sandboxSourceURL: URL? {
+        let fm = FileManager.default
+        return sandboxCandidates.first { url in
+            guard fm.fileExists(atPath: url.path) else { return false }
+            return fm.fileExists(atPath: url.appendingPathComponent("data").path)
+                || fm.fileExists(atPath: url.appendingPathComponent("diary").path)
+        }
+    }
+
+    private func applySource(_ url: URL) {
+        sourceRoot = url
+        preview = nil
+        result = nil
+        message = nil
     }
 
     private func reportSection(_ report: AstrBotImportReport) -> some View {
