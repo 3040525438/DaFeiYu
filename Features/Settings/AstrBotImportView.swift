@@ -146,6 +146,9 @@ struct AstrBotImportView: View {
             row("记忆", "新增 \(counts.memoriesNew) / 重复 \(counts.memoriesDuplicate) / 待处理 \(counts.memoriesPending)")
             row("日记", "新增 \(counts.diariesNew) / 重复 \(counts.diaryDuplicates) / 待处理 \(counts.diaryPending)")
             row("人格", "导入 \(counts.personaRowsImported) / 待处理 \(counts.personaPending)")
+            row("关系档案", "新增 \(counts.companionMemoriesNew) / 重复 \(counts.companionMemoriesDuplicate) / 待处理 \(counts.companionMemoriesPending)")
+            row("关系里程碑", "新增 \(counts.relationshipMilestonesNew) / 重复 \(counts.relationshipMilestonesDuplicate)")
+            row("阶段提案", "待确认 \(counts.relationshipProposalsNew)")
             row("文档", "新增 \(counts.documentsNew) / 待处理 \(counts.documentsPending)")
             row("待处理合计", "\(counts.pendingTotal)")
             if !counts.coverageProblems.isEmpty {

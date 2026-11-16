@@ -597,10 +597,8 @@ final class AstrBotImporterTests: XCTestCase {
 
     // MARK: - 记忆脏日期（真实数据 FACTS 行）
 
-    func testRecoversDateFromMemoryTextWhenDayColumnIsDirty() async throws {
-        let database = try makeDatabase("app")
-        let importer = AstrBotImporter(database: database)
-
+    /// 同步构造：避免在 async 用例里落到 GRDB 的 async `write` 重载
+    private func makeDirtyMemoryDatabase() throws -> URL {
         let memURL = root.appendingPathComponent("memory-dirty.db")
         var configuration = Configuration()
         configuration.prepareDatabase { db in try db.execute(sql: "PRAGMA foreign_keys = ON") }
@@ -619,6 +617,13 @@ final class AstrBotImporterTests: XCTestCase {
             """)
         }
         try mem.close()
+        return memURL
+    }
+
+    func testRecoversDateFromMemoryTextWhenDayColumnIsDirty() async throws {
+        let database = try makeDatabase("app")
+        let importer = AstrBotImporter(database: database)
+        let memURL = try makeDirtyMemoryDatabase()
 
         let report = try await importer.run(
             source: AstrBotSourcePaths(longTermMemoryDatabase: memURL),
