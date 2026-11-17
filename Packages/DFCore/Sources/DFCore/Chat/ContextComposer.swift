@@ -51,16 +51,8 @@ public enum ContextComposer {
     /// - Parameters:
     ///   - units: 按时间升序的组（含当前 open 组）
     ///   - budget: 提示词预算，其中 `historyRatio × totalTokens` 为历史上限
-    ///   - timeZoneIdentifier: 用于跨天判定的时区；nil 表示设备当前时区
-    public static func compose(
-        units: [ContextUnit],
-        budget: PromptBudget,
-        timeZoneIdentifier: String? = nil
-    ) -> Result {
+    public static func compose(units: [ContextUnit], budget: PromptBudget) -> Result {
         var result = Result()
-        // 跨天时给首条消息加日期前缀：模型看到的历史原本没有时间，
-        // 会把几天前的对话全部当成"刚刚/今晚"，表现为"只记得今晚"。
-        var lastDayKey: String?
 
         let ratio = min(max(budget.historyRatio, 0), 1)
         let historyBudget = Int(Double(max(budget.totalTokens, 0)) * ratio)
@@ -71,12 +63,7 @@ public enum ContextComposer {
         var stopped = false
 
         for unit in units.reversed() {
-            let built = makeTurns(
-                for: unit,
-                result: &result,
-                timeZoneIdentifier: timeZoneIdentifier,
-                lastDayKey: &lastDayKey
-            )
+            let built = makeTurns(for: unit, result: &result)
             // 整组无可用消息：不进入上下文，也不计入 droppedGroups（本就不该出现）
             guard !built.turns.isEmpty else { continue }
 
@@ -112,21 +99,11 @@ public enum ContextComposer {
 
     // MARK: - 单组转换
 
-    private static func makeTurns(
-        for unit: ContextUnit,
-        result: inout Result,
-        timeZoneIdentifier: String?,
-        lastDayKey: inout String?
-    ) -> (turns: [ChatTurn], ids: [String]) {
+    private static func makeTurns(for unit: ContextUnit,
+                                  result: inout Result) -> (turns: [ChatTurn], ids: [String]) {
         var turns: [ChatTurn] = []
         var ids: [String] = []
         turns.reserveCapacity(unit.messages.count)
-
-        // 倒序遍历（新→旧）：这一组若属于另一天，给组内第一条可用消息标日期
-        let firstDayKey = unit.messages.first.map {
-            LocalDay.dayKey(millis: $0.createdAt, timeZoneIdentifier: timeZoneIdentifier)
-        }
-        let needsDayPrefix = firstDayKey != nil && firstDayKey != lastDayKey
 
         for message in unit.messages {
             // 软删记录永不出现在上下文中，但保留在库里
@@ -165,16 +142,8 @@ public enum ContextComposer {
                 continue
             }
 
-            var text = message.text
-            if needsDayPrefix, turns.isEmpty, let firstDayKey {
-                text = "【\(firstDayKey)】" + text
-            }
-            turns.append(ChatTurn(role: role, text: text))
+            turns.append(ChatTurn(role: role, text: message.text))
             ids.append(message.id)
-        }
-        // 只有真正产出可用消息时才推进"已标注日期"，避免整组被过滤后误判
-        if !turns.isEmpty, let firstDayKey, needsDayPrefix {
-            lastDayKey = firstDayKey
         }
         return (turns, ids)
     }

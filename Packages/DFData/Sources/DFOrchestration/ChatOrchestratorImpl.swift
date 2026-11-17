@@ -443,12 +443,27 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
 
         // ---- 组装上下文与提示词 ----
         let composed: ContextComposer.Result
+        // 历史消息本身不带时间戳，模型会把几天前的对话当成"刚刚/今晚"。
+        // 这里把这段历史的真实起止日期写进【当前状态】，让她知道不是只有今晚。
+        var historySpan = ""
         do {
             let units = try await deps.units.recentUnits(
                 conversationID: conversationID,
                 limitGroups: deps.limitGroups
             )
             composed = ContextComposer.compose(units: units, budget: deps.budget)
+
+            let all = units.flatMap { $0.messages }
+            if let first = all.min(by: { $0.createdAt < $1.createdAt }),
+               let last = all.max(by: { $0.createdAt < $1.createdAt }) {
+                let firstDay = LocalDay.dayKey(millis: first.createdAt)
+                let lastDay = LocalDay.dayKey(millis: last.createdAt)
+                if firstDay == lastDay {
+                    historySpan = "历史对话都发生在 \(firstDay)。"
+                } else {
+                    historySpan = "历史对话从 \(firstDay) 持续到 \(lastDay)，跨越了多天，不是同一天。"
+                }
+            }
         } catch {
             continuation.finish(throwing: ChatOrchestrationError.persistenceFailed(reason: describe(error)))
             return
@@ -459,6 +474,9 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         var stateText = ""
         if let currentStateText = deps.currentStateText {
             stateText = await currentStateText()
+        }
+        if !historySpan.isEmpty {
+            stateText += "\n" + historySpan
         }
         // L4 相关记忆：按本轮输入检索，命中才注入；检索失败不影响本轮
         var memoryLines: [String] = []
