@@ -109,6 +109,22 @@ struct AstrBotImportView: View {
                 reportSection(report)
             }
 
+            // 预演通过后把"正式导入"直接送到结果下方：
+            // 预演只是预览、不写任何数据，必须再点正式导入才会真正写入。
+            // 真机反馈：预演成功后用户不知道去哪确认导入，聊天记录没变。
+            if let preview, preview.counts.coverageProblems.isEmpty {
+                Section {
+                    Button {
+                        showConfirmImport = true
+                    } label: {
+                        Label("下一步：正式导入（写入聊天记录）", systemImage: "tray.and.arrow.down.fill")
+                    }
+                    Text("预演不写数据，所以聊天页还没有变化。点上面按钮并确认后，历史消息、记忆、人格才会真正写入。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section {
                 if batches.isEmpty {
                     Text("还没有导入批次")
