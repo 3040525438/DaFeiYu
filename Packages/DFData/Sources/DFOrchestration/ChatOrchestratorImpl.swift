@@ -487,8 +487,8 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         let prompt = PromptComposer.compose(
             PromptInput(
                 corePersona: persona,
-                outerPersona: outerPersonaText,
                 rules: deps.rules,
+                outerPersona: outerPersonaText,
                 currentState: stateText,
                 memories: memoryLines,
                 history: composed.turns
