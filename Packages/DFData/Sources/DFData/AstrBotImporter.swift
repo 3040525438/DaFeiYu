@@ -71,6 +71,7 @@ public struct AstrBotImporter: AstrBotImporting, Sendable {
         // 这里用「归档」而不是物理删除：会话会立刻从聊天列表消失，但可在归档里恢复，
         // 也避免删除时触发其它表的外键约束（上一版正是因此导入失败）。
         if options.prunesNonImportedConversations && !options.isDryRun {
+            let archiveAt = Clock.nowMillis()
             try await database.write { db in
                 try db.execute(
                     sql: """
@@ -78,7 +79,7 @@ public struct AstrBotImporter: AstrBotImporting, Sendable {
                        SET archived_at = COALESCE(archived_at, ?), updated_at = ?
                      WHERE COALESCE(kind, '') <> 'imported'
                     """,
-                    arguments: [now, now]
+                    arguments: [archiveAt, archiveAt]
                 )
             }
         }
