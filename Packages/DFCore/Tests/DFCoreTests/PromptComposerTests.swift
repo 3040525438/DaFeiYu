@@ -57,4 +57,39 @@ final class PromptComposerTests: XCTestCase {
         XCTAssertEqual(PromptComposer.estimateTokens(""), 0)
         XCTAssertGreaterThan(PromptComposer.estimateTokens("一句话"), 0)
     }
+
+    // MARK: - 人格继承（P0）
+
+    func testRelationshipSectionIsInjectedAndNeverTrimmed() {
+        let relationship = "对用户的称呼：小鱼干\n关系摘要：从 AstrBot 时代一路走来的老朋友"
+        let input = PromptInput(
+            corePersona: "人格",
+            relationship: relationship,
+            history: [ChatTurn(role: .user, text: "你好")]
+        )
+        // 极小预算下记忆与历史都会被裁掉，关系设定必须原样保留
+        let budget = PromptBudget(totalTokens: 50, coreRatio: 0.2, memoryRatio: 0.1, historyRatio: 0.1)
+        let result = PromptComposer.compose(input, budget: budget)
+
+        XCTAssertTrue(result.system.contains("【关系设定】"))
+        XCTAssertTrue(result.system.contains("小鱼干"))
+        XCTAssertTrue(result.system.contains("从 AstrBot 时代一路走来的老朋友"))
+    }
+
+    func testEmptyRelationshipOmitsSection() {
+        let result = PromptComposer.compose(PromptInput(corePersona: "人格"))
+        XCTAssertFalse(result.system.contains("【关系设定】"))
+    }
+
+    func testOuterPersonaIsNotBudgetTrimmed() {
+        // 用户导入的人格文件不允许被缩减：条目再多也要全量进入 L2 段
+        let outer = (1...300).map { "性格特质/第\($0)条：\(String(repeating: "设定内容", count: 5))" }
+            .joined(separator: "\n")
+        let input = PromptInput(corePersona: "人格", outerPersona: outer)
+        let budget = PromptBudget(totalTokens: 100, coreRatio: 0.1, memoryRatio: 0.1, historyRatio: 0.1)
+        let result = PromptComposer.compose(input, budget: budget)
+
+        XCTAssertTrue(result.system.contains("第1条"))
+        XCTAssertTrue(result.system.contains("第300条"))
+    }
 }

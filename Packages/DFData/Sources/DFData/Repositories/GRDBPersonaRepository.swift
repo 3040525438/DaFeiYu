@@ -41,6 +41,27 @@ public struct GRDBPersonaRepository: PersonaRepository, Sendable {
         }
     }
 
+    /// 核心人格的附属条目（section != "核心"，如 AstrBot 迁移的"示例对话"）。
+    /// 全量返回、不截断：这些条目是原人格表达风格的一部分。
+    public func coreAuxiliaryItems() async throws -> [PersonaItem] {
+        do {
+            return try await database.dbQueue.read { db in
+                guard let persona = try Persona
+                    .filter(Column("kind") == PersonaKind.core.rawValue)
+                    .fetchOne(db) else {
+                    return []
+                }
+                return try PersonaItem
+                    .filter(Column("persona_id") == persona.id)
+                    .filter(Column("section") != "核心")
+                    .order(Column("weight").desc)
+                    .fetchAll(db)
+            }
+        } catch {
+            throw GRDBErrorMapper.map(error)
+        }
+    }
+
     public func outerItems() async throws -> [PersonaItem] {
         do {
             return try await database.dbQueue.read { db in

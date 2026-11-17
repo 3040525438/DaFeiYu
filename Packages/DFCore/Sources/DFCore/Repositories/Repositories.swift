@@ -216,6 +216,9 @@ public protocol MessageReferenceRepository: Sendable {
 public protocol PersonaRepository: Sendable {
     func corePersona() async throws -> Persona?
     func coreSystemPrompt() async throws -> String?
+    /// 核心人格的附属条目（如 AstrBot 迁移的开场对话示例），全量返回、不截断。
+    /// 这些条目属于原人格的表达风格，必须随核心人格一起进入模型调用。
+    func coreAuxiliaryItems() async throws -> [PersonaItem]
     func outerItems() async throws -> [PersonaItem]
     func ensureCorePersona(name: String, systemPrompt: String) async throws -> Persona
     /// 首次导入人格文件时按需创建外围人格；已存在则原样返回（幂等）。

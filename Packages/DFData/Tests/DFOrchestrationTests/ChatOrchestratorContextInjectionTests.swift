@@ -104,4 +104,37 @@ final class ChatOrchestratorContextInjectionTests: XCTestCase {
         XCTAssertFalse(captured.system.contains("【相关记忆】"))
         XCTAssertFalse(captured.system.contains("当前时间："))
     }
+
+    // MARK: - 人格继承（P0）
+
+    func testRelationshipAndPersonaAreInjectedIntoSystemPrompt() async throws {
+        let captured = Captured()
+        let deps = ChatOrchestratorDependencies(
+            groups: groups,
+            turns: turns,
+            messages: messages,
+            references: references,
+            units: units,
+            makeProvider: { ScriptedProvider(deltas: [.text("嗯。")]) },
+            makeRequest: { system, history in
+                captured.system = system
+                return ChatRequest(model: "fake-model", systemPrompt: system, messages: history)
+            },
+            corePersona: { "我是从 AstrBot 迁移来的大肥鱼，说话带梗。" },
+            relationshipText: {
+                "对用户的称呼：小鱼干\n当前关系阶段：亲近（已由用户确认）"
+            },
+            outerPersona: { "表达习惯/爱用叠词：真的会反复用" }
+        )
+        let orchestrator = ChatOrchestratorImpl(dependencies: deps)
+        for try await _ in orchestrator.send(text: "在吗", conversationID: conversationID) {}
+
+        // 核心人格、关系设定、外围人格都必须真正进入每次模型调用的 system prompt
+        XCTAssertTrue(captured.system.contains("【核心人格】"))
+        XCTAssertTrue(captured.system.contains("从 AstrBot 迁移来的大肥鱼"))
+        XCTAssertTrue(captured.system.contains("【关系设定】"))
+        XCTAssertTrue(captured.system.contains("小鱼干"))
+        XCTAssertTrue(captured.system.contains("【外围人格与成长】"))
+        XCTAssertTrue(captured.system.contains("爱用叠词"))
+    }
 }

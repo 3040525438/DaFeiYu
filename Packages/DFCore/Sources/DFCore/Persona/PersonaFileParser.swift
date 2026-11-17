@@ -47,8 +47,9 @@ public enum PersonaParseError: Error, Equatable, CustomStringConvertible {
 }
 
 public enum PersonaFileParser {
-    /// 单文件最多导入的条目数，超出截断并写 warning
-    public static let maxItems = 200
+    /// 单文件最多导入的条目数，超出截断并写 warning。
+    /// 用户的人格文件不允许被缩减：上限从 200 放宽到 1000，仅防御异常超大文件。
+    public static let maxItems = 1000
 
     public static func parse(data: Data, fileName: String) throws -> ParsedPersonaDocument {
         let ext = (fileName as NSString).pathExtension.lowercased()

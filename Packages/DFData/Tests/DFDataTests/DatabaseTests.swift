@@ -127,6 +127,32 @@ final class DatabaseTests: XCTestCase {
         XCTAssertEqual(prompt, "你是鲸鱼娘")
     }
 
+    /// P0 人格继承：AstrBot 迁移到核心人格下的附属条目（如开场对话示例）
+    /// 必须能被读取端全量拿到，否则导入的人格资料永远进不了模型调用。
+    func testCoreAuxiliaryItemsReturnImportedExampleDialogs() async throws {
+        let personas = GRDBPersonaRepository(database: database)
+        let core = try await personas.ensureCorePersona(name: "小肥", systemPrompt: "你是鲸鱼娘")
+
+        let dialogs = PersonaItem(
+            personaID: core.id,
+            section: "示例对话",
+            key: "begin_dialogs",
+            value: #"[{"role":"user","content":"在吗"},{"role":"ai","content":"在的"}]"#,
+            source: "astrbot"
+        )
+        try await database.dbQueue.write { db in
+            try dialogs.insert(db)
+        }
+
+        let auxiliary = try await personas.coreAuxiliaryItems()
+        XCTAssertEqual(auxiliary.count, 1, "核心 section 不应出现在附属条目里")
+        XCTAssertEqual(auxiliary.first?.key, "begin_dialogs")
+
+        // 核心提示词读取不受附属条目影响
+        let prompt = try await personas.coreSystemPrompt()
+        XCTAssertEqual(prompt, "你是鲸鱼娘")
+    }
+
     func testModelConfigDefaultSwitching() async throws {
         let configs = GRDBModelConfigRepository(database: database)
         var first = ModelConfig(name: "主模型", baseURL: "https://example.com/v1", modelID: "m1", isDefault: true)

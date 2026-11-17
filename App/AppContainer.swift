@@ -503,6 +503,8 @@ final class AppContainer: ObservableObject {
         // D36 / D37：角色与状态（闭包只捕获服务值，不捕获容器）
         let charactersService = self.characters
         let statesService = self.characterStates
+        // L0.5 关系设定（闭包只捕获服务值，不捕获容器）
+        let relationshipsService = self.relationships
         // 记忆召回兜底：泛问句时补日记 / 高显著度记忆 / 跨会话历史
         let recall = RecallContextBuilder(database: self.database, memories: self.memories, diary: self.diary)
         // 回合后置：记忆抽取（W8-3）。关掉开关即完全跳过，不影响聊天。
@@ -551,20 +553,59 @@ final class AppContainer: ObservableObject {
                 )
             },
             corePersona: {
-                (try await personas.coreSystemPrompt()) ?? ""
+                // L0 = AstrBot 迁移的原始 system_prompt（全量，不裁剪）
+                var prompt = (try await personas.coreSystemPrompt()) ?? ""
+                // 附属条目（如迁移的开场对话示例）是原人格表达风格的一部分，
+                // 同样全量随 L0 进入；只排版不改写，解析失败原样保留
+                if let auxiliary = try? await personas.coreAuxiliaryItems() {
+                    for item in auxiliary {
+                        let body: String
+                        if item.key == "begin_dialogs",
+                           let formatted = BeginDialogsFormatter.format(item.value) {
+                            body = "（以下是与用户的开场对话示例，体现你原有的说话风格，仅供风格参考）\n\(formatted)"
+                        } else {
+                            body = "\(item.section)/\(item.key)：\(item.value)"
+                        }
+                        if !prompt.isEmpty { prompt += "\n\n" }
+                        prompt += body
+                    }
+                }
+                return prompt
             },
-            // 外围人格：导入的人格条目必须真的进提示词，否则用户在聊天里完全看不到
-            outerPersona: {
-                guard let items = try? await personas.outerItems() else { return "" }
+            // L0.5 已确认的关系设定：称呼 / 摘要 / 阶段 / 重要共同经历。
+            // 关系档案只能由用户确认写入，AI 只能提案；未确认时返回空文本、不注入该段。
+            relationshipText: {
+                guard let profile = try? await relationshipsService.profile(),
+                      let milestones = try? await relationshipsService.milestones(limit: 5) else { return "" }
                 var lines: [String] = []
-                var remaining = 4000
-                for item in items.prefix(80) {
-                    let line = "\(item.section)/\(item.key)：\(item.value)"
-                    guard line.count <= remaining else { break }
-                    lines.append(line)
-                    remaining -= line.count + 1
+                if !profile.partnerName.isEmpty {
+                    lines.append("对用户的称呼：\(profile.partnerName)")
+                }
+                if !profile.summary.isEmpty {
+                    lines.append("关系摘要：\(profile.summary)")
+                }
+                if profile.stage != .unset {
+                    lines.append("当前关系阶段：\(profile.stage.displayName)（已由用户确认）")
+                }
+                if !milestones.isEmpty {
+                    lines.append("重要共同经历（时间从近到远）：")
+                    for milestone in milestones {
+                        let day = LocalDay.dayKey(millis: milestone.occurredAt)
+                        let summary = milestone.summary.isEmpty
+                            ? milestone.title
+                            : "\(milestone.title)——\(milestone.summary)"
+                        lines.append("- [\(day)] \(summary)")
+                    }
                 }
                 return lines.joined(separator: "\n")
+            },
+            // 外围人格：导入的人格条目必须真的进提示词，否则用户在聊天里完全看不到。
+            // 用户明确要求不缩减人格内容：全量注入，PromptComposer 的 L2 段本身不做预算裁剪。
+            outerPersona: {
+                guard let items = try? await personas.outerItems() else { return "" }
+                return items
+                    .map { "\($0.section)/\($0.key)：\($0.value)" }
+                    .joined(separator: "\n")
             },
             // D37：当前情绪来自角色状态；没有状态数据时返回 nil，只用静态表达准则
             currentEmotion: {
@@ -586,7 +627,9 @@ final class AppContainer: ObservableObject {
             },
             rules: PromptComposer.defaultRules,
             limitGroups: 20,
-            budget: PromptBudget(totalTokens: 6000),
+            // 人格（L0/L0.5/L2）不裁剪、全量注入后，记忆与历史的预算也要同步放宽，
+            // 否则 6000 token 里大部分被人格占掉，能召回的记忆反而比修复前更少
+            budget: PromptBudget(totalTokens: 12000),
             onTurnCompleted: { completion in
                 await extraction.handle(completion)
                 // D37：一轮结束后推断情绪并落库，下一轮提示词与界面都会跟着变

@@ -22,6 +22,9 @@ public struct PromptBudget: Sendable {
 
 public struct PromptInput: Sendable {
     public var corePersona: String
+    /// 已确认的关系设定（称呼 / 摘要 / 亲密程度 / 阶段 / 重要共同经历）。
+    /// 与核心人格同级、不参与预算裁剪：关系连续性是人格继承的一部分。
+    public var relationship: String
     public var rules: String
     public var outerPersona: String
     public var currentState: String
@@ -31,6 +34,7 @@ public struct PromptInput: Sendable {
 
     public init(
         corePersona: String,
+        relationship: String = "",
         rules: String = "",
         outerPersona: String = "",
         currentState: String = "",
@@ -38,6 +42,7 @@ public struct PromptInput: Sendable {
         history: [ChatTurn] = []
     ) {
         self.corePersona = corePersona
+        self.relationship = relationship
         self.rules = rules
         self.outerPersona = outerPersona
         self.currentState = currentState
@@ -84,6 +89,9 @@ public enum PromptComposer {
 
         // L0 核心人格：不裁剪
         let coreTokens = appendSection("核心人格", input.corePersona)
+
+        // L0.5 已确认的关系设定：不裁剪（关系连续性属于人格继承，不能被预算挤掉）
+        _ = appendSection("关系设定", input.relationship)
 
         // L1 行为准则
         _ = appendSection("行为准则", input.rules.isEmpty ? defaultRules : input.rules)
