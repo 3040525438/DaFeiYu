@@ -491,6 +491,9 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
             + "\n\n" + SegmentProtocol.systemFragment
             // D37：允许情绪/异议/拒绝/幽默，同时强制区分真实、推断与想象
             + "\n\n" + SelfExpressionProtocol.promptFragment(emotion: emotion)
+            // 时间放在 system 末尾再强调一次：模型对开头的【当前状态】容易忽略，
+            // 末尾是它生成前的最后输入，被问"现在几点"时更可能照抄而不是说看不到。
+            + (stateText.isEmpty ? "" : "\n\n【时间基准·必须遵守】\n" + stateText)
 
         // 取消发生在 openTurn 之前：不得创建消息组（时序 A）
         if shouldStop() {

@@ -680,7 +680,7 @@ struct MessageRow: View {
                 }
             }
 
-            if isUser { avatar }
+            // 用户消息不显示右侧头像：头像会把气泡推离屏幕右边，看起来像"居中"
             if isUser { Spacer(minLength: 0) }
             if !isUser { Spacer(minLength: 36) }
         }

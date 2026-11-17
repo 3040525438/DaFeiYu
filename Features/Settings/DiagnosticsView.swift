@@ -106,6 +106,9 @@ struct DiagnosticsView: View {
 
     private var healthSection: some View {
         Section {
+            // 环境与数据目录：实验版与正式版各自独立，避免"数据是不是丢了"的误会
+            LabeledContent("运行环境", value: container.environment.displayName)
+            LabeledContent("数据目录", value: container.dataRootPath)
             if let report {
                 LabeledContent("健康检查", value: report.healthy ? "通过" : "异常")
                 if let free = report.freeBytes {

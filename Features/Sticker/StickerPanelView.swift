@@ -80,6 +80,16 @@ struct StickerPanelView: View {
                                     stickerCell(sticker)
                                 }
                                 .buttonStyle(.plain)
+                                .contextMenu {
+                                    Button {
+                                        Task { await toggleFavorite(sticker) }
+                                    } label: {
+                                        Label(
+                                            sticker.isFavorite ? "取消收藏" : "收藏",
+                                            systemImage: sticker.isFavorite ? "star.slash" : "star"
+                                        )
+                                    }
+                                }
                             }
                         }
                         .padding(.horizontal, 14)
@@ -94,7 +104,7 @@ struct StickerPanelView: View {
                         .padding(.horizontal, 14)
                 }
 
-                Text("表情会作为一条独立消息发出，不会打断正在进行的对话。")
+                Text("点一下直接发送；长按可收藏。表情会作为独立消息发出，不会打断对话。")
                     .font(.system(size: 10))
                     .foregroundStyle(DFColor.inkMuted)
                     .padding(.bottom, 8)
@@ -137,6 +147,19 @@ struct StickerPanelView: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(DFColor.hairline, lineWidth: 1)
         )
+    }
+
+    private func toggleFavorite(_ sticker: Sticker) async {
+        do {
+            try await container.stickers.setFavorite(
+                id: sticker.id,
+                isFavorite: !sticker.isFavorite,
+                at: Clock.nowMillis()
+            )
+            await reload()
+        } catch {
+            errorText = "收藏失败：\(error.localizedDescription)"
+        }
     }
 
     private func reload() async {
