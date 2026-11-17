@@ -90,9 +90,11 @@ final class ChatOrchestratorReferenceTests: XCTestCase {
         let group = try await lastGroup()
         XCTAssertEqual(group.status, .complete)
         let rows = try await messages.messages(inGroup: group.id)
-        XCTAssertEqual(rows[1].text, raw, "无尾注时必须逐字符一致")
-        XCTAssertTrue(result.events.contains(.assistantReplaced(raw)))
-        let refs = try await references.references(for: [rows[1].id])
+        // 换行现在是气泡边界：无尾注的原始文本不剥离、不丢字，但拆成多条短消息落库
+        XCTAssertEqual(rows[1].text, "今天去看展了，人不多。", "无尾注时正文必须逐字符一致")
+        XCTAssertEqual(rows[2].text, "你呢？")
+        XCTAssertTrue(result.events.contains(.assistantReplaced(raw)), "流式显示文本保持原样")
+        let refs = try await references.references(for: rows.map(\.id))
         XCTAssertEqual(refs.count, 0)
     }
 
