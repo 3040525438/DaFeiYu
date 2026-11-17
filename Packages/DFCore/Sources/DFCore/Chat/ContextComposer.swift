@@ -59,31 +59,31 @@ public enum ContextComposer {
 
         // 从新到旧累加：一旦超预算就停止，保证丢弃只发生在最旧端、历史连续。
         // entry 同时携带消息当天的日期 key，供最终正向扫描时在跨天处注入日期标记。
-        var kept: [(entries: [(day: String, turn: ChatTurn, id: String)])] = []
+        var kept: [[(day: String, turn: ChatTurn, id: String)]] = []
         var used = 0
         var stopped = false
 
         for unit in units.reversed() {
             let built = makeTurns(for: unit, result: &result)
             // 整组无可用消息：不进入上下文，也不计入 droppedGroups（本就不该出现）
-            guard !built.entries.isEmpty else { continue }
+            guard !built.isEmpty else { continue }
 
             if stopped {
                 result.droppedGroups += 1
-                result.droppedMessages += built.entries.count
+                result.droppedMessages += built.count
                 continue
             }
 
             // 与 PromptComposer 的成本口径对齐（每条额外 4 token 的角色开销），
             // 否则本层"刚好放下"的内容会在下游被逐条二次裁剪，破坏组边界
-            let cost = built.entries.reduce(0) {
+            let cost = built.reduce(0) {
                 $0 + PromptComposer.estimateTokens($1.turn.text) + 4
             }
             // 最新一组无条件保留，避免极小预算下上下文为空
             if !kept.isEmpty && used + cost > historyBudget {
                 stopped = true
                 result.droppedGroups += 1
-                result.droppedMessages += built.entries.count
+                result.droppedMessages += built.count
                 continue
             }
 
@@ -94,8 +94,8 @@ public enum ContextComposer {
         // 最终正向（旧 → 新）拼装：历史消息本身不带时间戳，模型会把几天前的
         // 对话当成"刚刚/今晚"。在日期变化处的第一条消息文本前注入当天日期。
         var previousDay: String?
-        for entry in kept.reversed() {
-            for item in entry.entries {
+        for group in kept.reversed() {
+            for item in group {
                 var text = item.turn.text
                 if item.day != previousDay {
                     text = "【\(item.day)】\n" + text
@@ -111,7 +111,7 @@ public enum ContextComposer {
     // MARK: - 单组转换
 
     private static func makeTurns(for unit: ContextUnit,
-                                  result: inout Result) -> (entries: [(day: String, turn: ChatTurn, id: String)]) {
+                                  result: inout Result) -> [(day: String, turn: ChatTurn, id: String)] {
         var entries: [(day: String, turn: ChatTurn, id: String)] = []
         entries.reserveCapacity(unit.messages.count)
 
@@ -158,6 +158,6 @@ public enum ContextComposer {
                 id: message.id
             ))
         }
-        return (entries: entries)
+        return entries
     }
 }
