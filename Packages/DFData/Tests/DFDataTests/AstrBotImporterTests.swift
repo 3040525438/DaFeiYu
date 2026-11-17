@@ -296,7 +296,9 @@ final class AstrBotImporterTests: XCTestCase {
         XCTAssertEqual(report.counts.pendingMediaArchives, 1)
         XCTAssertEqual(report.counts.pendingMediaMissing, 1)
         XCTAssertEqual(report.counts.pendingReplyTargetMissing, 0)
-        XCTAssertEqual(report.counts.pendingTotal, 12)
+        // 待处理合计只统计真正落库到待确认表的行：系统事件不写待确认表（避免淹没），
+        // 但仍计入 messagesPending 参与覆盖校验，所以是 11 而不是 12
+        XCTAssertEqual(report.counts.pendingTotal, 11)
         XCTAssertTrue(report.counts.coverageProblems.isEmpty)
 
         // 会话
@@ -419,9 +421,9 @@ final class AstrBotImporterTests: XCTestCase {
         let items = try await importer.pendingItems(batchID: report.batchID, limit: 100)
         XCTAssertEqual(items.count, report.counts.pendingTotal)
 
-        let event = items.first { $0.reasonCode == AstrBotPendingReason.systemEvent.rawValue }
-        XCTAssertNotNil(event)
-        XCTAssertTrue(event?.rawJSON.contains("系统通知") == true)
+        // 系统事件（进群、撤回、通知等）不写待确认表：待确认页只留真正需要人工处理的问题
+        let systemEvents = items.filter { $0.reasonCode == AstrBotPendingReason.systemEvent.rawValue }
+        XCTAssertTrue(systemEvents.isEmpty, "系统事件不应落库到待确认表")
 
         let invalidDay = items.first { $0.reasonCode == AstrBotPendingReason.invalidDay.rawValue }
         XCTAssertNotNil(invalidDay)
