@@ -14,13 +14,15 @@ struct NotificationSettingsView: View {
     @State private var status: UNAuthorizationStatus = .notDetermined
     @State private var pendingCount = 0
     @State private var message: String?
-    @State private var level: NotificationLevel = .brief
     @State private var isWorking = false
+    /// 真实策略（D13 / D14 / D48）：通知档位、免打扰、最小间隔、每日上限都写回 settings
+    @State private var policy: AutonomyPolicy = .default
+    @State private var policyError: String?
 
     var body: some View {
         List {
             statusSection
-            levelSection
+            policySection
             actionSection
             noteSection
         }
@@ -51,18 +53,54 @@ struct NotificationSettingsView: View {
         }
     }
 
-    private var levelSection: some View {
+    private var policySection: some View {
         Section {
-            Picker("通知档位", selection: $level) {
+            Toggle("允许主动行为", isOn: Binding(
+                get: { policy.enabled },
+                set: { policy.enabled = $0; savePolicy() }
+            ))
+
+            Picker("通知档位", selection: Binding(
+                get: { policy.notificationLevel },
+                set: { policy.notificationLevel = $0; savePolicy() }
+            )) {
                 Text("完整内容").tag(NotificationLevel.full)
                 Text("简短提示").tag(NotificationLevel.brief)
                 Text("不通知").tag(NotificationLevel.hidden)
             }
             .pickerStyle(.segmented)
+
+            DatePicker("免打扰开始", selection: quietStartDate, displayedComponents: .hourAndMinute)
+            DatePicker("免打扰结束", selection: quietEndDate, displayedComponents: .hourAndMinute)
+
+            Stepper(
+                "最小间隔 \(policy.minIntervalMinutes) 分钟",
+                value: Binding(
+                    get: { policy.minIntervalMinutes },
+                    set: { policy.minIntervalMinutes = $0; savePolicy() }
+                ),
+                in: 15...720,
+                step: 15
+            )
+
+            Stepper(
+                "每日上限 \(policy.dailyLimit) 条",
+                value: Binding(
+                    get: { policy.dailyLimit },
+                    set: { policy.dailyLimit = $0; savePolicy() }
+                ),
+                in: 1...20
+            )
+
+            if let policyError {
+                Text(policyError)
+                    .font(.caption)
+                    .foregroundStyle(DFColor.danger)
+            }
         } header: {
-            Text("档位")
+            Text("主动行为与通知")
         } footer: {
-            Text("完整内容会显示正文；简短提示只说“她想和你说句话”；不通知则完全不出现在锁屏。默认简短提示。")
+            Text("这些值会真正写入自主策略并参与发送闸门，不是界面上的临时开关。免打扰支持跨午夜（默认 23:00–08:00），最小间隔默认 120 分钟，每日上限默认 5 条。")
         }
     }
 
@@ -107,6 +145,48 @@ struct NotificationSettingsView: View {
     private func refresh() async {
         status = await container.notifications.authorizationStatus()
         pendingCount = await container.notifications.pendingCount()
+        if let state = try? await container.autonomy.state() {
+            policy = state.policy
+        }
+    }
+
+    // MARK: - 策略读写
+
+    private var quietStartDate: Binding<Date> { minutesBinding(\.quietStartMinute) }
+    private var quietEndDate: Binding<Date> { minutesBinding(\.quietEndMinute) }
+
+    private func minutesBinding(_ keyPath: WritableKeyPath<AutonomyPolicy, Int>) -> Binding<Date> {
+        Binding(
+            get: { Self.date(minutes: policy[keyPath: keyPath]) },
+            set: { newValue in
+                policy[keyPath: keyPath] = Self.minutes(date: newValue)
+                savePolicy()
+            }
+        )
+    }
+
+    /// 控件一改就落库；失败只提示，不改回旧值以免用户输入被吞
+    private func savePolicy() {
+        let snapshot = policy
+        Task {
+            do {
+                try await container.autonomy.savePolicy(snapshot)
+                policyError = nil
+            } catch {
+                policyError = "保存失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private static func date(minutes: Int) -> Date {
+        let calendar = Calendar.current
+        let base = calendar.startOfDay(for: Date())
+        return calendar.date(byAdding: .minute, value: max(0, min(minutes, 1439)), to: base) ?? base
+    }
+
+    private static func minutes(date: Date) -> Int {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return (components.hour ?? 0) * 60 + (components.minute ?? 0)
     }
 
     private func requestAuthorization() async {
@@ -139,7 +219,7 @@ struct NotificationSettingsView: View {
             sentAt: nil,
             characterID: nil,
             moodCode: nil,
-            notifyLevel: level,
+            notifyLevel: policy.notificationLevel,
             feedback: .none,
             feedbackAt: nil,
             isFavorite: false,

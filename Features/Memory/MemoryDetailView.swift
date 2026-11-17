@@ -20,6 +20,8 @@ struct MemoryDetailView: View {
     @State private var message: String?
     @State private var editing = false
     @State private var confirmDelete = false
+    @State private var pendingSource: MemorySourceRef?
+    @State private var confirmSourceDelete = false
 
     init(record: MemoryRecord, onChanged: @escaping (String) -> Void) {
         self.record = record
@@ -77,6 +79,20 @@ struct MemoryDetailView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("原始聊天和日记不会被删除；同一内容也不会被自动重新提取。")
+        }
+        .confirmationDialog(
+            "删除这条来源关联的所有记忆？",
+            isPresented: $confirmSourceDelete,
+            titleVisibility: .visible
+        ) {
+            Button("删除关联记忆", role: .destructive) {
+                Task { await deleteBySource() }
+            }
+            Button("取消", role: .cancel) { pendingSource = nil }
+        } message: {
+            if let pendingSource {
+                Text("会删除所有以「\(sourceTypeTitle(pendingSource.sourceType)) \(pendingSource.sourceID)」为依据的记忆（可能不止这一条）。原始聊天与日记保留，这些内容也不会再被自动重新提取。")
+            }
         }
     }
 
@@ -141,13 +157,29 @@ struct MemoryDetailView: View {
             Text("来源（可以追溯回原始内容）")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(DFColor.ink)
+            Text("按来源批量删除会移除所有以这条内容为依据的记忆，原始聊天与日记保留。")
+                .font(.system(size: 10))
+                .foregroundStyle(DFColor.inkMuted)
 
             ForEach(Array(sources.enumerated()), id: \.offset) { _, source in
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("\(sourceTypeTitle(source.sourceType)) · \(source.sourceID)")
-                        .font(.system(size: 10))
-                        .foregroundStyle(DFColor.inkMuted)
-                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text("\(sourceTypeTitle(source.sourceType)) · \(source.sourceID)")
+                            .font(.system(size: 10))
+                            .foregroundStyle(DFColor.inkMuted)
+                            .lineLimit(1)
+                        Spacer()
+                        Button {
+                            pendingSource = source
+                            confirmSourceDelete = true
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 11))
+                                .foregroundStyle(DFColor.danger)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("删除该来源关联的记忆")
+                    }
                     if !source.excerpt.isEmpty {
                         Text(source.excerpt)
                             .font(DFFont.caption)
@@ -308,6 +340,28 @@ struct MemoryDetailView: View {
             try await container.memories.softDelete(id: current.id, at: Clock.nowMillis())
             message = "已删除。原始聊天与日记保留，同一内容不会被自动重新提取。"
             onChanged("记忆已删除")
+            await refresh()
+        } catch {
+            message = "删除失败：\(error.localizedDescription)"
+        }
+        isBusy = false
+    }
+
+    /// 按来源批量删除（D19）：删掉所有引用该来源的记忆，原始聊天/日记不动
+    private func deleteBySource() async {
+        guard let source = pendingSource else { return }
+        isBusy = true
+        do {
+            let count = try await container.memories.softDelete(
+                sourceType: source.sourceType,
+                sourceID: source.sourceID,
+                at: Clock.nowMillis()
+            )
+            message = count > 0
+                ? "已删除 \(count) 条以该来源为依据的记忆；原始内容保留，且不会被自动重新提取。"
+                : "没有需要删除的记忆"
+            pendingSource = nil
+            onChanged("已按来源删除记忆")
             await refresh()
         } catch {
             message = "删除失败：\(error.localizedDescription)"
