@@ -57,32 +57,33 @@ public enum ContextComposer {
         let ratio = min(max(budget.historyRatio, 0), 1)
         let historyBudget = Int(Double(max(budget.totalTokens, 0)) * ratio)
 
-        // 从新到旧累加：一旦超预算就停止，保证丢弃只发生在最旧端、历史连续
-        var kept: [(turns: [ChatTurn], ids: [String])] = []
+        // 从新到旧累加：一旦超预算就停止，保证丢弃只发生在最旧端、历史连续。
+        // entry 同时携带消息当天的日期 key，供最终正向扫描时在跨天处注入日期标记。
+        var kept: [(entries: [(day: String, turn: ChatTurn, id: String)])] = []
         var used = 0
         var stopped = false
 
         for unit in units.reversed() {
             let built = makeTurns(for: unit, result: &result)
             // 整组无可用消息：不进入上下文，也不计入 droppedGroups（本就不该出现）
-            guard !built.turns.isEmpty else { continue }
+            guard !built.entries.isEmpty else { continue }
 
             if stopped {
                 result.droppedGroups += 1
-                result.droppedMessages += built.turns.count
+                result.droppedMessages += built.entries.count
                 continue
             }
 
             // 与 PromptComposer 的成本口径对齐（每条额外 4 token 的角色开销），
             // 否则本层"刚好放下"的内容会在下游被逐条二次裁剪，破坏组边界
-            let cost = built.turns.reduce(0) {
-                $0 + PromptComposer.estimateTokens($1.text) + 4
+            let cost = built.entries.reduce(0) {
+                $0 + PromptComposer.estimateTokens($1.turn.text) + 4
             }
             // 最新一组无条件保留，避免极小预算下上下文为空
             if !kept.isEmpty && used + cost > historyBudget {
                 stopped = true
                 result.droppedGroups += 1
-                result.droppedMessages += built.turns.count
+                result.droppedMessages += built.entries.count
                 continue
             }
 
@@ -90,9 +91,19 @@ public enum ContextComposer {
             used += cost
         }
 
+        // 最终正向（旧 → 新）拼装：历史消息本身不带时间戳，模型会把几天前的
+        // 对话当成"刚刚/今晚"。在日期变化处的第一条消息文本前注入当天日期。
+        var previousDay: String?
         for entry in kept.reversed() {
-            result.turns.append(contentsOf: entry.turns)
-            result.allowedMessageIDs.formUnion(entry.ids)
+            for item in entry.entries {
+                var text = item.turn.text
+                if item.day != previousDay {
+                    text = "【\(item.day)】\n" + text
+                    previousDay = item.day
+                }
+                result.turns.append(ChatTurn(role: item.turn.role, text: text))
+                result.allowedMessageIDs.insert(item.id)
+            }
         }
         return result
     }
@@ -100,10 +111,9 @@ public enum ContextComposer {
     // MARK: - 单组转换
 
     private static func makeTurns(for unit: ContextUnit,
-                                  result: inout Result) -> (turns: [ChatTurn], ids: [String]) {
-        var turns: [ChatTurn] = []
-        var ids: [String] = []
-        turns.reserveCapacity(unit.messages.count)
+                                  result: inout Result) -> (entries: [(day: String, turn: ChatTurn, id: String)]) {
+        var entries: [(day: String, turn: ChatTurn, id: String)] = []
+        entries.reserveCapacity(unit.messages.count)
 
         for message in unit.messages {
             // 软删记录永不出现在上下文中，但保留在库里
@@ -142,9 +152,12 @@ public enum ContextComposer {
                 continue
             }
 
-            turns.append(ChatTurn(role: role, text: message.text))
-            ids.append(message.id)
+            entries.append((
+                day: LocalDay.dayKey(millis: message.createdAt),
+                turn: ChatTurn(role: role, text: message.text),
+                id: message.id
+            ))
         }
-        return (turns, ids)
+        return (entries: entries)
     }
 }

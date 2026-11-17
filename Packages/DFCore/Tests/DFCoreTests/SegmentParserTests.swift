@@ -93,4 +93,21 @@ final class SegmentParserTests: XCTestCase {
         XCTAssertTrue(SegmentProtocol.systemFragment.contains(SegmentProtocol.separator))
         XCTAssertTrue(SegmentProtocol.systemFragment.contains("\(SegmentProtocol.maxSegments)"))
     }
+
+    // MARK: - 自然换行也拆气泡（模型不用分隔符时的兜底）
+
+    func testNewlinesSplitIntoBubblesWhenNoSeparatorUsed() {
+        var parser = SegmentParser()
+        _ = parser.feed("(认真点头)真的呀，就昨晚\n\n看到十一点那回。\n你问过一遍了喵")
+        XCTAssertEqual(parser.finish(), ["(认真点头)真的呀，就昨晚", "看到十一点那回。", "你问过一遍了喵"])
+    }
+
+    func testNewlineSplitAlsoRespectsMaxSegments() {
+        var parser = SegmentParser()
+        let joined = (1...10).map { "第\($0)句" }.joined(separator: "\n")
+        _ = parser.feed(joined)
+        let segments = parser.finish()
+        XCTAssertEqual(segments.count, SegmentProtocol.maxSegments, "换行拆分同样封顶")
+        XCTAssertTrue(segments.last?.contains("第10句") == true, "超限内容合并到末段，不得丢弃")
+    }
 }

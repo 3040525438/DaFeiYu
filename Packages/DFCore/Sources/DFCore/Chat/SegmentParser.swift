@@ -31,10 +31,10 @@ public enum SegmentProtocol {
 
     /// 注入 system prompt 的协议说明。模型不遵循时退化为单气泡，不影响可用性。
     public static let systemFragment = """
-    【多气泡协议（可选）】
-    你可以把一次回复拆成多条短消息，用单独一行的 \(separator) 分隔，最多 \(maxSegments) 条。
-    每条气泡应是一句完整的话或一个完整的小动作，不要为了拆分而把句子截断。
-    不需要拆分时按平常方式回复一段话即可，不要输出分隔符。
+    【多条短消息】
+    你和用户聊天要像真人发消息那样，一次回复通常拆成 2-4 条短消息，用单独一行的 \(separator) 分隔，最多 \(maxSegments) 条。
+    每条短消息应是一句完整的话或一个完整的小动作，不要为了拆分而把句子截断。
+    就算不用分隔符，你的换行也会被拆成多条气泡发出，所以排版时直接按"一条消息一段"来写。
     """
 }
 
@@ -97,20 +97,39 @@ public struct SegmentParser: Sendable {
     }
 
     /// 纯函数切分（与流式解析口径完全一致，供落库前统一切分使用）。
+    ///
+    /// 拆分优先级：先按分隔符拆；模型没用分隔符时，自然换行也拆成独立气泡
+    /// ——伴侣聊天的语境下，多短气泡远比一大段挤在一起自然。
+    /// 总上限仍是 `maxSegments`：无论哪一层超限，都把末尾合并为一段，绝不丢弃内容。
     public static func split(_ text: String) -> [String] {
         guard !text.isEmpty else { return [""] }
-        let parts = text.components(separatedBy: separator)
-        var limited: [String]
-        if parts.count <= maxSegments {
-            limited = parts
-        } else {
-            limited = Array(parts.prefix(maxSegments - 1))
-            limited.append(parts.dropFirst(maxSegments - 1).joined(separator: separator))
+        var separatorParts = text.components(separatedBy: separator)
+        // 分隔符段数超上限：末尾各段按原文合并（保留分隔符文本），绝不丢弃
+        if separatorParts.count > maxSegments {
+            let head = Array(separatorParts.prefix(maxSegments - 1))
+            let tail = separatorParts.dropFirst(maxSegments - 1).joined(separator: separator)
+            separatorParts = head + [tail]
         }
-        let cleaned = limited
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        // 每段再按换行拆成更短的气泡（模型不用分隔符时自然换行也分段）
+        var parts: [String] = []
+        for chunk in separatorParts {
+            parts.append(contentsOf: splitByNewlines(chunk))
+        }
+        // 换行拆分后仍可能超上限：同样把末尾合并，不丢弃
+        if parts.count > maxSegments {
+            let head = Array(parts.prefix(maxSegments - 1))
+            let tail = parts.dropFirst(maxSegments - 1).joined(separator: "\n")
+            parts = head + [tail]
+        }
+        return parts.isEmpty ? [""] : parts
+    }
+
+    /// 按换行拆段：每行一个气泡，空行丢弃，行内内容逐字保留。
+    private static func splitByNewlines(_ text: String) -> [String] {
+        text
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
-        return cleaned.isEmpty ? [""] : cleaned
     }
 
     // MARK: - 内部工具

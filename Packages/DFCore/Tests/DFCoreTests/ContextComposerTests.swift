@@ -44,6 +44,28 @@ final class ContextComposerTests: XCTestCase {
         PromptBudget(totalTokens: total, coreRatio: 0.1, memoryRatio: 0.1, historyRatio: ratio)
     }
 
+    // MARK: - 跨天日期标记
+
+    /// 历史消息本身不带时间戳，模型会把几天前的对话当成"刚刚"。
+    /// 在日期变化处的第一条消息前必须注入当天日期。
+    func testDayBoundaryMessagesGetDatePrefix() {
+        // 2026-11-05 23:00 与 2026-11-17 22:00（UTC+8 当地日）
+        let dayA: Int64 = 1_793_953_200_000
+        let dayB: Int64 = 1_795_087_200_000
+        let unit = ContextUnit(group: MessageGroup(id: "g", conversationID: "c1", turnIndex: 1, openedAt: dayA), messages: [
+            message("m1", .user, "晚上好", at: dayA),
+            message("m2", .assistant, "晚上好呀", at: dayA + 1),
+            message("m3", .user, "在吗", at: dayB),
+            message("m4", .assistant, "在的", at: dayB + 1)
+        ])
+        let result = ContextComposer.compose(units: [unit], budget: budget())
+
+        XCTAssertTrue(result.turns[0].text.hasPrefix("【"), "第一天第一条也要带日期标记")
+        XCTAssertTrue(result.turns[2].text.hasPrefix("【"), "跨天处第一条要带日期标记")
+        XCTAssertFalse(result.turns[1].text.hasPrefix("【"), "同一天内的后续消息不加标记")
+        XCTAssertFalse(result.turns[3].text.hasPrefix("【"), "同一天内的后续消息不加标记")
+    }
+
     // MARK: - C01 按完整组裁剪
 
     func testC01_DropsWholeGroupsOnly() {
