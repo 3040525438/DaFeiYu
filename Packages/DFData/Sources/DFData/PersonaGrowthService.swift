@@ -292,16 +292,17 @@ public final class PersonaGrowthService: @unchecked Sendable {
                 changedBy: "user",
                 at: at
             )
-            let snapshot = try String.fetchOne(
+            // 回读真实行，避免返回的 id 与数据库不一致（UI 用它做列表标识）
+            let row = try Row.fetchOne(
                 db,
-                sql: "SELECT snapshot_json FROM persona_versions WHERE persona_id = ? AND version = ?",
+                sql: "SELECT id, snapshot_json FROM persona_versions WHERE persona_id = ? AND version = ?",
                 arguments: [personaID, newVersion]
-            ) ?? "{}"
+            )
             return PersonaVersion(
-                id: UUID().uuidString,
+                id: (row?["id"] as String?) ?? UUID().uuidString,
                 personaID: personaID,
                 version: newVersion,
-                snapshotJSON: snapshot,
+                snapshotJSON: (row?["snapshot_json"] as String?) ?? "{}",
                 changeReason: reason,
                 changedBy: "user",
                 createdAt: at

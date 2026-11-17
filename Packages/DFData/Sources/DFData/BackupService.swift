@@ -39,6 +39,11 @@ public final class BackupService: @unchecked Sendable {
         "memories",
         "memory_sources",
         "memory_versions",
+        // 情景记忆与反思都以记忆为素材，排在 memories 之后
+        "episodes",
+        "reflections",
+        // 提案引用人格条目与记忆，放在最后，恢复时最先清空
+        "proposals",
         "diary_entries",
         "diary_entry_versions"
     ]

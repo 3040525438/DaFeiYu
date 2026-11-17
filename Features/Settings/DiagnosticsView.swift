@@ -19,9 +19,15 @@ struct DiagnosticsView: View {
     @State private var upgradeError: String?
     @State private var isLoadingUpgrades = false
 
+    /// 记忆链路自检（第九/十/十八条）
+    @State private var memoryReport: MemoryHealthReport?
+    @State private var memoryError: String?
+    @State private var isRepairingIndex = false
+
     var body: some View {
         List {
             healthSection
+            memoryHealthSection
             upgradeSection
             storageSection
             countSection
@@ -32,10 +38,69 @@ struct DiagnosticsView: View {
         .task {
             await refresh()
             await loadUpgrades()
+            await loadMemoryHealth()
         }
         .refreshable {
             await refresh()
             await loadUpgrades()
+            await loadMemoryHealth()
+        }
+    }
+
+    /// 记忆链路自检：只读展示数据库里真实存在的计数与不一致。
+    private var memoryHealthSection: some View {
+        Section {
+            if let memoryReport {
+                LabeledContent("有效记忆", value: "\(memoryReport.active) 条")
+                LabeledContent("已归档 / 已删除", value: "\(memoryReport.archived) / \(memoryReport.deleted)")
+                LabeledContent("检索索引", value: "\(memoryReport.indexed) 行")
+                LabeledContent("索引缺失", value: "\(memoryReport.missingIndex) 条")
+                LabeledContent("索引多余", value: "\(memoryReport.orphanIndex) 条")
+                LabeledContent("缺少来源", value: "\(memoryReport.withoutSource) 条")
+                LabeledContent("推断 / 待确认", value: "\(memoryReport.unconfirmed) 条")
+                LabeledContent("疑似重复", value: "\(memoryReport.duplicateGroups) 组")
+
+                if memoryReport.isHealthy {
+                    Text("记忆与索引一致。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("发现不一致。可重建索引：只补缺失、清多余，不改写记忆正文。")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Button {
+                        Task { await repairIndex() }
+                    } label: {
+                        HStack {
+                            Text(isRepairingIndex ? "正在重建…" : "重建记忆索引")
+                            Spacer()
+                            if isRepairingIndex { ProgressView() }
+                        }
+                    }
+                    .disabled(isRepairingIndex)
+                }
+
+                Text("「检索是否执行、结果是否进入模型上下文、模型是否真的用了记忆」只能在运行时观测，这里不伪造计数。")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                if let message {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else if let memoryError {
+                Text("读取失败：\(memoryError)")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                Button("重新读取") {
+                    Task { await loadMemoryHealth() }
+                }
+            } else {
+                Text("检查中…")
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("记忆链路自检")
         }
     }
 
@@ -226,6 +291,29 @@ struct DiagnosticsView: View {
             upgradeError = nil
         } catch {
             upgradeError = "读取升级记录失败：\(error.localizedDescription)"
+        }
+    }
+
+    /// 记忆链路自检：只读，失败要明确提示而不是当空数据。
+    private func loadMemoryHealth() async {
+        do {
+            memoryReport = try await container.memoryHealth.check()
+            memoryError = nil
+        } catch {
+            memoryError = error.localizedDescription
+        }
+    }
+
+    /// 重建索引：补齐缺失、清理多余；不动记忆正文。
+    private func repairIndex() async {
+        isRepairingIndex = true
+        defer { isRepairingIndex = false }
+        do {
+            let repaired = try await container.memoryHealth.repairIndex()
+            message = repaired > 0 ? "已补齐 \(repaired) 条记忆索引" : "索引已一致，无需修复"
+            await loadMemoryHealth()
+        } catch {
+            message = "重建索引失败：\(error.localizedDescription)"
         }
     }
 

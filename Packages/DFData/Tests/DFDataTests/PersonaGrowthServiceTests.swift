@@ -242,6 +242,82 @@ final class PersonaGrowthServiceTests: XCTestCase {
         }
     }
 
+    // MARK: - 用户手动编辑核心人格（D30 / D07）
+
+    func testUpdateCorePromptWritesItemAndVersion() async throws {
+        let saved = try await service.updateCorePrompt(
+            personaID: "p-core",
+            name: "大肥鱼二号",
+            systemPrompt: "  你是鲸鱼娘，但这次是我手写的。  "
+        )
+        XCTAssertEqual(saved.version, 2)
+        XCTAssertEqual(saved.changedBy, "user")
+        XCTAssertEqual(saved.changeReason, "用户手动修改核心人格")
+        XCTAssertTrue(saved.snapshotJSON.contains("我手写的"))
+
+        let prompt = try await string(
+            "SELECT value FROM persona_items WHERE persona_id = 'p-core' AND key = 'system_prompt'"
+        )
+        XCTAssertEqual(prompt, "你是鲸鱼娘，但这次是我手写的。", "首尾空白应被裁掉")
+
+        let name = try await string("SELECT name FROM personas WHERE id = 'p-core'")
+        XCTAssertEqual(name, "大肥鱼二号")
+
+        let version = try await int("SELECT current_version FROM personas WHERE id = 'p-core'")
+        XCTAssertEqual(version, 2)
+
+        let versions = try await service.versions(personaID: "p-core")
+        XCTAssertEqual(versions.count, 2, "旧版本必须保留")
+        XCTAssertEqual(versions.first?.id, saved.id, "返回的 id 必须与库里一致")
+
+        // 回退仍可用：第 1 版是种子里的旧提示词
+        _ = try await service.restore(personaID: "p-core", version: 1)
+        let restored = try await string(
+            "SELECT value FROM persona_items WHERE persona_id = 'p-core' AND key = 'system_prompt'"
+        )
+        XCTAssertEqual(restored, "你是鲸鱼娘，不改。")
+    }
+
+    func testUpdateCorePromptOnlyAllowsCorePersona() async throws {
+        do {
+            _ = try await service.updateCorePrompt(personaID: "p-outer", systemPrompt: "越权改外围")
+            XCTFail("外围人格不允许从核心编辑入口写")
+        } catch let error as PersonaGrowthError {
+            XCTAssertEqual(error, .invalidDraft("只有核心人格允许在设置页直接编辑"))
+        }
+        let value = try await string(
+            "SELECT value FROM persona_items WHERE persona_id = 'p-outer' AND key = 'drink'"
+        )
+        XCTAssertEqual(value, "奶茶")
+    }
+
+    func testUpdateCorePromptRejectsBlankPrompt() async throws {
+        do {
+            _ = try await service.updateCorePrompt(personaID: "p-core", systemPrompt: "   \n ")
+            XCTFail("空白提示词应被拒绝")
+        } catch let error as PersonaGrowthError {
+            XCTAssertEqual(error, .invalidDraft("核心人格提示词不能为空"))
+        }
+        let version = try await int("SELECT current_version FROM personas WHERE id = 'p-core'")
+        XCTAssertEqual(version, 1, "被拒绝时不能涨版本号")
+    }
+
+    func testUpdateCorePromptInsertsItemWhenMissing() async throws {
+        try await database.write { db in
+            try db.execute(sql: "DELETE FROM persona_items WHERE id = 'i-core'")
+        }
+        _ = try await service.updateCorePrompt(personaID: "p-core", systemPrompt: "补回来的核心")
+
+        let count = try await int(
+            "SELECT count(*) FROM persona_items WHERE persona_id = 'p-core' AND section = '核心' AND key = 'system_prompt'"
+        )
+        XCTAssertEqual(count, 1)
+        let value = try await string(
+            "SELECT value FROM persona_items WHERE persona_id = 'p-core' AND key = 'system_prompt'"
+        )
+        XCTAssertEqual(value, "补回来的核心")
+    }
+
     // MARK: - 工具
 
     private func string(_ sql: String) async throws -> String? {

@@ -351,6 +351,13 @@ final class AppContainer: ObservableObject {
         }
     }
 
+    // MARK: - 记忆链路自检（第九/十/十八条）
+
+    /// 只读检查 + 索引修复（不改写记忆正文）。
+    var memoryHealth: MemoryHealthService {
+        MemoryHealthService(database: database)
+    }
+
     // MARK: - 自我反思（D32）
 
     /// 反思记录查询（成长页展示真实结论，不造假数据）。
