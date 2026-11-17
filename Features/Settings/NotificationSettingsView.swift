@@ -92,6 +92,40 @@ struct NotificationSettingsView: View {
                 in: 1...20
             )
 
+            Toggle("允许主动发消息", isOn: Binding(
+                get: { policy.allowProactiveMessage },
+                set: { policy.allowProactiveMessage = $0; savePolicy() }
+            ))
+            Toggle("允许她主动开新会话", isOn: Binding(
+                get: { policy.allowNewConversation },
+                set: { policy.allowNewConversation = $0; savePolicy() }
+            ))
+            Toggle("允许自动整理记忆", isOn: Binding(
+                get: { policy.allowMemoryConsolidation },
+                set: { policy.allowMemoryConsolidation = $0; savePolicy() }
+            ))
+            Toggle("允许自我反思", isOn: Binding(
+                get: { policy.allowSelfReflection },
+                set: { policy.allowSelfReflection = $0; savePolicy() }
+            ))
+            Toggle("允许提出建议", isOn: Binding(
+                get: { policy.allowSuggestion },
+                set: { policy.allowSuggestion = $0; savePolicy() }
+            ))
+
+            Button("暂停主动行为 1 小时") {
+                Task { await pause(hours: 1) }
+            }
+            Button("暂停到今天结束") {
+                Task { await pauseToEndOfDay() }
+            }
+            Button("恢复主动行为") {
+                Task { await resume() }
+            }
+            Button("恢复默认策略", role: .destructive) {
+                Task { await resetPolicy() }
+            }
+
             if let policyError {
                 Text(policyError)
                     .font(.caption)
@@ -100,7 +134,7 @@ struct NotificationSettingsView: View {
         } header: {
             Text("主动行为与通知")
         } footer: {
-            Text("这些值会真正写入自主策略并参与发送闸门，不是界面上的临时开关。免打扰支持跨午夜（默认 23:00–08:00），最小间隔默认 120 分钟，每日上限默认 5 条。")
+            Text("这些值会真正写入自主策略并参与发送闸门，不是界面上的临时开关。免打扰支持跨午夜（默认 23:00–08:00），最小间隔默认 120 分钟，每日上限默认 5 条。暂停后到期自动恢复。")
         }
     }
 
@@ -175,6 +209,46 @@ struct NotificationSettingsView: View {
             } catch {
                 policyError = "保存失败：\(error.localizedDescription)"
             }
+        }
+    }
+
+    private func pause(hours: Int) async {
+        do {
+            let until = Clock.nowMillis() + Int64(hours) * 3600 * 1000
+            try await container.autonomy.pause(until: until)
+            message = "已暂停 \(hours) 小时，到期自动恢复"
+        } catch {
+            policyError = "暂停失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func pauseToEndOfDay() async {
+        let today = LocalDay.dayKey(millis: Clock.nowMillis())
+        guard let start = LocalDay.millis(dayKey: today) else { return }
+        do {
+            try await container.autonomy.pause(until: start + 24 * 3600 * 1000)
+            message = "已暂停到今天结束"
+        } catch {
+            policyError = "暂停失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func resume() async {
+        do {
+            try await container.autonomy.resume()
+            message = "已恢复主动行为"
+        } catch {
+            policyError = "恢复失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func resetPolicy() async {
+        do {
+            try await container.autonomy.resetToDefault()
+            await refresh()
+            message = "已恢复默认策略"
+        } catch {
+            policyError = "恢复默认失败：\(error.localizedDescription)"
         }
     }
 
