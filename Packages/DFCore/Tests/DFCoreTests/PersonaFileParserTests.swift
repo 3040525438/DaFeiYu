@@ -168,7 +168,9 @@ final class PersonaFileParserTests: XCTestCase {
     }
 
     func testItemsAreTruncatedToLimit() throws {
-        let values = (1...205).map { "\"第\($0)条偏好\"" }.joined(separator: ",")
+        // 上限放宽到 1000 后，测试量也跟着上限走，避免写死数字
+        let total = PersonaFileParser.maxItems + 5
+        let values = (1...total).map { "\"第\($0)条偏好\"" }.joined(separator: ",")
         let document = try PersonaFileParser.parse(
             data: data("[\(values)]"),
             fileName: "persona.json"
