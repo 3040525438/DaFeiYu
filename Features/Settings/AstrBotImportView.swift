@@ -21,6 +21,10 @@ struct AstrBotImportView: View {
     @State private var showConfirmImport = false
     @State private var showConfirmRollback = false
     @State private var rollbackCandidate: String?
+    /// 覆盖式导入：先清掉上一次导入写入的数据，避免重复累积
+    @State private var replacePreviousImports = true
+    /// 用导入的人格替换当前核心人格（占位人格无论开关都会自动替换）
+    @State private var replaceCorePersona = true
 
     var body: some View {
         List {
@@ -51,6 +55,15 @@ struct AstrBotImportView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                Toggle("覆盖上次导入（先清理再写入）", isOn: $replacePreviousImports)
+                Text("开启后只清理上一次导入带进来的消息/记忆/日记，你自己聊的内容不会被删除。关闭则为追加导入。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Toggle("用导入的人格替换当前核心人格", isOn: $replaceCorePersona)
+                Text("首启的占位人格无论如何都会被真实人格替换；这里决定是否也覆盖你已经改过的核心人格，旧版本会保留可回退。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 if preview == nil {
                     Button {
                         Task { await runImport(dryRun: true) }
@@ -301,7 +314,12 @@ struct AstrBotImportView: View {
         defer { try? FileManager.default.removeItem(at: staging) }
 
         do {
-            let options = AstrBotImportOptions(isDryRun: dryRun, stagingDirectory: staging)
+            let options = AstrBotImportOptions(
+                isDryRun: dryRun,
+                stagingDirectory: staging,
+                replacesCorePersona: replaceCorePersona,
+                replacesPreviousImports: replacePreviousImports
+            )
             let report = try await container.astrbotImporter.run(source: paths, options: options)
             if dryRun {
                 preview = report

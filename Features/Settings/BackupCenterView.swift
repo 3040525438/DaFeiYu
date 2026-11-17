@@ -399,8 +399,20 @@ struct BackupCenterView: View {
             restoreCandidate = manifest
             showRestoreConfirm = true
         } catch {
-            status = "无法恢复：\(error.localizedDescription)"
+            status = "无法恢复：\(Self.readable(error))"
         }
+    }
+
+    /// 系统对自定义 Error 只会给「未能完成操作。（域 错误 N）」，这里换成中文原因
+    private static func readable(_ error: Error) -> String {
+        if let backup = error as? BackupError { return backup.description }
+        if let restore = error as? BackupService.RestoreGuardError {
+            switch restore {
+            case .confirmationRequired(let reason): return "需要确认：\(reason)"
+            case .blocked(let reason): return reason
+            }
+        }
+        return error.localizedDescription
     }
 
     private var mirror: BackupMirrorService {

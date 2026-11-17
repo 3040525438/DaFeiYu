@@ -11,6 +11,8 @@ struct ApprovalCenterView: View {
     @State private var personaProposals: [PersonaGrowthProposal] = []
     @State private var stageProposals: [RelationshipStageChange] = []
     @State private var memoryProposals: [MemoryProposalItem] = []
+    /// AstrBot 导入时因冲突/空内容进入待处理区的条目（此前完全没展示）
+    @State private var importPendings: [AstrBotPendingItem] = []
     @State private var busy = false
     @State private var message: String?
 
@@ -25,6 +27,7 @@ struct ApprovalCenterView: View {
             }
 
             memorySection
+            importSection
             personaSection
             relationshipSection
 
@@ -48,7 +51,86 @@ struct ApprovalCenterView: View {
     }
 
     private var totalPending: Int {
-        memoryProposals.count + personaProposals.count + stageProposals.count
+        memoryProposals.count + importPendings.count + personaProposals.count + stageProposals.count
+    }
+
+    // MARK: - 导入待确认
+
+    private var importSection: some View {
+        Section {
+            if importPendings.isEmpty {
+                Text("没有待处理的导入条目")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(importPendings) { item in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(importKindText(item.entityKind))
+                                .font(.system(size: 14, weight: .medium))
+                            Spacer()
+                            Text(importReasonText(item.reasonCode))
+                                .font(.caption2)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(DFColor.primarySoft, in: Capsule())
+                                .foregroundStyle(DFColor.primary)
+                        }
+                        if let sourceID = item.sourceID, !sourceID.isEmpty {
+                            Text("来源 ID：\(sourceID)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        HStack(spacing: 12) {
+                            Button("标记已处理") {
+                                Task { await resolveImportPending(item) }
+                            }
+                            .font(.caption)
+                            .disabled(busy || item.id.isEmpty)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        } header: {
+            Text("AstrBot 导入待确认")
+        } footer: {
+            Text("导入时因人格冲突、内容为空等原因被拦下的条目都在这里，不会自动写入。")
+        }
+    }
+
+    private func importKindText(_ kind: String) -> String {
+        switch kind {
+        case "persona": return "人格"
+        case "memory": return "记忆"
+        case "diary": return "日记"
+        case "document": return "信件/笔记"
+        case "message": return "消息"
+        default: return kind.isEmpty ? "未知条目" : kind
+        }
+    }
+
+    private func importReasonText(_ reason: String) -> String {
+        switch reason {
+        case "persona_conflict": return "人格冲突"
+        case "empty_content": return "内容为空"
+        default: return reason.isEmpty ? "待确认" : reason
+        }
+    }
+
+    private func resolveImportPending(_ item: AstrBotPendingItem) async {
+        busy = true
+        defer { busy = false }
+        do {
+            try await container.astrbotImporter.resolvePending(
+                id: item.id,
+                targetID: nil,
+                at: Clock.nowMillis()
+            )
+            await reload()
+        } catch {
+            message = "标记失败：\(error.localizedDescription)"
+        }
     }
 
     // MARK: - 记忆
@@ -205,6 +287,11 @@ struct ApprovalCenterView: View {
             stageProposals = all.filter { $0.status == .pending }
         } catch {
             stageProposals = []
+        }
+        do {
+            importPendings = try await container.astrbotImporter.pendingItems(limit: 100)
+        } catch {
+            importPendings = []
         }
     }
 

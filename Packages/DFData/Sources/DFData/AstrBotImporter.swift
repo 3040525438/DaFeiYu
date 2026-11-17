@@ -50,16 +50,49 @@ public struct AstrBotImporter: AstrBotImporting, Sendable {
         defer { prepared.cleanUpStaging() }
 
         let batchID = Self.makeBatchID(at: startedAt, hash: prepared.sourceHash)
-        let existingCorePersona = try await database.dbQueue.read { db in
-            try String.fetchOne(db, sql: "SELECT id FROM personas WHERE kind = 'core' LIMIT 1")
+
+        // 覆盖式导入：先清掉上一次导入写入的数据（只删导入批次带进来的，
+        // 用户自己聊的内容与后来的编辑不受影响），避免重复累积。
+        // 必须先回滚再读核心人格，否则会拿到已被删除的 persona id。
+        if options.replacesPreviousImports && !options.isDryRun {
+            let previousBatches = try await database.dbQueue.read { db in
+                try String.fetchAll(
+                    db,
+                    sql: "SELECT id FROM astrbot_migration_batches WHERE status = ? ORDER BY started_at",
+                    arguments: [AstrBotImportStatus.succeeded.rawValue]
+                )
+            }
+            for previous in previousBatches {
+                _ = try? await rollback(batchID: previous, at: Clock.nowMillis())
+            }
         }
+
+        // 已有核心人格的 id 与当前提示词：用于识别"首启占位人格"并决定是否原位替换
+        let corePersona = try await database.dbQueue.read { db -> (id: String, prompt: String)? in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: """
+                SELECT p.id,
+                       (SELECT value FROM persona_items i
+                         WHERE i.persona_id = p.id AND i.section = '核心' AND i.key = 'system_prompt'
+                         LIMIT 1) AS prompt
+                FROM personas p
+                WHERE p.kind = 'core'
+                ORDER BY p.created_at
+                LIMIT 1
+                """
+            ) else { return nil }
+            return (String.fromDatabaseValue(row["id"]) ?? "", String.fromDatabaseValue(row["prompt"]) ?? "")
+        }
+        let existingCorePersona = corePersona?.id
 
         let plan: ImportPlan
         do {
             plan = try Self.buildPlan(
                 prepared: prepared,
                 options: options,
-                existingCorePersona: existingCorePersona
+                existingCorePersona: existingCorePersona,
+                existingCorePrompt: corePersona?.prompt
             )
         } catch {
             // 映射阶段失败也要留痕：批次表写一条 failed，不写任何业务数据
@@ -367,6 +400,39 @@ public struct AstrBotImporter: AstrBotImporting, Sendable {
         }
     }
 
+    /// 所有批次里仍未处理的导入待确认项（供"待确认事项"页汇总展示）。
+    /// 之前只按 batchID 查询，导致导入产生的大量 pending 在设置页完全看不到。
+    public func pendingItems(limit: Int = 100) async throws -> [AstrBotPendingItem] {
+        try await database.dbQueue.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT id, batch_id, entity_kind, source_id, reason_code, raw_json, status,
+                       resolved_target_id, created_at, resolved_at
+                  FROM astrbot_import_pending
+                 WHERE status = 'pending'
+                 ORDER BY created_at DESC, id ASC
+                 LIMIT ?
+                """,
+                arguments: [max(1, limit)]
+            )
+            return rows.map { row in
+                AstrBotPendingItem(
+                    id: (try? row.decode(String.self, forColumn: "id")) ?? "",
+                    batchID: (try? row.decode(String.self, forColumn: "batch_id")) ?? "",
+                    entityKind: (try? row.decode(String.self, forColumn: "entity_kind")) ?? "",
+                    sourceID: Self.optionalString(row, "source_id"),
+                    reasonCode: (try? row.decode(String.self, forColumn: "reason_code")) ?? "",
+                    rawJSON: (try? row.decode(String.self, forColumn: "raw_json")) ?? "{}",
+                    status: (try? row.decode(String.self, forColumn: "status")) ?? "pending",
+                    resolvedTargetID: Self.optionalString(row, "resolved_target_id"),
+                    createdAt: (try? row.decode(Int64.self, forColumn: "created_at")) ?? 0,
+                    resolvedAt: Self.optionalInt64(row, "resolved_at")
+                )
+            }
+        }
+    }
+
     public func resolvePending(id: String, targetID: String?, at millis: Int64) async throws {
         try await database.write { db in
             guard let status = try String.fetchOne(
@@ -536,6 +602,8 @@ private struct PlannedPersona: Sendable {
     var name: String
     var sourcePersonaID: String
     var items: [PlannedPersonaItem]
+    /// true 表示原位替换已有核心人格（写新版本），而不是新建第二个人格
+    var replacesExisting: Bool = false
 }
 
 private struct PlannedPersonaItem: Sendable {
@@ -611,7 +679,8 @@ extension AstrBotImporter {
     private static func buildPlan(
         prepared: PreparedSources,
         options: AstrBotImportOptions,
-        existingCorePersona: String?
+        existingCorePersona: String?,
+        existingCorePrompt: String?
     ) throws -> ImportPlan {
         var plan = ImportPlan(
             conversations: [],
@@ -635,7 +704,13 @@ extension AstrBotImporter {
             try readMemories(url, parser: parser, plan: &plan)
         }
         if let url = prepared.personaDatabase {
-            try readPersona(url, options: options, existingCorePersona: existingCorePersona, plan: &plan)
+            try readPersona(
+                url,
+                options: options,
+                existingCorePersona: existingCorePersona,
+                existingCorePrompt: existingCorePrompt,
+                plan: &plan
+            )
         }
         if let url = prepared.diaryDirectory {
             try readDiary(url, parser: parser, plan: &plan)
@@ -930,6 +1005,7 @@ extension AstrBotImporter {
         _ url: URL,
         options: AstrBotImportOptions,
         existingCorePersona: String?,
+        existingCorePrompt: String?,
         plan: inout ImportPlan
     ) throws {
         let queue = try openReadOnly(url)
@@ -945,8 +1021,13 @@ extension AstrBotImporter {
             plan.counts.sourcePersonaRows = rows.count
             guard !rows.isEmpty else { return }
 
-            // 已有核心人格：一律不覆盖，全部进待处理区
-            if existingCorePersona != nil {
+            // 已有核心人格：
+            // - 若当前只是首启占位人格，或用户明确选了"替换核心人格"，则原位替换；
+            // - 否则一律不覆盖，全部进待处理区。
+            let isPlaceholder = existingCorePrompt?.contains("占位核心人格") == true
+            let shouldReplace = existingCorePersona != nil
+                && (options.replacesCorePersona || isPlaceholder)
+            if existingCorePersona != nil && !shouldReplace {
                 for row in rows {
                     plan.pendings.append(
                         pending(
@@ -979,7 +1060,10 @@ extension AstrBotImporter {
                 return
             }
 
-            let personaID = "astrbot-persona-" + String(SHA256.hash(sourcePersonaID).prefix(12))
+            // 替换时复用现有核心人格 id，避免出现两个 kind='core' 导致读到占位人格
+            let personaID = shouldReplace
+                ? (existingCorePersona ?? "astrbot-persona-" + String(SHA256.hash(sourcePersonaID).prefix(12)))
+                : "astrbot-persona-" + String(SHA256.hash(sourcePersonaID).prefix(12))
             var items: [PlannedPersonaItem] = [
                 PlannedPersonaItem(
                     id: "astrbot-persona-item-" + String(SHA256.hash("\(sourcePersonaID)|system_prompt").prefix(12)),
@@ -1004,7 +1088,8 @@ extension AstrBotImporter {
                 id: personaID,
                 name: options.personaName,
                 sourcePersonaID: sourcePersonaID,
-                items: items
+                items: items,
+                replacesExisting: shouldReplace
             )
             plan.counts.personaRowsImported += 1
             plan.counts.personaItemsNew += items.count
@@ -1943,27 +2028,48 @@ extension AstrBotImporter {
 
         // 人格
         if let persona = plan.persona {
-            try db.execute(
-                sql: """
-                INSERT INTO personas
-                    (id, kind, name, is_locked, current_version, created_at, updated_at, fingerprint_scope, growth_enabled)
-                VALUES (?, 'core', ?, 1, 1, ?, ?, 'core', 0)
-                """,
-                arguments: [persona.id, persona.name, now, now]
-            )
-            for item in persona.items {
+            if persona.replacesExisting {
+                // 原位替换：不新建第二个 kind='core'，否则读取端仍可能拿到旧占位人格
+                try db.execute(
+                    sql: "UPDATE personas SET name = ?, current_version = current_version + 1, updated_at = ? WHERE id = ?",
+                    arguments: [persona.name, now, persona.id]
+                )
+            } else {
                 try db.execute(
                     sql: """
-                    INSERT INTO persona_items
-                        (id, persona_id, section, key, value, confidence, weight, source, updated_at,
-                         tier, tier_status, tier_source, tier_evidence, status)
-                    VALUES (?, ?, ?, ?, ?, 1.0, 1.0, 'astrbot', ?, 'core', 'core', 'astrbot_import', ?, 'active')
+                    INSERT INTO personas
+                        (id, kind, name, is_locked, current_version, created_at, updated_at, fingerprint_scope, growth_enabled)
+                    VALUES (?, 'core', ?, 1, 1, ?, ?, 'core', 0)
                     """,
-                    arguments: [
-                        item.id, persona.id, item.section, item.key, item.value, now,
-                        "{\"source\":\"astrbot\",\"persona\":\"\(persona.sourcePersonaID)\"}"
-                    ]
+                    arguments: [persona.id, persona.name, now, now]
                 )
+            }
+            for item in persona.items {
+                var needsInsert = !persona.replacesExisting
+                if persona.replacesExisting {
+                    try db.execute(
+                        sql: """
+                        UPDATE persona_items SET value = ?, source = 'astrbot', updated_at = ?
+                        WHERE persona_id = ? AND section = ? AND key = ?
+                        """,
+                        arguments: [item.value, now, persona.id, item.section, item.key]
+                    )
+                    needsInsert = db.changesCount == 0
+                }
+                if needsInsert {
+                    try db.execute(
+                        sql: """
+                        INSERT INTO persona_items
+                            (id, persona_id, section, key, value, confidence, weight, source, updated_at,
+                             tier, tier_status, tier_source, tier_evidence, status)
+                        VALUES (?, ?, ?, ?, ?, 1.0, 1.0, 'astrbot', ?, 'core', 'core', 'astrbot_import', ?, 'active')
+                        """,
+                        arguments: [
+                            item.id, persona.id, item.section, item.key, item.value, now,
+                            "{\"source\":\"astrbot\",\"persona\":\"\(persona.sourcePersonaID)\"}"
+                        ]
+                    )
+                }
                 try db.execute(
                     sql: """
                     INSERT INTO persona_item_tier_history
@@ -1976,13 +2082,19 @@ extension AstrBotImporter {
                 try map(db, batchID: batchID, kind: .personaItem, sourceID: item.key, targetID: item.id, at: now)
             }
             let snapshot = personaSnapshot(name: persona.name, items: persona.items)
+            // 替换已有核心人格时版本号已经 +1，版本快照必须跟着真实版本走，否则回退会错位
+            let personaVersion = try Int.fetchOne(
+                db,
+                sql: "SELECT current_version FROM personas WHERE id = ?",
+                arguments: [persona.id]
+            ) ?? 1
             try db.execute(
                 sql: """
                 INSERT INTO persona_versions
                     (id, persona_id, version, snapshot_json, change_reason, changed_by, created_at)
-                VALUES (?, ?, 1, ?, 'AstrBot 迁移导入', 'migration', ?)
+                VALUES (?, ?, ?, ?, 'AstrBot 迁移导入', 'migration', ?)
                 """,
-                arguments: [UUID().uuidString, persona.id, snapshot, now]
+                arguments: [UUID().uuidString, persona.id, personaVersion, snapshot, now]
             )
             let fingerprint = SHA256.hash(snapshot)
             try db.execute(

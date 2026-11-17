@@ -63,6 +63,9 @@ public struct ChatOrchestratorDependencies: Sendable {
     public var makeRequest: @Sendable (_ systemPrompt: String, _ history: [ChatTurn]) async throws -> ChatRequest
     /// 核心人格（为空时使用空字符串，不影响流程）
     public var corePersona: @Sendable () async throws -> String
+    /// 外围人格（成长条目）文本。为 nil/空时提示词里没有该段。
+    /// 之前漏了这一段，导致"导入的人格文件在聊天里完全看不到"。
+    public var outerPersona: (@Sendable () async -> String)?
     /// D37：本轮请求时的当前情绪。为 nil 时只用静态表达准则，行为与旧版本一致。
     public var currentEmotion: (@Sendable () async -> EmotionState?)?
     /// L3 当前状态文本（本地时间等）。模型自身没有系统时钟，不注入就会回答"看不到时间"。
@@ -94,6 +97,7 @@ public struct ChatOrchestratorDependencies: Sendable {
         makeProvider: @escaping @Sendable () async throws -> any ChatModelProvider,
         makeRequest: @escaping @Sendable (String, [ChatTurn]) async throws -> ChatRequest,
         corePersona: @escaping @Sendable () async throws -> String = { "" },
+        outerPersona: (@Sendable () async -> String)? = nil,
         currentEmotion: (@Sendable () async -> EmotionState?)? = nil,
         currentStateText: (@Sendable () async -> String)? = nil,
         retrieveMemories: (@Sendable (String, Int) async -> [String])? = nil,
@@ -113,6 +117,7 @@ public struct ChatOrchestratorDependencies: Sendable {
         self.makeProvider = makeProvider
         self.makeRequest = makeRequest
         self.corePersona = corePersona
+        self.outerPersona = outerPersona
         self.currentEmotion = currentEmotion
         self.currentStateText = currentStateText
         self.retrieveMemories = retrieveMemories
@@ -460,9 +465,11 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
         if let retrieve = deps.retrieveMemories {
             memoryLines = await retrieve(trimmed, 8)
         }
+        let outerPersonaText = await deps.outerPersona?() ?? ""
         let prompt = PromptComposer.compose(
             PromptInput(
                 corePersona: persona,
+                outerPersona: outerPersonaText,
                 rules: deps.rules,
                 currentState: stateText,
                 memories: memoryLines,

@@ -553,6 +553,19 @@ final class AppContainer: ObservableObject {
             corePersona: {
                 (try await personas.coreSystemPrompt()) ?? ""
             },
+            // 外围人格：导入的人格条目必须真的进提示词，否则用户在聊天里完全看不到
+            outerPersona: {
+                guard let items = try? await personas.outerItems() else { return "" }
+                var lines: [String] = []
+                var remaining = 4000
+                for item in items.prefix(80) {
+                    let line = "\(item.section)/\(item.key)：\(item.value)"
+                    guard line.count <= remaining else { break }
+                    lines.append(line)
+                    remaining -= line.count + 1
+                }
+                return lines.joined(separator: "\n")
+            },
             // D37：当前情绪来自角色状态；没有状态数据时返回 nil，只用静态表达准则
             currentEmotion: {
                 guard let id = try? await charactersService.activeCharacterID(),

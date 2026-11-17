@@ -22,6 +22,10 @@ public enum BackupCipherError: Error, Equatable, CustomStringConvertible {
     }
 }
 
+extension BackupCipherError: LocalizedError {
+    public var errorDescription: String? { description }
+}
+
 /// 对称认证加密抽象：实现负责"密文 + 认证标签"。
 /// - CryptoKit 实现见 `CryptoKitBackupCipher`
 /// - Linux / 单元测试用替身（真实算法出口必须在真机验证）

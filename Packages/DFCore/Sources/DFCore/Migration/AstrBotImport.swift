@@ -64,6 +64,12 @@ public struct AstrBotImportOptions: Sendable, Equatable {
     public var importsRelationshipLedger: Bool
     /// 源文件暂存目录：设置后先把源文件复制到该目录再打开，原件完全不触碰
     public var stagingDirectory: URL?
+    /// 是否用源人格替换当前核心人格。
+    /// 默认 true：用户导入 AstrBot 的初衷就是恢复她原来的设定，
+    /// 而不是让首启的占位人格继续覆盖真实人格。替换会写新版本，可回退。
+    public var replacesCorePersona: Bool
+    /// 是否先清理上一次导入写入的数据（覆盖式导入，避免重复累积）。
+    public var replacesPreviousImports: Bool
 
     public init(
         isDryRun: Bool = true,
@@ -71,7 +77,9 @@ public struct AstrBotImportOptions: Sendable, Equatable {
         personaName: String = "大肥鱼",
         importsDocuments: Bool = true,
         importsRelationshipLedger: Bool = true,
-        stagingDirectory: URL? = nil
+        stagingDirectory: URL? = nil,
+        replacesCorePersona: Bool = false,
+        replacesPreviousImports: Bool = false
     ) {
         self.isDryRun = isDryRun
         self.conversationTitlePrefix = conversationTitlePrefix
@@ -79,6 +87,8 @@ public struct AstrBotImportOptions: Sendable, Equatable {
         self.importsDocuments = importsDocuments
         self.importsRelationshipLedger = importsRelationshipLedger
         self.stagingDirectory = stagingDirectory
+        self.replacesCorePersona = replacesCorePersona
+        self.replacesPreviousImports = replacesPreviousImports
     }
 }
 

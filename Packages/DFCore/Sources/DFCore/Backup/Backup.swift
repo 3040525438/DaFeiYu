@@ -145,6 +145,12 @@ public enum BackupError: Error, Equatable, CustomStringConvertible {
     }
 }
 
+extension BackupError: LocalizedError {
+    /// 系统默认只会给出「未能完成操作。（DFCore.BackupError 错误 N）」，
+    /// 实现 LocalizedError 后界面与日志都能直接看到中文原因。
+    public var errorDescription: String? { description }
+}
+
 /// 恢复前的检查结果：必须三项都过才允许落地（D42）。
 public struct RestorePrecheck: Codable, Sendable, Equatable {
     public var backupID: String
