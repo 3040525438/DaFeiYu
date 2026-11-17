@@ -256,14 +256,15 @@ public final class PersonaGrowthService: @unchecked Sendable {
             }
             let at = self.now()
 
-            let updated = try db.execute(
+            try db.execute(
                 sql: """
                 UPDATE persona_items SET value = ?, source = 'user_edit', updated_at = ?
                 WHERE persona_id = ? AND section = '核心' AND key = 'system_prompt'
                 """,
                 arguments: [trimmed, at, personaID]
             )
-            if updated == 0 {
+            // GRDB 的 execute 返回 Void，受影响行数从 changesCount 取
+            if db.changesCount == 0 {
                 try self.insertItem(
                     db,
                     personaID: personaID,

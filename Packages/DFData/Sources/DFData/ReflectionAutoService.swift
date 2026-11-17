@@ -131,16 +131,21 @@ public struct ReflectionAutoService: Sendable {
             }
         }
 
-        guard let object = StructuredOutput.parse(raw) else {
-            throw DFError.decoding("反思输出不是合法 JSON")
+        // `StructuredOutput.parse` 是 throwing 且返回非可选字典
+        let object: [String: JSONValue]
+        do {
+            object = try StructuredOutput.parse(raw)
+        } catch {
+            throw DFError.decoding("反思输出不是合法 JSON：\(error)")
         }
         guard let items = object["conclusions"]?.arrayValue else { return 0 }
 
         var conclusions: [ReflectionConclusion] = []
         for item in items {
-            guard let content = item["content"]?.stringValue,
-                  let conclusion = item["conclusion"]?.stringValue else { continue }
-            let refs = (item["evidence_refs"]?.arrayValue ?? []).compactMap { $0.stringValue }
+            guard let dict = item.objectValue,
+                  let content = dict["content"]?.stringValue,
+                  let conclusion = dict["conclusion"]?.stringValue else { continue }
+            let refs = (dict["evidence_refs"]?.arrayValue ?? []).compactMap { $0.stringValue }
             guard !refs.isEmpty else { continue }
             conclusions.append(
                 ReflectionConclusion(
