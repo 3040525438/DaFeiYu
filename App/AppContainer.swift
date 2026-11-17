@@ -507,6 +507,8 @@ final class AppContainer: ObservableObject {
         let relationshipsService = self.relationships
         // 记忆召回兜底：泛问句时补日记 / 高显著度记忆 / 跨会话历史
         let recall = RecallContextBuilder(database: self.database, memories: self.memories, diary: self.diary)
+        // L3 会话时间线（闭包只捕获服务值，不捕获容器）
+        let conversationAdmin = self.conversationAdmin
         // 回合后置：记忆抽取（W8-3）。关掉开关即完全跳过，不影响聊天。
         let extraction = MemoryExtractionCoordinator(
             processing: memoryProcessing,
@@ -613,8 +615,27 @@ final class AppContainer: ObservableObject {
                       let state = try? await statesService.state(for: id) else { return nil }
                 return EmotionState(kind: EmotionKind(mood: state.mood), intensity: 0.5)
             },
-            // L3：注入本地时间，模型自身没有系统时钟
-            currentStateText: { Self.localStateText() },
+            // L3：注入本地时间 + 其他会话的时间线。
+            // 模型只能看到本次会话的上下文；不告诉它"还有哪些会话、各覆盖什么时间范围"，
+            // 它就会把"上次聊天"理解成本会话里最近的一轮，答错用户真正指的历史时间。
+            currentStateText: {
+                var text = Self.localStateText()
+                if let summaries = try? await conversationAdmin.list(.all) {
+                    var lines: [String] = []
+                    for summary in summaries where summary.id != conversationID && summary.messageCount > 0 {
+                        let start = LocalDay.dayKey(millis: summary.createdAt)
+                        let end = LocalDay.dayKey(millis: summary.lastMessageAt ?? summary.updatedAt)
+                        let range = start == end ? start : "\(start) 至 \(end)"
+                        let kindLabel = summary.kind == "imported" ? "历史导入" : "App 内聊天"
+                        lines.append("- 「\(summary.title)」（\(kindLabel)，\(summary.messageCount) 条消息，时间范围 \(range)）")
+                    }
+                    if !lines.isEmpty {
+                        text += "\n\n其他会话的时间线（用户说\"上次/以前/之前聊的\"时，先对照这里判断他指的是哪段时间，再检索对应历史，不要只看本次会话）：\n"
+                            + lines.joined(separator: "\n")
+                    }
+                }
+                return text
+            },
             // L4：先按本轮输入检索；命中为空或问句在问过去时，兜底补日记 / 重要记忆 / 跨会话历史
             retrieveMemories: { query, limit in
                 await recall.recall(
