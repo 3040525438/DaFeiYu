@@ -96,8 +96,9 @@ final class MemoryHealthServiceTests: XCTestCase {
     func testDuplicateDedupeKeysAreReportedAsGroups() async throws {
         try await insert(title: "用户每天早上跑步", dedupeKey: "run")
         try await insert(title: "用户每天早上跑步", dedupeKey: "run-2")
-        // 制造同一 dedupe_key 的两条（正常写入会被去重，这里直接改库模拟历史遗留）
+        // 唯一索引保证正常运行不会写出重复 dedupe_key；这里模拟"历史库没有该索引"的情况
         try await database.write { db in
+            try db.execute(sql: "DROP INDEX IF EXISTS ux_memories_dedupe")
             try db.execute(sql: "UPDATE memories SET dedupe_key = 'run' WHERE dedupe_key = 'run-2'")
         }
 

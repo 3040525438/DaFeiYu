@@ -136,11 +136,7 @@ public struct DiaryAutoService: Sendable {
             maxTokens: maxTokens
         )
 
-        var raw = ""
-        for try await delta in provider.stream(request) {
-            if Task.isCancelled { throw DFError.cancelled }
-            if case .text(let piece) = delta { raw += piece }
-        }
+        let raw = try await StructuredChatRunner.collect(provider: provider, request: request)
 
         let draft: Draft
         do {

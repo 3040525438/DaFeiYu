@@ -121,15 +121,7 @@ public struct ReflectionAutoService: Sendable {
             maxTokens: 700
         )
 
-        var raw = ""
-        for try await delta in provider.stream(request) {
-            switch delta {
-            case .text(let piece):
-                raw += piece
-            default:
-                break
-            }
-        }
+        let raw = try await StructuredChatRunner.collect(provider: provider, request: request)
 
         // `StructuredOutput.parse` 是 throwing 且返回非可选字典
         let object: [String: JSONValue]

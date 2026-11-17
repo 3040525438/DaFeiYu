@@ -117,19 +117,9 @@ public final class AutonomyInsightService: @unchecked Sendable {
             maxTokens: maxTokens
         )
 
-        var raw = ""
-        var usage: Usage?
-        for try await delta in provider.stream(request) {
-            if Task.isCancelled { throw DFError.cancelled }
-            switch delta {
-            case .text(let piece):
-                raw += piece
-            case .usage(let value):
-                usage = value
-            case .finished:
-                break
-            }
-        }
+        let result = try await StructuredChatRunner.run(provider: provider, request: request)
+        let raw = result.text
+        let usage = result.usage
 
         let parsed = ReflectionInsightParser.parse(raw)
         guard parsed.failure == nil else {
