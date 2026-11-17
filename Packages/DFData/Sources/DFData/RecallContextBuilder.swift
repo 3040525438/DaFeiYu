@@ -64,6 +64,15 @@ public struct RecallContextBuilder: Sendable {
             add(Self.memoryLine(record))
         }
 
+        // 1b. 导入的历史记忆
+        // 导入的 AstrBot 记忆重要度统一是 0.5，按重要度排序永远排在最后，
+        // 用户就会觉得"导入了几千条，她一条都不记得"。这里单独捞一批。
+        if hits.isEmpty {
+            for line in await importedMemoryLines(limit: 5) {
+                add(line)
+            }
+        }
+
         // 2. 命中为空或明显在问过去 → 兜底召回
         let hasCue = Self.hasRecallCue(query)
         guard hits.isEmpty || hasCue else { return lines }
@@ -80,16 +89,18 @@ public struct RecallContextBuilder: Sendable {
         }
 
         // 2b. 高显著度长期记忆
+        // 导入的 AstrBot 记忆动辄上百条，候选只取 40 条会让它们互相挤掉，
+        // 表现就是"明明导入了却想不起来"。这里放宽候选并按 10 条注入。
         let important = (try? await memories.memories(
             scope: nil,
             layer: nil,
             includeArchived: false,
-            limit: 40,
+            limit: 200,
             offset: 0
         )) ?? []
         var importantAdded = 0
         for record in important {
-            guard importantAdded < 6 else { break }
+            guard importantAdded < 10 else { break }
             let before = lines.count
             add(Self.memoryLine(record))
             if lines.count > before { importantAdded += 1 }
@@ -108,6 +119,33 @@ public struct RecallContextBuilder: Sendable {
     }
 
     // MARK: - 判据
+
+    /// 导入记忆单独取一批：按重要度排序它们会永远垫底，必须按来源直查。
+    private func importedMemoryLines(limit: Int) async -> [String] {
+        let timeZone = LocalDay.resolvedTimeZone(nil)
+        let rows = (try? await database.dbQueue.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                SELECT title, content, created_at FROM memories
+                 WHERE deleted_at IS NULL
+                   AND archived_at IS NULL
+                   AND source_kind = 'astrbot_import'
+                 ORDER BY importance_score DESC, created_at DESC
+                 LIMIT ?
+                """,
+                arguments: [min(max(limit, 1), 30)]
+            )
+        }) ?? []
+        return rows.map { row in
+            let title = String.fromDatabaseValue(row["title"]) ?? ""
+            let content = String.fromDatabaseValue(row["content"]) ?? ""
+            let at = Int64.fromDatabaseValue(row["created_at"]) ?? 0
+            let day = LocalDay.dayKey(millis: at, timeZoneIdentifier: timeZone.identifier)
+            let body = content.isEmpty ? title : content
+            return "【导入记忆·\(day)】" + Self.clip(body, max: 110)
+        }
+    }
 
     public static func hasRecallCue(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -168,7 +206,7 @@ public struct RecallContextBuilder: Sendable {
             let rows = (try? await fetchMessages(
                 conversationID: conversationID,
                 beforeMillis: todayStart,
-                limit: 8
+                limit: 10
             )) ?? []
             lines.append(contentsOf: rows.map { Self.chatLine($0, timeZone: timeZone) })
         }
@@ -178,7 +216,7 @@ public struct RecallContextBuilder: Sendable {
             conversationID: nil,
             excluding: currentConversationID,
             beforeMillis: todayStart,
-            limit: 8
+            limit: 14
         )) ?? []
         if historical.isEmpty {
             let latest = (try? await fetchMessages(

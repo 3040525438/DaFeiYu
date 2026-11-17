@@ -25,6 +25,8 @@ struct AstrBotImportView: View {
     @State private var replacePreviousImports = true
     /// 用导入的人格替换当前核心人格（占位人格无论开关都会自动替换）
     @State private var replaceCorePersona = true
+    /// 导入后只保留导入的会话（删除现有非导入会话与消息）
+    @State private var pruneExistingConversations = false
 
     var body: some View {
         List {
@@ -61,6 +63,10 @@ struct AstrBotImportView: View {
                     .foregroundStyle(.secondary)
                 Toggle("用导入的人格替换当前核心人格", isOn: $replaceCorePersona)
                 Text("首启的占位人格无论如何都会被真实人格替换；这里决定是否也覆盖你已经改过的核心人格，旧版本会保留可回退。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Toggle("导入后只保留导入的会话", isOn: $pruneExistingConversations)
+                Text("开启会删除现有的非导入会话及其消息（记忆、日记、人格不受影响），不可撤销。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -160,7 +166,7 @@ struct AstrBotImportView: View {
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("正式导入会写入会话、记忆、日记、人格与文档，并保留可回滚批次。")
+            Text("正式导入会写入会话、记忆、日记、人格与文档，并保留可回滚批次。\(pruneExistingConversations ? "已开启「只保留导入的会话」：会删除现有非导入会话及其消息，不可撤销。" : "")")
         }
         .alert("回滚这个批次？", isPresented: $showConfirmRollback) {
             Button("回滚", role: .destructive) {
@@ -318,7 +324,8 @@ struct AstrBotImportView: View {
                 isDryRun: dryRun,
                 stagingDirectory: staging,
                 replacesCorePersona: replaceCorePersona,
-                replacesPreviousImports: replacePreviousImports
+                replacesPreviousImports: replacePreviousImports,
+                prunesNonImportedConversations: pruneExistingConversations
             )
             let report = try await container.astrbotImporter.run(source: paths, options: options)
             if dryRun {

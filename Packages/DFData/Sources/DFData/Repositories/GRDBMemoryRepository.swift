@@ -335,21 +335,32 @@ public struct GRDBMemoryRepository: MemoryRepository, Sendable {
             .split(separator: " ", omittingEmptySubsequences: true)
             .map(String.init)
         guard !tokens.isEmpty else { return [] }
-        let match = tokens.map { "\"\($0)\"" }.joined(separator: " AND ")
+        let quoted = tokens.map { "\"\($0)\"" }
+        // AND 语义只适合"短关键词"，长句（如"你还记得我们以前聊过什么吗"）几乎必然零命中。
+        // 因此先用 AND（精确优先），零命中再退到 OR + bm25（弱相关但能捞到历史）。
+        let andMatch = quoted.joined(separator: " AND ")
+        let orMatch = quoted.joined(separator: " OR ")
 
         do {
             return try await database.dbQueue.read { db in
-                let ids = try String.fetchAll(
-                    db,
-                    sql: """
-                    SELECT memory_id FROM memory_fts
-                    WHERE memory_fts MATCH ?
-                      AND (? IS NULL OR scope = ?)
-                    ORDER BY bm25(memory_fts) ASC
-                    LIMIT ?
-                    """,
-                    arguments: [match, scope?.rawValue, scope?.rawValue, min(max(limit, 1), 200)]
-                )
+                func fetchIDs(_ match: String) throws -> [String] {
+                    try String.fetchAll(
+                        db,
+                        sql: """
+                        SELECT memory_id FROM memory_fts
+                        WHERE memory_fts MATCH ?
+                          AND (? IS NULL OR scope = ?)
+                        ORDER BY bm25(memory_fts) ASC
+                        LIMIT ?
+                        """,
+                        arguments: [match, scope?.rawValue, scope?.rawValue, min(max(limit, 1), 200)]
+                    )
+                }
+
+                var ids = try fetchIDs(andMatch)
+                if ids.isEmpty, quoted.count > 1 {
+                    ids = try fetchIDs(orMatch)
+                }
                 guard !ids.isEmpty else { return [] }
                 let placeholders = ids.map { _ in "?" }.joined(separator: ",")
                 let rows = try Row.fetchAll(

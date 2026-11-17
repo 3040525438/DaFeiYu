@@ -70,6 +70,9 @@ public struct AstrBotImportOptions: Sendable, Equatable {
     public var replacesCorePersona: Bool
     /// 是否先清理上一次导入写入的数据（覆盖式导入，避免重复累积）。
     public var replacesPreviousImports: Bool
+    /// 导入后是否只保留导入的会话（删除现有的非导入会话与消息）。
+    /// 记忆与日记不受影响；不可撤销，必须由用户显式开启。
+    public var prunesNonImportedConversations: Bool
 
     public init(
         isDryRun: Bool = true,
@@ -79,7 +82,8 @@ public struct AstrBotImportOptions: Sendable, Equatable {
         importsRelationshipLedger: Bool = true,
         stagingDirectory: URL? = nil,
         replacesCorePersona: Bool = false,
-        replacesPreviousImports: Bool = false
+        replacesPreviousImports: Bool = false,
+        prunesNonImportedConversations: Bool = false
     ) {
         self.isDryRun = isDryRun
         self.conversationTitlePrefix = conversationTitlePrefix
@@ -89,6 +93,7 @@ public struct AstrBotImportOptions: Sendable, Equatable {
         self.stagingDirectory = stagingDirectory
         self.replacesCorePersona = replacesCorePersona
         self.replacesPreviousImports = replacesPreviousImports
+        self.prunesNonImportedConversations = prunesNonImportedConversations
     }
 }
 

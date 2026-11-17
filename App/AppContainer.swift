@@ -580,7 +580,8 @@ final class AppContainer: ObservableObject {
                     query: query,
                     currentConversationID: conversationID,
                     now: Clock.nowMillis(),
-                    limit: max(limit, 12)
+                    // 导入的历史数据量很大，召回上限放宽到 24 行，否则只能捞到零星几条
+                    limit: max(limit, 24)
                 )
             },
             rules: PromptComposer.defaultRules,

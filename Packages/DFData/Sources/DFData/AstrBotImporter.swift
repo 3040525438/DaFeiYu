@@ -67,6 +67,36 @@ public struct AstrBotImporter: AstrBotImporting, Sendable {
             }
         }
 
+        // 可选：导入后只保留导入的会话（用户要求"聊天页只看到导入的"）。
+        // 只删会话与消息，记忆 / 日记 / 人格不受影响；不可撤销，由界面显式开关控制。
+        if options.prunesNonImportedConversations && !options.isDryRun {
+            try await database.write { db in
+                let doomed = try String.fetchAll(
+                    db,
+                    sql: """
+                    SELECT id FROM messages
+                     WHERE conversation_id IN (
+                        SELECT id FROM conversations WHERE COALESCE(kind, '') <> 'imported'
+                     )
+                    """
+                )
+                for id in doomed {
+                    try db.execute(sql: "DELETE FROM message_fts WHERE message_id = ?", arguments: [id])
+                }
+                try db.execute(
+                    sql: """
+                    DELETE FROM messages
+                     WHERE conversation_id IN (
+                        SELECT id FROM conversations WHERE COALESCE(kind, '') <> 'imported'
+                     )
+                    """
+                )
+                try db.execute(
+                    sql: "DELETE FROM conversations WHERE COALESCE(kind, '') <> 'imported'"
+                )
+            }
+        }
+
         // 已有核心人格的 id 与当前提示词：用于识别"首启占位人格"并决定是否原位替换
         let corePersona = try await database.dbQueue.read { db -> (id: String, prompt: String)? in
             guard let row = try Row.fetchOne(
