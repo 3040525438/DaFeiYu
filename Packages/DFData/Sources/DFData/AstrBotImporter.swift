@@ -811,7 +811,9 @@ extension AstrBotImporter {
 
                 if contentKind.contains("event") {
                     // 系统事件（进群、撤回、表情、红包等）没有对话价值，
-                    // 放进待确认只会淹没真正需要处理的问题，这里直接跳过。
+                    // 放进待确认只会淹没真正需要处理的问题，因此不写待确认表；
+                    // 但仍计入"待处理"，以满足"源 = 新增 + 重复 + 待处理"的覆盖校验。
+                    plan.counts.messagesPending += 1
                     continue
                 }
                 guard role == "user" || role == "assistant" else {
