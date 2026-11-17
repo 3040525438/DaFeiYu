@@ -66,7 +66,7 @@ struct AstrBotImportView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Toggle("导入后只保留导入的会话", isOn: $pruneExistingConversations)
-                Text("开启会删除现有的非导入会话及其消息（记忆、日记、人格不受影响），不可撤销。")
+                Text("开启会把现有的非导入会话归档（聊天列表里不再显示，可在归档里恢复），不会删除消息、记忆与日记。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -166,7 +166,7 @@ struct AstrBotImportView: View {
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("正式导入会写入会话、记忆、日记、人格与文档，并保留可回滚批次。\(pruneExistingConversations ? "已开启「只保留导入的会话」：会删除现有非导入会话及其消息，不可撤销。" : "")")
+            Text("正式导入会写入会话、记忆、日记、人格与文档，并保留可回滚批次。\(pruneExistingConversations ? "已开启「只保留导入的会话」：现有非导入会话会被归档，可在归档中恢复。" : "")")
         }
         .alert("回滚这个批次？", isPresented: $showConfirmRollback) {
             Button("回滚", role: .destructive) {

@@ -68,31 +68,17 @@ public struct AstrBotImporter: AstrBotImporting, Sendable {
         }
 
         // 可选：导入后只保留导入的会话（用户要求"聊天页只看到导入的"）。
-        // 只删会话与消息，记忆 / 日记 / 人格不受影响；不可撤销，由界面显式开关控制。
+        // 这里用「归档」而不是物理删除：会话会立刻从聊天列表消失，但可在归档里恢复，
+        // 也避免删除时触发其它表的外键约束（上一版正是因此导入失败）。
         if options.prunesNonImportedConversations && !options.isDryRun {
             try await database.write { db in
-                let doomed = try String.fetchAll(
-                    db,
-                    sql: """
-                    SELECT id FROM messages
-                     WHERE conversation_id IN (
-                        SELECT id FROM conversations WHERE COALESCE(kind, '') <> 'imported'
-                     )
-                    """
-                )
-                for id in doomed {
-                    try db.execute(sql: "DELETE FROM message_fts WHERE message_id = ?", arguments: [id])
-                }
                 try db.execute(
                     sql: """
-                    DELETE FROM messages
-                     WHERE conversation_id IN (
-                        SELECT id FROM conversations WHERE COALESCE(kind, '') <> 'imported'
-                     )
-                    """
-                )
-                try db.execute(
-                    sql: "DELETE FROM conversations WHERE COALESCE(kind, '') <> 'imported'"
+                    UPDATE conversations
+                       SET archived_at = COALESCE(archived_at, ?), updated_at = ?
+                     WHERE COALESCE(kind, '') <> 'imported'
+                    """,
+                    arguments: [now, now]
                 )
             }
         }
@@ -463,6 +449,22 @@ public struct AstrBotImporter: AstrBotImporting, Sendable {
         }
     }
 
+    /// 按原因批量处理（例如把历史遗留的"系统事件"一次性清掉）。
+    @discardableResult
+    public func resolvePending(reasonCode: String, at millis: Int64) async throws -> Int {
+        try await database.write { db in
+            try db.execute(
+                sql: """
+                UPDATE astrbot_import_pending
+                   SET status = 'resolved', resolved_at = ?
+                 WHERE status = 'pending' AND reason_code = ?
+                """,
+                arguments: [millis, reasonCode]
+            )
+            return db.changesCount
+        }
+    }
+
     public func resolvePending(id: String, targetID: String?, at millis: Int64) async throws {
         try await database.write { db in
             guard let status = try String.fetchOne(
@@ -807,15 +809,8 @@ extension AstrBotImporter {
                 let content = string(row, "content") ?? ""
 
                 if contentKind.contains("event") {
-                    plan.pendings.append(
-                        pending(
-                            kind: "chat_record",
-                            sourceID: sourceID,
-                            reason: .systemEvent,
-                            rawJSON: rawJSON(row)
-                        )
-                    )
-                    plan.counts.messagesPending += 1
+                    // 系统事件（进群、撤回、表情、红包等）没有对话价值，
+                    // 放进待确认只会淹没真正需要处理的问题，这里直接跳过。
                     continue
                 }
                 guard role == "user" || role == "assistant" else {

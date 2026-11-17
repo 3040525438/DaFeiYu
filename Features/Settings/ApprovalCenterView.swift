@@ -63,6 +63,16 @@ struct ApprovalCenterView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else {
+                if importPendings.contains(where: { $0.reasonCode == "system_event" }) {
+                    Button {
+                        Task { await ignoreAllSystemEvents() }
+                    } label: {
+                        Label("忽略全部系统事件（\(importPendings.filter { $0.reasonCode == "system_event" }.count) 条）", systemImage: "trash.slash")
+                    }
+                    .font(.footnote)
+                    .disabled(busy)
+                }
+
                 ForEach(importPendings) { item in
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
@@ -76,18 +86,23 @@ struct ApprovalCenterView: View {
                                 .background(DFColor.primarySoft, in: Capsule())
                                 .foregroundStyle(DFColor.primary)
                         }
+                        if let preview = Self.pendingPreview(item.rawJSON) {
+                            Text(preview)
+                                .font(.caption)
+                                .foregroundStyle(DFColor.ink)
+                                .lineLimit(3)
+                        }
                         if let sourceID = item.sourceID, !sourceID.isEmpty {
                             Text("来源 ID：\(sourceID)")
-                                .font(.caption)
+                                .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
-                        HStack(spacing: 12) {
-                            Button("标记已处理") {
-                                Task { await resolveImportPending(item) }
-                            }
-                            .font(.caption)
-                            .disabled(busy || item.id.isEmpty)
+                        Button("标记已处理") {
+                            Task { await resolveImportPending(item) }
                         }
+                        .font(.caption)
+                        .buttonStyle(.bordered)
+                        .disabled(busy || item.id.isEmpty)
                     }
                     .padding(.vertical, 4)
                 }
@@ -95,8 +110,24 @@ struct ApprovalCenterView: View {
         } header: {
             Text("AstrBot 导入待确认")
         } footer: {
-            Text("导入时因人格冲突、内容为空等原因被拦下的条目都在这里，不会自动写入。")
+            Text("导入时被拦下的条目都在这里，不会自动写入。系统事件（进群、撤回等）没有对话价值，可直接忽略。")
         }
+    }
+
+    /// 从原始行里取一句可读内容，否则用户只能看到一串来源 ID，无从判断。
+    private static func pendingPreview(_ rawJSON: String) -> String? {
+        guard let data = rawJSON.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        let content = (object["content"] as? String ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !content.isEmpty {
+            return String(content.prefix(120))
+        }
+        let role = object["role"] as? String ?? ""
+        let kind = object["content_kind"] as? String ?? ""
+        if role.isEmpty && kind.isEmpty { return nil }
+        return "role=\(role.isEmpty ? "未知" : role) · 类型=\(kind.isEmpty ? "未知" : kind)"
     }
 
     private func importKindText(_ kind: String) -> String {
@@ -105,7 +136,7 @@ struct ApprovalCenterView: View {
         case "memory": return "记忆"
         case "diary": return "日记"
         case "document": return "信件/笔记"
-        case "message": return "消息"
+        case "message", "chat_record": return "聊天记录"
         default: return kind.isEmpty ? "未知条目" : kind
         }
     }
@@ -114,7 +145,25 @@ struct ApprovalCenterView: View {
         switch reason {
         case "persona_conflict": return "人格冲突"
         case "empty_content": return "内容为空"
+        case "system_event": return "系统事件"
+        case "unknown_role": return "角色未知"
+        case "invalid_timestamp": return "时间无效"
         default: return reason.isEmpty ? "待确认" : reason
+        }
+    }
+
+    private func ignoreAllSystemEvents() async {
+        busy = true
+        defer { busy = false }
+        do {
+            let count = try await container.astrbotImporter.resolvePending(
+                reasonCode: "system_event",
+                at: Clock.nowMillis()
+            )
+            await reload()
+            message = "已忽略 \(count) 条系统事件"
+        } catch {
+            message = "忽略失败：\(error.localizedDescription)"
         }
     }
 

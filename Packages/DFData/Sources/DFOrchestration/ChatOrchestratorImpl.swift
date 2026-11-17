@@ -459,9 +459,9 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
                 let firstDay = LocalDay.dayKey(millis: first.createdAt)
                 let lastDay = LocalDay.dayKey(millis: last.createdAt)
                 if firstDay == lastDay {
-                    historySpan = "历史对话都发生在 \(firstDay)。"
+                    historySpan = "本次会话的消息都发生在 \(firstDay)。"
                 } else {
-                    historySpan = "历史对话从 \(firstDay) 持续到 \(lastDay)，跨越了多天，不是同一天。"
+                    historySpan = "本次会话从 \(firstDay) 持续到 \(lastDay)，跨越了多天，不是同一天。"
                 }
             }
         } catch {
@@ -505,6 +505,16 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
             }
         } else {
             requestTurns.append(ChatTurn(role: .user, text: trimmed))
+        }
+
+        // 时间写进最新一条用户消息的前缀：
+        // 只放在 system 里时，模型仍会回答"看不到时间"，这是实测到的问题。
+        if let clock = Self.clockLine(from: stateText),
+           let last = requestTurns.last, last.role == .user {
+            requestTurns[requestTurns.count - 1] = ChatTurn(
+                role: .user,
+                text: "（系统时间：\(clock)）\n" + last.text
+            )
         }
         // D37：当前情绪来自角色状态（App 层注入）；没有数据源时只用静态准则
         var emotion: EmotionState?
@@ -1030,6 +1040,18 @@ public actor ChatOrchestratorImpl: ChatOrchestrator {
             return description
         }
         return String(describing: error)
+    }
+
+    /// 从【当前状态】里取出可读的绝对时间，用于在用户消息前做硬提示。
+    static func clockLine(from state: String) -> String? {
+        for line in state.split(separator: "\n") where line.hasPrefix("当前时间：") {
+            let text = String(line)
+            let raw = text.replacingOccurrences(of: "当前时间：", with: "")
+            // 去掉时区后缀，避免前缀过长挤占用户原文
+            let trimmed = raw.split(separator: "（").first.map(String.init) ?? raw
+            return String(trimmed.prefix(40))
+        }
+        return nil
     }
 }
 
