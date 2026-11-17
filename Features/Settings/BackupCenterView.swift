@@ -38,6 +38,7 @@ struct BackupCenterView: View {
     @State private var showRestoreConfirm = false
     @State private var exportDocument: BackupExportDocument?
     @State private var exportName = "dafeiyu-backup.dfbk"
+    @State private var showPlaintextConfirm = false
     @State private var showExporter = false
     /// D41：已授权的外部位置（可多个）
     @State private var locations: [BackupLocation] = []
@@ -56,6 +57,13 @@ struct BackupCenterView: View {
                     Label("立即创建加密备份", systemImage: "lock.doc")
                 }
                 .disabled(busy)
+                // 明文备份：换设备/重装后仍可恢复，代价是文件本身不加密
+                Button {
+                    showPlaintextConfirm = true
+                } label: {
+                    Label("导出明文 JSON（可跨设备恢复）", systemImage: "doc.plaintext")
+                }
+                .disabled(busy)
                 if busy {
                     ProgressView()
                 }
@@ -67,7 +75,7 @@ struct BackupCenterView: View {
             } header: {
                 Text("手动备份")
             } footer: {
-                Text("备份默认使用 AES-256-GCM 加密，密钥只在本机 Keychain。恢复前会自动再留一份安全备份。")
+                Text("加密备份的密钥只在本机 Keychain，换机或重装后可能解不开；需要跨设备时请用明文 JSON。恢复前会自动再留一份安全备份。")
             }
 
             Section {
@@ -83,7 +91,7 @@ struct BackupCenterView: View {
             } header: {
                 Text("已有备份")
             } footer: {
-                Text("“导出”把已加密的备份容器原样存到文件或外部分享位置，不做明文转换；换设备恢复需要同一把本机密钥。")
+                Text("“导出”把备份文件原样存到文件或外部分享位置。加密备份换设备恢复需要同一把本机密钥；跨设备请用上面的明文 JSON。")
             }
 
             Section {
@@ -203,6 +211,18 @@ struct BackupCenterView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text(crossDeviceMessage)
+        }
+        .confirmationDialog(
+            "导出明文备份？",
+            isPresented: $showPlaintextConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("导出明文 JSON", role: .destructive) {
+                Task { await exportPlaintextBackup() }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("明文文件不加密，任何拿到它的人都能读到你的聊天、记忆与人格。只在需要换设备或重装恢复时使用，导出后请妥善保管。")
         }
         .confirmationDialog(
             "清理较早的自动备份？",
@@ -371,7 +391,28 @@ struct BackupCenterView: View {
             status = "已创建：\(kindTitle(manifest.kind)) · \(byteText(manifest.byteSize))"
             await reload()
         } catch {
-            status = "创建失败：\(error.localizedDescription)"
+            status = "创建失败：\(Self.readable(error))"
+        }
+    }
+
+    /// 生成明文 JSON 备份并立刻交给系统导出面板。
+    /// 明文不依赖 Keychain 密钥，重装或换设备后仍可导入、恢复。
+    private func exportPlaintextBackup() async {
+        busy = true
+        defer { busy = false }
+        do {
+            let manifest = try await container.backupService.createBackup(
+                kind: .manual,
+                encrypted: false
+            )
+            let url = container.backupService.fileURL(for: manifest)
+            exportDocument = BackupExportDocument(data: try Data(contentsOf: url))
+            exportName = manifest.fileName
+            showExporter = true
+            status = "已生成明文备份，请选择保存位置"
+            await reload()
+        } catch {
+            status = "生成明文备份失败：\(Self.readable(error))"
         }
     }
 
