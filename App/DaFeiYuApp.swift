@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 import DFCore
 
 @main
@@ -15,6 +16,9 @@ struct DaFeiYuApp: App {
         service.register()
         self.background = service
         _bootstrap = StateObject(wrappedValue: AppBootstrap(holder: holder))
+        // iOS 默认前台不显示通知横幅：不设置 delegate 的话，
+        // "发送测试通知"在前台点了一点视觉反应都没有（只有静默进通知中心）。
+        UNUserNotificationCenter.current().delegate = ForegroundNotificationPresenter.shared
     }
 
     var body: some Scene {
