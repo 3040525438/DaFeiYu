@@ -110,4 +110,22 @@ final class SegmentParserTests: XCTestCase {
         XCTAssertEqual(segments.count, SegmentProtocol.maxSegments, "换行拆分同样封顶")
         XCTAssertTrue(segments.last?.contains("第10句") == true, "超限内容合并到末段，不得丢弃")
     }
+
+    // MARK: - 句级兜底（模型整段输出、无分隔符也无换行时）
+
+    func testLongSingleParagraphSplitsBySentences() {
+        var parser = SegmentParser()
+        let raw = "今天去看展了呀，人不多。我拍了好多照片，一会儿发给你。你什么时候有空？有空也来一起呀。"
+        _ = parser.feed(raw)
+        let segments = parser.finish()
+        XCTAssertGreaterThan(segments.count, 1, "无换行的长段必须按句拆成多条")
+        XCTAssertEqual(segments.joined(), raw, "拆分不得丢字")
+        XCTAssertEqual(segments.count, SegmentProtocol.maxSegments, "句级拆分同样封顶")
+    }
+
+    func testShortSingleParagraphStaysOneBubble() {
+        var parser = SegmentParser()
+        _ = parser.feed("好呀，那就这么说定了。")
+        XCTAssertEqual(parser.finish(), ["好呀，那就这么说定了。"], "短回复不拆")
+    }
 }

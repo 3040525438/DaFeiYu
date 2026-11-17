@@ -31,10 +31,12 @@ public enum SegmentProtocol {
 
     /// 注入 system prompt 的协议说明。模型不遵循时退化为单气泡，不影响可用性。
     public static let systemFragment = """
-    【多条短消息】
+    【多条短消息（重要）】
     你和用户聊天要像真人发消息那样，一次回复通常拆成 2-4 条短消息，用单独一行的 \(separator) 分隔，最多 \(maxSegments) 条。
     每条短消息应是一句完整的话或一个完整的小动作，不要为了拆分而把句子截断。
-    就算不用分隔符，你的换行也会被拆成多条气泡发出，所以排版时直接按"一条消息一段"来写。
+    示例——用户问你今天做了什么，你就分三条发：
+    今天去看展了呀\(separator)人不多，我拍了好多照片\(separator)你什么时候有空也来一起？
+    就算你不用分隔符，你的换行也会被拆成多条气泡发出；不换行也不分隔的长回复会被按句子拆开发送。
     """
 }
 
@@ -115,6 +117,12 @@ public struct SegmentParser: Sendable {
         for chunk in separatorParts {
             parts.append(contentsOf: splitByNewlines(chunk))
         }
+        // 句级兜底：模型整段输出、既无分隔符也无换行时，长文本按句末标点拆成多条。
+        // 没有"挤在一起"的一大段，也没有被拆碎的短回复。
+        if parts.count == 1, separatorParts.count == 1,
+           let only = parts.first, only.count > sentenceSplitThreshold {
+            parts = splitBySentences(only)
+        }
         // 换行拆分后仍可能超上限：同样把末尾合并，不丢弃
         if parts.count > maxSegments {
             let head = Array(parts.prefix(maxSegments - 1))
@@ -130,6 +138,40 @@ public struct SegmentParser: Sendable {
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
+    }
+
+    /// 句级拆段阈值：短回复不值得拆，超过该长度才按句拆。
+    static let sentenceSplitThreshold = 60
+
+    /// 按句末标点拆句，每 1-2 句合成一条气泡。
+    /// 标点保留在句尾，不丢字；无句末标点的整段原样返回。
+    static func splitBySentences(_ text: String) -> [String] {
+        var sentences: [String] = []
+        var current = ""
+        for character in text {
+            current.append(character)
+            if "。！？!?…；;".contains(character) {
+                sentences.append(current)
+                current = ""
+            }
+        }
+        if !current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            sentences.append(current)
+        }
+        guard sentences.count > 1 else { return [text] }
+        var bubbles: [String] = []
+        var pair: [String] = []
+        for sentence in sentences {
+            pair.append(sentence)
+            if pair.count == 2 {
+                bubbles.append(pair.joined())
+                pair = []
+            }
+        }
+        if !pair.isEmpty {
+            bubbles.append(pair.joined())
+        }
+        return bubbles
     }
 
     // MARK: - 内部工具
