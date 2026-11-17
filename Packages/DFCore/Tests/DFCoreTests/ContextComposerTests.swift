@@ -115,7 +115,7 @@ final class ContextComposerTests: XCTestCase {
 
         XCTAssertEqual(result.excludedFailed, 3)
         XCTAssertEqual(result.turns.count, 1)
-        XCTAssertEqual(result.turns.first?.text, "问题")
+        XCTAssertEqual(result.turns.first?.text, "【1970-01-01】\n问题")
     }
 
     // MARK: - C04 空文本排除
@@ -142,7 +142,7 @@ final class ContextComposerTests: XCTestCase {
         ]
         let result = ContextComposer.compose(units: units, budget: budget())
 
-        XCTAssertEqual(result.turns.map(\.text), ["第一句", "第二句", "第三句"])
+        XCTAssertEqual(result.turns.map(\.text), ["【1970-01-01】\n第一句", "第二句", "第三句"])
         XCTAssertEqual(result.droppedGroups, 0)
     }
 
@@ -164,7 +164,11 @@ final class ContextComposerTests: XCTestCase {
         let first = ContextComposer.compose(units: units, budget: budget())
         let second = ContextComposer.compose(units: units, budget: budget())
         XCTAssertEqual(first, second)
-        XCTAssertEqual(first.turns.map(\.text), Array(repeating: "你好", count: first.turns.count))
+        // 第一条消息带 1970-01-01 的日期标记（epoch 时间戳），其余同日不加
+        XCTAssertEqual(
+            first.turns.map(\.text),
+            ["【1970-01-01】\n你好"] + Array(repeating: "你好", count: first.turns.count - 1)
+        )
     }
 
     // MARK: - C08 白名单输出
