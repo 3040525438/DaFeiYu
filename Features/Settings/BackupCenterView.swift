@@ -43,6 +43,9 @@ struct BackupCenterView: View {
     @State private var locations: [BackupLocation] = []
     @State private var showFolderPicker = false
     @State private var showBackupPicker = false
+    /// D43：自动备份保留份数与清理确认
+    @State private var retentionCount = 10
+    @State private var showPruneConfirm = false
 
     var body: some View {
         List {
@@ -84,7 +87,38 @@ struct BackupCenterView: View {
             }
 
             Section {
-                Text("已验证与安全备份不会被自动清理；保留数量可在后续版本按需调整。")
+                Stepper(
+                    "保留最近 \(retentionCount) 份自动备份",
+                    value: $retentionCount,
+                    in: 3...50
+                )
+                .onChange(of: retentionCount) { _, newValue in
+                    Task { await saveRetention(newValue) }
+                }
+
+                if pruneCandidates.isEmpty {
+                    Text("当前没有需要清理的自动备份。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("可清理 \(pruneCandidates.count) 份较早的自动备份（共 \(ByteCountFormatter.string(fromByteCount: pruneBytes, countStyle: .file))）")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Button(role: .destructive) {
+                        showPruneConfirm = true
+                    } label: {
+                        Label("清理较早的自动备份", systemImage: "trash")
+                    }
+                    .disabled(busy)
+                }
+            } header: {
+                Text("保留策略")
+            } footer: {
+                Text("只清理由本机自动生成的旧备份；已验证、安全备份（恢复前自动留的那份）与手动备份永远不会被自动清理。清理前会先列出条数并要求确认。")
+            }
+
+            Section {
+                Text("自动备份会持续累积，建议定期清理。清理只影响本机自动生成的旧备份，不影响恢复能力。")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -169,6 +203,18 @@ struct BackupCenterView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text(crossDeviceMessage)
+        }
+        .confirmationDialog(
+            "清理较早的自动备份？",
+            isPresented: $showPruneConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("清理 \(pruneCandidates.count) 份", role: .destructive) {
+                Task { await pruneOldBackups() }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("将删除 \(pruneCandidates.count) 份较早的自动备份（共 \(ByteCountFormatter.string(fromByteCount: pruneBytes, countStyle: .file))）。已验证、安全备份与手动备份不受影响，删除后无法恢复。")
         }
         .fileExporter(
             isPresented: $showExporter,
@@ -257,10 +303,64 @@ struct BackupCenterView: View {
 
     private func reload() async {
         do {
-            manifests = try await container.backups.manifests(kind: nil, limit: 30)
+            manifests = try await container.backups.manifests(kind: nil, limit: 200)
+            if let raw = try? await container.settings.string(for: Self.retentionKey),
+               let value = Int(raw) {
+                retentionCount = min(max(value, 3), 50)
+            }
         } catch {
             status = "读取备份列表失败：\(error.localizedDescription)"
         }
+    }
+
+    // MARK: - 保留策略（D43）
+
+    /// 设置键：自动备份保留份数
+    private static let retentionKey = "backup.retention.count"
+
+    /// 可清理的旧自动备份：只挑自动/增量类、已完成、未验证、非安全备份
+    private var pruneCandidates: [BackupManifest] {
+        manifests
+            .filter { manifest in
+                (manifest.kind == .automatic || manifest.kind == .incremental)
+                    && manifest.isUsable
+                    && manifest.verifiedAt == nil
+            }
+            .sorted { $0.createdAt > $1.createdAt }
+            .dropFirst(retentionCount)
+            .map { $0 }
+    }
+
+    private var pruneBytes: Int64 {
+        pruneCandidates.reduce(0) { $0 + $1.byteSize }
+    }
+
+    private func saveRetention(_ value: Int) async {
+        do {
+            try await container.settings.set(String(value), for: Self.retentionKey)
+        } catch {
+            status = "保存保留份数失败：\(error.localizedDescription)"
+        }
+    }
+
+    /// 用户主动确认后的清理：逐条删除，失败只影响该条
+    private func pruneOldBackups() async {
+        busy = true
+        defer { busy = false }
+        var removed = 0
+        var failed = 0
+        for manifest in pruneCandidates {
+            do {
+                try await container.backups.delete(id: manifest.id)
+                removed += 1
+            } catch {
+                failed += 1
+            }
+        }
+        status = failed == 0
+            ? "已清理 \(removed) 份较早的自动备份"
+            : "已清理 \(removed) 份，\(failed) 份删除失败（可稍后重试）"
+        await reload()
     }
 
     private func createBackup() async {

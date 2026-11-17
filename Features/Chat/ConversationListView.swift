@@ -249,6 +249,15 @@ struct ConversationListView: View {
         .buttonStyle(.plain)
     }
 
+    /// 会话来源标识（D47 / AstrBot 迁移）：只有真实 kind 才显示，不臆造
+    private func kindTag(_ kind: String) -> String? {
+        switch kind {
+        case "proactive": return "她主动开的"
+        case "imported", "astrbot": return "历史导入"
+        default: return nil
+        }
+    }
+
     @ViewBuilder
     private func row(_ item: ConversationSummary) -> some View {
         Button {
@@ -261,9 +270,19 @@ struct ConversationListView: View {
                 Image(systemName: item.isPinned ? "pin.fill" : "bubble.left")
                     .foregroundStyle(item.isPinned ? DFColor.primary : Color.secondary)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(item.title)
-                        .lineLimit(1)
-                        .foregroundStyle(.primary)
+                    HStack(spacing: 5) {
+                        Text(item.title)
+                            .lineLimit(1)
+                            .foregroundStyle(.primary)
+                        if let tag = kindTag(item.kind) {
+                            Text(tag)
+                                .font(.system(size: 9))
+                                .foregroundStyle(DFColor.primaryDeep)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(DFColor.primary.opacity(0.12), in: Capsule())
+                        }
+                    }
                     Text(subtitle(item))
                         .font(.caption)
                         .foregroundStyle(.secondary)

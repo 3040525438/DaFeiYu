@@ -274,6 +274,11 @@ final class AppContainer: ObservableObject {
         )
     }
 
+    /// D67：升级记录（诊断页可查，避免"升级失败无从追溯"）
+    var upgrades: UpgradeRecordService {
+        UpgradeRecordService(database: database)
+    }
+
     /// D59：用户数据导出（隐私页入口）
     var userDataExporter: UserDataExporter {
         UserDataExporter(database: database)
@@ -344,6 +349,26 @@ final class AppContainer: ObservableObject {
         } catch {
             NSLog("内置表情初始化失败：\(error.localizedDescription)")
         }
+    }
+
+    // MARK: - 自我反思（D32）
+
+    /// 反思记录查询（成长页展示真实结论，不造假数据）。
+    var reflections: ReflectionAutoService {
+        ReflectionAutoService(database: database, memories: memories, processing: memoryProcessing)
+    }
+
+    /// 手动触发一次反思：只引用已存在的记忆，素材不足返回 0。
+    @discardableResult
+    func runReflectionNow() async throws -> Int {
+        let config = try await Self.requireDefaultConfig(modelConfigs)
+        let provider = try Self.makeProvider(config: config, secureStore: secureStore)
+        let persona = ((try? await personas.coreSystemPrompt()) ?? nil) ?? ""
+        return try await reflections.run(
+            provider: provider,
+            model: config.modelID,
+            personaNote: String(persona.prefix(400))
+        )
     }
 
     // MARK: - 每日日记自动生成（W6 / D34）

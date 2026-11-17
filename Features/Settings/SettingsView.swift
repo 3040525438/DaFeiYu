@@ -11,6 +11,8 @@ struct SettingsView: View {
     @State private var configs: [ModelConfig] = []
     @State private var corePersonaName: String = ""
     @State private var corePrompt: String = ""
+    /// D30：核心人格编辑与版本回退入口所需的角色 id
+    @State private var corePersonaID: String?
     @State private var isCreating = false
     @State private var editingConfig: ModelConfig?
     @State private var pendingDelete: ModelConfig?
@@ -251,7 +253,14 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
-            Text("第一阶段只是占位人格；阶段二会用 AstrBot 的真实设定建立新版本，不会覆盖历史。")
+            if let corePersonaID {
+                NavigationLink {
+                    PersonaVersionsView(personaID: corePersonaID)
+                } label: {
+                    Label("编辑与版本回退", systemImage: "clock.arrow.circlepath")
+                }
+            }
+            Text("核心人格只会由你主动修改，每次保存都留版本；AI 不会自动改写。")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         } header: {
@@ -366,6 +375,7 @@ struct SettingsView: View {
             configs = try await container.modelConfigs.all()
             let persona = try await container.personas.corePersona()
             corePersonaName = persona?.name ?? ""
+            corePersonaID = persona?.id
             corePrompt = (try await container.personas.coreSystemPrompt()) ?? ""
         } catch {
             statusMessage = error.localizedDescription

@@ -232,6 +232,83 @@ public final class PersonaGrowthService: @unchecked Sendable {
 
     // MARK: - 版本
 
+    /// 用户显式修改核心人格提示词（D30）。
+    ///
+    /// 边界：只有用户主动保存才会走到这里；每次保存都会留下版本快照，可回滚，
+    /// 因此不会出现"人格被悄悄改掉却无从追溯"的情况。
+    @discardableResult
+    public func updateCorePrompt(
+        personaID: String,
+        name: String? = nil,
+        systemPrompt: String,
+        reason: String = "用户手动修改核心人格"
+    ) async throws -> PersonaVersion {
+        let trimmed = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw PersonaGrowthError.invalidDraft("核心人格提示词不能为空")
+        }
+        return try await database.write { db in
+            guard let persona = try self.loadPersona(db, id: personaID) else {
+                throw PersonaGrowthError.personaNotFound(personaID)
+            }
+            guard persona.kind == PersonaKind.core.rawValue else {
+                throw PersonaGrowthError.invalidDraft("只有核心人格允许在设置页直接编辑")
+            }
+            let at = self.now()
+
+            let updated = try db.execute(
+                sql: """
+                UPDATE persona_items SET value = ?, source = 'user_edit', updated_at = ?
+                WHERE persona_id = ? AND section = '核心' AND key = 'system_prompt'
+                """,
+                arguments: [trimmed, at, personaID]
+            )
+            if updated == 0 {
+                try self.insertItem(
+                    db,
+                    personaID: personaID,
+                    section: "核心",
+                    key: "system_prompt",
+                    value: trimmed,
+                    source: "user_edit",
+                    tier: "core",
+                    at: at
+                )
+            }
+
+            let newName = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let newName, !newName.isEmpty, newName != persona.name {
+                try db.execute(
+                    sql: "UPDATE personas SET name = ?, updated_at = ? WHERE id = ?",
+                    arguments: [newName, at, personaID]
+                )
+            }
+
+            let newVersion = try self.bumpVersion(
+                db,
+                personaID: personaID,
+                name: (newName?.isEmpty == false ? newName! : persona.name),
+                changeReason: reason,
+                changedBy: "user",
+                at: at
+            )
+            let snapshot = try String.fetchOne(
+                db,
+                sql: "SELECT snapshot_json FROM persona_versions WHERE persona_id = ? AND version = ?",
+                arguments: [personaID, newVersion]
+            ) ?? "{}"
+            return PersonaVersion(
+                id: UUID().uuidString,
+                personaID: personaID,
+                version: newVersion,
+                snapshotJSON: snapshot,
+                changeReason: reason,
+                changedBy: "user",
+                createdAt: at
+            )
+        }
+    }
+
     public func versions(personaID: String) async throws -> [PersonaVersion] {
         try await database.dbQueue.read { db in
             let rows = try Row.fetchAll(

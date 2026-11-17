@@ -1,6 +1,7 @@
 import SwiftUI
 import Foundation
 import DFCore
+import DFData
 
 /// 成长页：陪伴天数与真实消息统计。
 /// 阶段一不生成亲密度、阶段总结这类派生指标，避免出现没有依据的数字。
@@ -10,6 +11,10 @@ struct GrowthView: View {
 
     @State private var stats = CompanionStats()
     @State private var isLoading = true
+    /// D32：自我反思的真实记录 + 手动触发状态
+    @State private var reflections: [ReflectionRecord] = []
+    @State private var isReflecting = false
+    @State private var reflectMessage: String?
 
     var body: some View {
         NavigationStack {
@@ -24,6 +29,7 @@ struct GrowthView: View {
                             .padding(.top, 20)
                     } else {
                         emptyCard
+                        reflectionSection
                     }
                 }
                 .padding(.horizontal, 14)
@@ -39,7 +45,102 @@ struct GrowthView: View {
         .task {
             stats = await CompanionStats.load(container: container)
             isLoading = false
+            await loadReflections()
         }
+    }
+
+    // MARK: - 自我反思（D32）
+
+    private var reflectionSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkle.magnifyingglass")
+                    .font(.system(size: 12))
+                    .foregroundStyle(DFColor.primaryDeep)
+                Text("自我反思")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(DFColor.ink)
+                Spacer()
+                Button {
+                    Task { await reflectNow() }
+                } label: {
+                    Text(isReflecting ? "反思中…" : "现在反思一次")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.borderless)
+                .disabled(isReflecting)
+            }
+
+            if let reflectMessage {
+                Text(reflectMessage)
+                    .font(.system(size: 11))
+                    .foregroundStyle(DFColor.inkMuted)
+            }
+
+            if reflections.isEmpty {
+                Text("还没有反思记录。她需要至少 3 条真实记忆才会开始反思，绝不会凭空编造。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(DFColor.inkMuted)
+                    .lineSpacing(2)
+            } else {
+                ForEach(reflections.prefix(5)) { item in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(item.conclusion.isEmpty ? item.content : item.conclusion)
+                            .font(.system(size: 12))
+                            .foregroundStyle(DFColor.ink)
+                        HStack(spacing: 6) {
+                            Text(item.epistemicStatus == "observed" ? "观察" : "推断")
+                                .font(.system(size: 9))
+                                .foregroundStyle(DFColor.inkMuted)
+                            Text("可信度 \(Int(item.confidence * 100))%")
+                                .font(.system(size: 9))
+                                .foregroundStyle(DFColor.inkMuted)
+                            Spacer()
+                            Text(Self.reflectionTime(item.createdAt))
+                                .font(.system(size: 9))
+                                .foregroundStyle(DFColor.inkMuted)
+                        }
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(DFColor.surfaceAlt)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: DFRadius.card, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DFRadius.card, style: .continuous)
+                .stroke(DFColor.hairline, lineWidth: 1)
+        )
+    }
+
+    private func loadReflections() async {
+        reflections = (try? await container.reflections.recent(limit: 20)) ?? []
+    }
+
+    private func reflectNow() async {
+        isReflecting = true
+        defer { isReflecting = false }
+        do {
+            let count = try await container.runReflectionNow()
+            reflectMessage = count > 0
+                ? "本次写入 \(count) 条反思结论"
+                : "素材不足或没有值得反思的内容，本次没有写入"
+            await loadReflections()
+        } catch {
+            reflectMessage = "反思失败：\(error.localizedDescription)"
+        }
+    }
+
+    private static func reflectionTime(_ millis: Int64) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "MM-dd HH:mm"
+        return formatter.string(from: Date(timeIntervalSince1970: Double(millis) / 1000))
     }
 
     private var hero: some View {
