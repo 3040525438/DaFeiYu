@@ -2301,6 +2301,11 @@ extension AstrBotImporter {
     }
 
     /// 只覆盖"非本导入器写入"的行，用于证明导入没有改动既有数据。
+    ///
+    /// 核心人格条目不参与指纹：核心人格只有两个合法写入渠道
+    /// （用户显式编辑 / 用户授权或占位人格的 AstrBot 迁移原位替换），
+    /// 原位替换复用占位人格的 UUID id，其条目变化属于预期行为而非数据破坏；
+    /// 外围人格条目（成长 / 文件导入）才是"只增不覆盖"的保护对象。
     private static func legacyFingerprint(_ db: Database) throws -> String {
         var buffer = ""
         buffer += try legacyLines(db, sql: """
@@ -2322,7 +2327,9 @@ extension AstrBotImporter {
         """)
         buffer += try legacyLines(db, sql: """
         SELECT quote(id) || '|' || quote(value) FROM persona_items
-         WHERE persona_id NOT LIKE 'astrbot-%' ORDER BY id
+         WHERE persona_id NOT LIKE 'astrbot-%'
+           AND persona_id NOT IN (SELECT id FROM personas WHERE kind = 'core')
+         ORDER BY id
         """)
         return SHA256.hash(buffer)
     }
