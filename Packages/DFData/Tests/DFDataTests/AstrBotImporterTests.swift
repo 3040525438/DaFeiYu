@@ -410,6 +410,45 @@ final class AstrBotImporterTests: XCTestCase {
 
     // MARK: - 待处理区
 
+    /// 回归：真机上报过的 FOREIGN KEY constraint failed。
+    /// 首启占位核心人格的 persona_items 行 id 是 UUID，而导入计划里的 id 是
+    /// `astrbot-persona-item-{哈希}`。原位替换 UPDATE 命中占位行后不再 INSERT，
+    /// tier_history / 映射表若仍用计划 id 就会引用不存在的行，整个导入（含预演）失败。
+    func testReplacingPlaceholderCorePersonaKeepsReferentialIntegrity() async throws {
+        let database = try makeDatabase("app")
+        let personas = GRDBPersonaRepository(database: database)
+        _ = try await personas.ensureCorePersona(
+            name: "占位",
+            systemPrompt: "（这是第一阶段的占位核心人格，真正的设定将在 AstrBot 迁移阶段导入。）"
+        )
+
+        let importer = AstrBotImporter(database: database)
+        let report = try await importer.run(
+            source: try makeSources(),
+            options: AstrBotImportOptions(isDryRun: false)
+        )
+
+        XCTAssertEqual(report.status, .succeeded)
+        XCTAssertEqual(report.counts.personaRowsImported, 1)
+
+        // 占位提示词已被 AstrBot 原文替换（原位替换，没有第二个核心人格）
+        let coreCount = try await count(database, "SELECT count(*) FROM personas WHERE kind = 'core'")
+        XCTAssertEqual(coreCount, 1)
+        let prompt = try await personas.coreSystemPrompt()
+        XCTAssertEqual(prompt, "你是鲸鱼娘，名字叫小肥。")
+
+        // 关键回归点：tier_history 引用的 item_id 必须全部真实存在
+        let dangling = try await count(
+            database,
+            """
+            SELECT count(*) FROM persona_item_tier_history h
+            LEFT JOIN persona_items i ON i.id = h.item_id
+            WHERE i.id IS NULL
+            """
+        )
+        XCTAssertEqual(dangling, 0)
+    }
+
     func testUnknownRowsLandInPendingWithRawJSON() async throws {
         let database = try makeDatabase("app")
         let importer = AstrBotImporter(database: database)

@@ -2073,6 +2073,10 @@ extension AstrBotImporter {
                 )
             }
             for item in persona.items {
+                // 实际落库的行 id：原位替换 UPDATE 命中已有行（如首启占位人格的 UUID id）时，
+                // 必须改用已有行的 id，否则 tier_history / 映射表会引用不存在的 item id，
+                // 触发 FOREIGN KEY constraint failed（预演事务同样会失败）。
+                var targetItemID = item.id
                 var needsInsert = !persona.replacesExisting
                 if persona.replacesExisting {
                     try db.execute(
@@ -2083,6 +2087,13 @@ extension AstrBotImporter {
                         arguments: [item.value, now, persona.id, item.section, item.key]
                     )
                     needsInsert = db.changesCount == 0
+                    if !needsInsert {
+                        targetItemID = try String.fetchOne(
+                            db,
+                            sql: "SELECT id FROM persona_items WHERE persona_id = ? AND section = ? AND key = ?",
+                            arguments: [persona.id, item.section, item.key]
+                        ) ?? item.id
+                    }
                 }
                 if needsInsert {
                     try db.execute(
@@ -2105,9 +2116,9 @@ extension AstrBotImporter {
                          decided_by, created_at)
                     VALUES (?, ?, NULL, 'core', NULL, 'core', 'astrbot_import', '{}', 'migration', ?)
                     """,
-                    arguments: [UUID().uuidString, item.id, now]
+                    arguments: [UUID().uuidString, targetItemID, now]
                 )
-                try map(db, batchID: batchID, kind: .personaItem, sourceID: item.key, targetID: item.id, at: now)
+                try map(db, batchID: batchID, kind: .personaItem, sourceID: item.key, targetID: targetItemID, at: now)
             }
             let snapshot = personaSnapshot(name: persona.name, items: persona.items)
             // 替换已有核心人格时版本号已经 +1，版本快照必须跟着真实版本走，否则回退会错位
