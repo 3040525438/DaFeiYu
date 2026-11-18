@@ -13,6 +13,19 @@ rootProject.buildDir = "../build"
 subprojects {
     project.buildDir = "${rootProject.buildDir}/${project.name}"
 }
+
+// 兜底：旧式 Android 插件（如 record_android）直接引用根项目的 flutter 扩展，
+// 新版 Flutter 插件加载器只把 flutter 扩展挂在 app 模块上，这里给旧插件补一个同名属性表。
+subprojects {
+    if (project.name == "record_android") {
+        project.ext.flutter = [
+            compileSdkVersion: 35,
+            minSdkVersion    : 21,
+            targetSdkVersion : 35,
+        ]
+    }
+}
+
 subprojects {
     project.evaluationDependsOn(":app")
 }
