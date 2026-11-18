@@ -10,7 +10,7 @@
 library;
 
 /// 当前结构版本
-const int kSchemaVersion = 2;
+const int kSchemaVersion = 3;
 
 const List<String> kSchemaStatements = <String>[
   // ── 聊天基础 ────────────────────────────────────────────────────────────
@@ -533,6 +533,91 @@ const List<String> kSchemaStatements = <String>[
       'text_bigram, '
       "tokenize = 'unicode61')",
 
+  // ── 备份与导入（v3，对齐原版 v7_meta_backup / v9_astrbot）────────────────
+
+  // 备份清单：一份备份一行，校验和与加密标记必须落库
+  'CREATE TABLE backup_manifests ('
+      'id TEXT PRIMARY KEY, '
+      "kind TEXT NOT NULL DEFAULT 'manual', "
+      "scope TEXT NOT NULL DEFAULT 'full', "
+      "status TEXT NOT NULL DEFAULT 'pending', "
+      'schema_version TEXT NOT NULL, '
+      "app_version TEXT NOT NULL DEFAULT '', "
+      'file_name TEXT NOT NULL, '
+      'rel_path TEXT NOT NULL, '
+      'byte_size INTEGER NOT NULL DEFAULT 0, '
+      'sha256 TEXT, '
+      'is_encrypted INTEGER NOT NULL DEFAULT 1, '
+      'encryption_hint TEXT, '
+      "item_counts_json TEXT NOT NULL DEFAULT '{}', "
+      'note TEXT, '
+      'created_at INTEGER NOT NULL, '
+      'finished_at INTEGER, '
+      'verified_at INTEGER, '
+      'retention_until INTEGER)',
+  'CREATE INDEX ix_backup_manifests_time ON backup_manifests(created_at)',
+  'CREATE INDEX ix_backup_manifests_status ON backup_manifests(status, created_at)',
+
+  // 恢复日志：必须能表达"失败不破坏现库"
+  'CREATE TABLE restore_logs ('
+      'id TEXT PRIMARY KEY, '
+      'backup_id TEXT REFERENCES backup_manifests(id) ON DELETE SET NULL, '
+      "mode TEXT NOT NULL DEFAULT 'new_copy', "
+      "status TEXT NOT NULL DEFAULT 'pending', "
+      "preview_json TEXT NOT NULL DEFAULT '{}', "
+      'is_compatible INTEGER NOT NULL DEFAULT 0, '
+      'is_space_ok INTEGER NOT NULL DEFAULT 0, '
+      'safety_backup_id TEXT REFERENCES backup_manifests(id) ON DELETE SET NULL, '
+      "restored_counts_json TEXT NOT NULL DEFAULT '{}', "
+      'started_at INTEGER NOT NULL, '
+      'finished_at INTEGER, '
+      'error TEXT)',
+  'CREATE INDEX ix_restore_logs_backup ON restore_logs(backup_id, started_at)',
+  'CREATE INDEX ix_restore_logs_status ON restore_logs(status, started_at)',
+
+  // AstrBot 迁移批次：一次导入一行，重试与回滚都以批次为单位
+  'CREATE TABLE astrbot_migration_batches ('
+      'id TEXT PRIMARY KEY, '
+      "source_kind TEXT NOT NULL DEFAULT 'astrbot', "
+      "source_ref TEXT NOT NULL DEFAULT '', "
+      'source_hash TEXT, '
+      'is_dry_run INTEGER NOT NULL DEFAULT 1, '
+      "status TEXT NOT NULL DEFAULT 'pending', "
+      "options_json TEXT NOT NULL DEFAULT '{}', "
+      "counts_json TEXT NOT NULL DEFAULT '{}', "
+      "checkpoint_json TEXT NOT NULL DEFAULT '{}', "
+      'started_at INTEGER NOT NULL, '
+      'finished_at INTEGER, '
+      'error TEXT)',
+  'CREATE INDEX ix_astrbot_batches_time ON astrbot_migration_batches(started_at)',
+  'CREATE INDEX ix_astrbot_batches_status ON astrbot_migration_batches(status, started_at)',
+
+  // AstrBot 原始 ID 映射：同一批次内同一实体的原始 ID 只能映射一次
+  'CREATE TABLE astrbot_id_map ('
+      'id TEXT PRIMARY KEY, '
+      'batch_id TEXT NOT NULL REFERENCES astrbot_migration_batches(id) ON DELETE CASCADE, '
+      'entity_kind TEXT NOT NULL, '
+      'source_id TEXT NOT NULL, '
+      'target_id TEXT NOT NULL, '
+      'source_hash TEXT, '
+      'created_at INTEGER NOT NULL)',
+  'CREATE UNIQUE INDEX ux_astrbot_id_map ON astrbot_id_map(batch_id, entity_kind, source_id)',
+
+  // AstrBot 待处理区：未识别/冲突数据保留原始内容，等待人工决定
+  'CREATE TABLE astrbot_import_pending ('
+      'id TEXT PRIMARY KEY, '
+      'batch_id TEXT NOT NULL REFERENCES astrbot_migration_batches(id) ON DELETE CASCADE, '
+      'entity_kind TEXT NOT NULL, '
+      'source_id TEXT, '
+      'reason_code TEXT NOT NULL, '
+      'raw_json TEXT NOT NULL, '
+      "status TEXT NOT NULL DEFAULT 'pending', "
+      'resolved_target_id TEXT, '
+      'created_at INTEGER NOT NULL, '
+      'resolved_at INTEGER)',
+  'CREATE INDEX ix_astrbot_pending_batch ON astrbot_import_pending(batch_id, status)',
+  'CREATE INDEX ix_astrbot_pending_kind ON astrbot_import_pending(entity_kind, status)',
+
   // 视图：三套记忆 + 统计
   "CREATE VIEW v_memory_user AS SELECT * FROM memories WHERE scope = 'user' AND status <> 'deleted'",
   "CREATE VIEW v_memory_shared AS SELECT * FROM memories WHERE scope = 'shared' AND status <> 'deleted'",
@@ -549,4 +634,81 @@ const List<String> kSchemaStatements = <String>[
 
 /// 迁移升级路径：`oldVersion → newVersion` 时追加执行的语句。
 /// 首次安装（version 0）由 sqflite 的 onCreate 走 [kSchemaStatements] 全量建表。
-const Map<int, List<String>> kUpgradeStatements = <int, List<String>>{};
+const Map<int, List<String>> kUpgradeStatements = <int, List<String>>{
+  // v3：备份清单 / 恢复日志 / AstrBot 迁移三表（全新表，无历史数据改动）
+  3: <String>[
+    'CREATE TABLE IF NOT EXISTS backup_manifests ('
+        'id TEXT PRIMARY KEY, '
+        "kind TEXT NOT NULL DEFAULT 'manual', "
+        "scope TEXT NOT NULL DEFAULT 'full', "
+        "status TEXT NOT NULL DEFAULT 'pending', "
+        'schema_version TEXT NOT NULL, '
+        "app_version TEXT NOT NULL DEFAULT '', "
+        'file_name TEXT NOT NULL, '
+        'rel_path TEXT NOT NULL, '
+        'byte_size INTEGER NOT NULL DEFAULT 0, '
+        'sha256 TEXT, '
+        'is_encrypted INTEGER NOT NULL DEFAULT 1, '
+        'encryption_hint TEXT, '
+        "item_counts_json TEXT NOT NULL DEFAULT '{}', "
+        'note TEXT, '
+        'created_at INTEGER NOT NULL, '
+        'finished_at INTEGER, '
+        'verified_at INTEGER, '
+        'retention_until INTEGER)',
+    'CREATE INDEX IF NOT EXISTS ix_backup_manifests_time ON backup_manifests(created_at)',
+    'CREATE INDEX IF NOT EXISTS ix_backup_manifests_status ON backup_manifests(status, created_at)',
+    'CREATE TABLE IF NOT EXISTS restore_logs ('
+        'id TEXT PRIMARY KEY, '
+        'backup_id TEXT REFERENCES backup_manifests(id) ON DELETE SET NULL, '
+        "mode TEXT NOT NULL DEFAULT 'new_copy', "
+        "status TEXT NOT NULL DEFAULT 'pending', "
+        "preview_json TEXT NOT NULL DEFAULT '{}', "
+        'is_compatible INTEGER NOT NULL DEFAULT 0, '
+        'is_space_ok INTEGER NOT NULL DEFAULT 0, '
+        'safety_backup_id TEXT REFERENCES backup_manifests(id) ON DELETE SET NULL, '
+        "restored_counts_json TEXT NOT NULL DEFAULT '{}', "
+        'started_at INTEGER NOT NULL, '
+        'finished_at INTEGER, '
+        'error TEXT)',
+    'CREATE INDEX IF NOT EXISTS ix_restore_logs_backup ON restore_logs(backup_id, started_at)',
+    'CREATE INDEX IF NOT EXISTS ix_restore_logs_status ON restore_logs(status, started_at)',
+    'CREATE TABLE IF NOT EXISTS astrbot_migration_batches ('
+        'id TEXT PRIMARY KEY, '
+        "source_kind TEXT NOT NULL DEFAULT 'astrbot', "
+        "source_ref TEXT NOT NULL DEFAULT '', "
+        'source_hash TEXT, '
+        'is_dry_run INTEGER NOT NULL DEFAULT 1, '
+        "status TEXT NOT NULL DEFAULT 'pending', "
+        "options_json TEXT NOT NULL DEFAULT '{}', "
+        "counts_json TEXT NOT NULL DEFAULT '{}', "
+        "checkpoint_json TEXT NOT NULL DEFAULT '{}', "
+        'started_at INTEGER NOT NULL, '
+        'finished_at INTEGER, '
+        'error TEXT)',
+    'CREATE INDEX IF NOT EXISTS ix_astrbot_batches_time ON astrbot_migration_batches(started_at)',
+    'CREATE INDEX IF NOT EXISTS ix_astrbot_batches_status ON astrbot_migration_batches(status, started_at)',
+    'CREATE TABLE IF NOT EXISTS astrbot_id_map ('
+        'id TEXT PRIMARY KEY, '
+        'batch_id TEXT NOT NULL REFERENCES astrbot_migration_batches(id) ON DELETE CASCADE, '
+        'entity_kind TEXT NOT NULL, '
+        'source_id TEXT NOT NULL, '
+        'target_id TEXT NOT NULL, '
+        'source_hash TEXT, '
+        'created_at INTEGER NOT NULL)',
+    'CREATE UNIQUE INDEX IF NOT EXISTS ux_astrbot_id_map ON astrbot_id_map(batch_id, entity_kind, source_id)',
+    'CREATE TABLE IF NOT EXISTS astrbot_import_pending ('
+        'id TEXT PRIMARY KEY, '
+        'batch_id TEXT NOT NULL REFERENCES astrbot_migration_batches(id) ON DELETE CASCADE, '
+        'entity_kind TEXT NOT NULL, '
+        'source_id TEXT, '
+        'reason_code TEXT NOT NULL, '
+        'raw_json TEXT NOT NULL, '
+        "status TEXT NOT NULL DEFAULT 'pending', "
+        'resolved_target_id TEXT, '
+        'created_at INTEGER NOT NULL, '
+        'resolved_at INTEGER)',
+    'CREATE INDEX IF NOT EXISTS ix_astrbot_pending_batch ON astrbot_import_pending(batch_id, status)',
+    'CREATE INDEX IF NOT EXISTS ix_astrbot_pending_kind ON astrbot_import_pending(entity_kind, status)',
+  ],
+};
