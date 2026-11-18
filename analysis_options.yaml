@@ -1,0 +1,18 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+  errors:
+    todo: ignore
+  exclude:
+    - "**/*.g.dart"
+
+linter:
+  rules:
+    avoid_print: true
+    prefer_single_quotes: true
+    prefer_const_constructors: true
+    always_declare_return_types: true

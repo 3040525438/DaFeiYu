@@ -1,0 +1,35 @@
+name: dafeiyu_flutter
+description: 大肥鱼 Flutter 版（与 SwiftUI 版共用数据语义，独立工程）
+publish_to: "none"
+version: 2.0.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  provider: ^6.1.2
+  sqflite: ^2.3.3
+  path: ^1.9.0
+  path_provider: ^2.1.4
+  http: ^1.2.2
+  flutter_secure_storage: ^9.2.2
+  cryptography: ^2.7.0
+  intl: ^0.19.0
+  file_picker: ^8.1.2
+  share_plus: ^10.0.2
+  package_info_plus: ^8.0.2
+  uuid: ^4.5.1
+  crypto: ^3.0.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  sqflite_common_ffi: ^2.3.3
+  flutter_lints: ^4.0.0
+  test: ^1.25.7
+
+flutter:
+  uses-material-design: true
