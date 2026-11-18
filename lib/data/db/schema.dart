@@ -10,7 +10,7 @@
 library;
 
 /// 当前结构版本
-const int kSchemaVersion = 3;
+const int kSchemaVersion = 4;
 
 const List<String> kSchemaStatements = <String>[
   // ── 聊天基础 ────────────────────────────────────────────────────────────
@@ -618,6 +618,52 @@ const List<String> kSchemaStatements = <String>[
   'CREATE INDEX ix_astrbot_pending_batch ON astrbot_import_pending(batch_id, status)',
   'CREATE INDEX ix_astrbot_pending_kind ON astrbot_import_pending(entity_kind, status)',
 
+  // ── 日记（v4，对齐原版 v8_chat_v2 + v12_diary_structure）─────────────────
+
+  // 每日日记：一天一篇（软删后可重建）
+  'CREATE TABLE diary_entries ('
+      'id TEXT PRIMARY KEY, '
+      'entry_date TEXT NOT NULL, '
+      "title TEXT NOT NULL DEFAULT '', "
+      'content TEXT NOT NULL, '
+      'mood_code TEXT, '
+      "source TEXT NOT NULL DEFAULT 'manual', "
+      'generated_by TEXT, '
+      'is_user_edited INTEGER NOT NULL DEFAULT 0, '
+      'memory_id TEXT REFERENCES memories(id) ON DELETE SET NULL, '
+      "shared_experience TEXT NOT NULL DEFAULT '', "
+      "observation TEXT NOT NULL DEFAULT '', "
+      "feeling TEXT NOT NULL DEFAULT '', "
+      "relationship_change TEXT NOT NULL DEFAULT '', "
+      'relationship_change_confirmed INTEGER NOT NULL DEFAULT 0, '
+      'created_at INTEGER NOT NULL, '
+      'updated_at INTEGER NOT NULL, '
+      'deleted_at INTEGER)',
+  // 日记版本：双方编辑都必须留全量快照
+  'CREATE TABLE diary_entry_versions ('
+      'id TEXT PRIMARY KEY, '
+      'diary_id TEXT NOT NULL REFERENCES diary_entries(id) ON DELETE CASCADE, '
+      'version INTEGER NOT NULL, '
+      "title TEXT NOT NULL DEFAULT '', "
+      'content TEXT NOT NULL, '
+      "change_reason TEXT NOT NULL DEFAULT '', "
+      'changed_by TEXT NOT NULL, '
+      'created_at INTEGER NOT NULL, '
+      "shared_experience TEXT NOT NULL DEFAULT '', "
+      "observation TEXT NOT NULL DEFAULT '', "
+      "feeling TEXT NOT NULL DEFAULT '', "
+      "relationship_change TEXT NOT NULL DEFAULT '', "
+      'relationship_change_confirmed INTEGER NOT NULL DEFAULT 0)',
+  // 不挂 external content：中文 bigram 由应用层生成（与 memory_fts 口径一致）
+  'CREATE VIRTUAL TABLE diary_fts USING fts5('
+      'diary_id UNINDEXED, '
+      'text_bigram, '
+      "tokenize = 'unicode61')",
+  'CREATE UNIQUE INDEX ux_diary_entries_date ON diary_entries(entry_date) WHERE deleted_at IS NULL',
+  'CREATE INDEX ix_diary_entries_updated ON diary_entries(updated_at)',
+  'CREATE UNIQUE INDEX ux_diary_versions ON diary_entry_versions(diary_id, version)',
+  'CREATE INDEX ix_diary_entries_relation ON diary_entries(relationship_change_confirmed, entry_date)',
+
   // 视图：三套记忆 + 统计
   "CREATE VIEW v_memory_user AS SELECT * FROM memories WHERE scope = 'user' AND status <> 'deleted'",
   "CREATE VIEW v_memory_shared AS SELECT * FROM memories WHERE scope = 'shared' AND status <> 'deleted'",
@@ -635,6 +681,50 @@ const List<String> kSchemaStatements = <String>[
 /// 迁移升级路径：`oldVersion → newVersion` 时追加执行的语句。
 /// 首次安装（version 0）由 sqflite 的 onCreate 走 [kSchemaStatements] 全量建表。
 const Map<int, List<String>> kUpgradeStatements = <int, List<String>>{
+  // v4：日记三表 + FTS + 索引（全新表，无历史数据改动）
+  4: <String>[
+    'CREATE TABLE IF NOT EXISTS diary_entries ('
+        'id TEXT PRIMARY KEY, '
+        'entry_date TEXT NOT NULL, '
+        "title TEXT NOT NULL DEFAULT '', "
+        'content TEXT NOT NULL, '
+        'mood_code TEXT, '
+        "source TEXT NOT NULL DEFAULT 'manual', "
+        'generated_by TEXT, '
+        'is_user_edited INTEGER NOT NULL DEFAULT 0, '
+        'memory_id TEXT REFERENCES memories(id) ON DELETE SET NULL, '
+        "shared_experience TEXT NOT NULL DEFAULT '', "
+        "observation TEXT NOT NULL DEFAULT '', "
+        "feeling TEXT NOT NULL DEFAULT '', "
+        "relationship_change TEXT NOT NULL DEFAULT '', "
+        'relationship_change_confirmed INTEGER NOT NULL DEFAULT 0, '
+        'created_at INTEGER NOT NULL, '
+        'updated_at INTEGER NOT NULL, '
+        'deleted_at INTEGER)',
+    'CREATE TABLE IF NOT EXISTS diary_entry_versions ('
+        'id TEXT PRIMARY KEY, '
+        'diary_id TEXT NOT NULL REFERENCES diary_entries(id) ON DELETE CASCADE, '
+        'version INTEGER NOT NULL, '
+        "title TEXT NOT NULL DEFAULT '', "
+        'content TEXT NOT NULL, '
+        "change_reason TEXT NOT NULL DEFAULT '', "
+        'changed_by TEXT NOT NULL, '
+        'created_at INTEGER NOT NULL, '
+        "shared_experience TEXT NOT NULL DEFAULT '', "
+        "observation TEXT NOT NULL DEFAULT '', "
+        "feeling TEXT NOT NULL DEFAULT '', "
+        "relationship_change TEXT NOT NULL DEFAULT '', "
+        'relationship_change_confirmed INTEGER NOT NULL DEFAULT 0)',
+    'CREATE VIRTUAL TABLE IF NOT EXISTS diary_fts USING fts5('
+        'diary_id UNINDEXED, '
+        'text_bigram, '
+        "tokenize = 'unicode61')",
+    'CREATE UNIQUE INDEX IF NOT EXISTS ux_diary_entries_date ON diary_entries(entry_date) WHERE deleted_at IS NULL',
+    'CREATE INDEX IF NOT EXISTS ix_diary_entries_updated ON diary_entries(updated_at)',
+    'CREATE UNIQUE INDEX IF NOT EXISTS ux_diary_versions ON diary_entry_versions(diary_id, version)',
+    'CREATE INDEX IF NOT EXISTS ix_diary_entries_relation ON diary_entries(relationship_change_confirmed, entry_date)',
+  ],
+
   // v3：备份清单 / 恢复日志 / AstrBot 迁移三表（全新表，无历史数据改动）
   3: <String>[
     'CREATE TABLE IF NOT EXISTS backup_manifests ('

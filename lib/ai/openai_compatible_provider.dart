@@ -67,8 +67,11 @@ class OpenAICompatibleProvider {
       };
 
   /// 请求体（temperature 默认省略，由服务端默认值决定，与旧版一致）。
+  ///
+  /// 消息 content 允许两种形态：纯文本 `String`，或 OpenAI 视觉多模态数组
+  /// `[{type:'text'},{type:'image_url',...}]`。
   Map<String, Object?> buildBody(
-    List<Map<String, String>> messages, {
+    List<Map<String, Object?>> messages, {
     bool stream = false,
     Map<String, Object?> extra = const <String, Object?>{},
   }) {
@@ -83,7 +86,7 @@ class OpenAICompatibleProvider {
 
   /// 非流式补全。
   Future<ChatCompletion> complete(
-    List<Map<String, String>> messages, {
+    List<Map<String, Object?>> messages, {
     Map<String, Object?> extra = const <String, Object?>{},
   }) async {
     final response = await _client
@@ -118,7 +121,7 @@ class OpenAICompatibleProvider {
 
   /// 流式补全：逐 delta 回调；返回拼接后的完整文本。
   Future<String> stream(
-    List<Map<String, String>> messages, {
+    List<Map<String, Object?>> messages, {
     required void Function(ChatDelta delta) onDelta,
     Map<String, Object?> extra = const <String, Object?>{},
   }) async {
@@ -169,6 +172,34 @@ class OpenAICompatibleProvider {
       }
     }
     return buffer.toString();
+  }
+
+  /// 语音转写（OpenAI `/audio/transcriptions` 兼容接口，whisper 系模型）。
+  ///
+  /// `bytes`：完整录音文件字节；`model`：服务端模型名（如 whisper-1）。
+  Future<String> transcribe(
+    List<int> bytes, {
+    required String fileName,
+    required String mimeType,
+    String model = 'whisper-1',
+  }) async {
+    final base = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
+    final request = http.MultipartRequest('POST', Uri.parse('$base/audio/transcriptions'))
+      ..headers['Authorization'] = 'Bearer $apiKey'
+      ..fields['model'] = model
+      ..files.add(
+        http.MultipartFile.fromBytes('file', bytes, filename: fileName),
+      );
+    final response = await request.send().timeout(const Duration(minutes: 3));
+    final body = await response.stream.bytesToString();
+    if (response.statusCode != 200) {
+      throw ProviderException('语音转写失败', statusCode: response.statusCode, responseBody: _excerpt(body));
+    }
+    final decoded = jsonDecode(body);
+    if (decoded is! Map<String, Object?>) {
+      throw ProviderException('转写响应不是 JSON 对象', responseBody: _excerpt(body));
+    }
+    return (decoded['text'] as String?) ?? '';
   }
 
   String _excerpt(String body) {

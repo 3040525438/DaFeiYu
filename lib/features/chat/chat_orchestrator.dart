@@ -5,6 +5,8 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:uuid/uuid.dart' as uuid_pkg;
 
@@ -104,11 +106,13 @@ class ChatOrchestrator {
 
   /// 发送一条用户消息并请求回复。
   ///
+  /// `imagePath` 不为空时消息标记为图片（P1 图片理解入口）：
+  /// 附件入库并把当前消息以 OpenAI 视觉多模态 content 数组发给模型。
   /// 返回事件流；取消生成调用 [cancel]。
-  Stream<ChatEvent> send(String conversationId, String text) {
+  Stream<ChatEvent> send(String conversationId, String text, {String? imagePath}) {
     final controller = StreamController<ChatEvent>();
     _active = controller;
-    _run(conversationId, text, controller);
+    _run(conversationId, text, controller, imagePath: imagePath);
     return controller.stream;
   }
 
@@ -128,17 +132,18 @@ class ChatOrchestrator {
   Future<void> _run(
     String conversationId,
     String text,
-    StreamController<ChatEvent> controller,
-  ) async {
+    StreamController<ChatEvent> controller, {
+    String? imagePath,
+  }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     try {
-      // 1. 持久化用户消息
+      // 1. 持久化用户消息（带图时 kind=image，正文可为说明文字）
       final userMessage = Message(
         id: _uuid.v4(),
         clientUuid: _uuid.v4(),
         conversationId: conversationId,
         role: MessageRole.user,
-        kind: MessageKind.text,
+        kind: imagePath != null ? MessageKind.image : MessageKind.text,
         text: text,
         status: MessageStatus.sent,
         origin: MessageOrigin.user,
@@ -146,6 +151,9 @@ class ChatOrchestrator {
         sentAt: now,
       );
       await _messages.insert(userMessage);
+      if (imagePath != null) {
+        await _messages.attachImageToMessage(userMessage.id, imagePath);
+      }
       await _conversations.touch(conversationId, updatedAt: now);
 
       // 2. 读取配置
@@ -204,14 +212,44 @@ class ChatOrchestrator {
       );
 
       final accumulated = StringBuffer();
+      // 当前消息：带图时改为 OpenAI 视觉多模态 content 数组（P1 图片理解入口）
+      final requestMessages = composeChatMessages(
+        timeContext: CurrentTimeContext.describe(),
+        personaPrompt: personaPrompt,
+        memoryBlock: memoryBlock,
+        history: history,
+        current: text,
+      );
+      if (imagePath != null) {
+        final paths = await _messages.imagePathsForMessage(userMessage.id);
+        if (paths.isNotEmpty) {
+          final parts = <Map<String, Object?>>[
+            <String, Object?>{'type': 'text', 'text': text.isEmpty ? '看看这张图片' : text},
+          ];
+          for (final String path in paths) {
+            final file = File(path);
+            if (!file.existsSync()) continue;
+            final bytes = await file.readAsBytes();
+            final mime = path.toLowerCase().endsWith('.jpg') || path.toLowerCase().endsWith('.jpeg')
+                ? 'image/jpeg'
+                : path.toLowerCase().endsWith('.webp')
+                    ? 'image/webp'
+                    : path.toLowerCase().endsWith('.gif')
+                        ? 'image/gif'
+                        : 'image/png';
+            parts.add(<String, Object?>{
+              'type': 'image_url',
+              'image_url': <String, Object?>{
+                'url': 'data:$mime;base64,${base64Encode(bytes)}',
+              },
+            });
+          }
+          requestMessages[requestMessages.length - 1] =
+              <String, Object?>{'role': 'user', 'content': parts};
+        }
+      }
       await provider.stream(
-        composeChatMessages(
-          timeContext: CurrentTimeContext.describe(),
-          personaPrompt: personaPrompt,
-          memoryBlock: memoryBlock,
-          history: history,
-          current: text,
-        ),
+        requestMessages,
         onDelta: (delta) {
           if (delta.contentDelta.isNotEmpty) {
             accumulated.write(delta.contentDelta);

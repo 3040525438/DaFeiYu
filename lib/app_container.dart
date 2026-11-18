@@ -5,11 +5,15 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'ai/diary_auto_service.dart';
 import 'ai/memory_extraction_coordinator.dart';
 import 'ai/recall_context_builder.dart';
+import 'core/time/current_time_context.dart';
+import 'core/time/local_day.dart';
 import 'data/db/app_database.dart';
 import 'data/repositories/config_repositories.dart';
 import 'data/repositories/conversation_repository.dart';
+import 'data/repositories/diary_repository.dart';
 import 'data/repositories/memory_repository.dart';
 import 'data/repositories/message_repository.dart';
 import 'features/chat/chat_orchestrator.dart';
@@ -23,6 +27,8 @@ class AppContainer extends ChangeNotifier {
     required this.modelConfigs,
     required this.personas,
     required this.memories,
+    required this.diaries,
+    required this.diaryAuto,
     required this.chat,
     required this.secureStorage,
   });
@@ -33,6 +39,8 @@ class AppContainer extends ChangeNotifier {
   final ModelConfigRepository modelConfigs;
   final PersonaRepository personas;
   final MemoryRepository memories;
+  final DiaryRepository diaries;
+  final DiaryAutoService diaryAuto;
   final ChatOrchestrator chat;
   final FlutterSecureStorage secureStorage;
 
@@ -47,7 +55,8 @@ class AppContainer extends ChangeNotifier {
     final modelConfigs = ModelConfigRepository(database);
     final personas = PersonaRepository(database);
     final memories = MemoryRepository(database);
-    final recall = RecallContextBuilder(database, memories);
+    final diaries = DiaryRepository(database);
+    final recall = RecallContextBuilder(database, memories, diaryLinesProvider: (DayRange? range) => _diaryLines(diaries, range));
     final extraction = MemoryExtractionCoordinator(database);
     final chat = ChatOrchestrator(
       conversations: conversations,
@@ -59,6 +68,7 @@ class AppContainer extends ChangeNotifier {
       recallBuilder: recall,
       secureRead: (String keyRef) => secureStorage.read(key: keyRef),
     );
+    final diaryAuto = DiaryAutoService(database, diaries);
     return AppContainer._(
       database: database,
       conversations: conversations,
@@ -66,9 +76,31 @@ class AppContainer extends ChangeNotifier {
       modelConfigs: modelConfigs,
       personas: personas,
       memories: memories,
+      diaries: diaries,
+      diaryAuto: diaryAuto,
       chat: chat,
       secureStorage: secureStorage,
     );
+  }
+
+  /// 日记召回钩子：默认取最近一周，最多 5 条（与原版 diaryLines 口径一致）。
+  static Future<List<String>> _diaryLines(DiaryRepository diaries, DayRange? range) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final endKey = range?.end ?? DiaryAutoService.dayKeyFromMillis(now);
+    final startKey = range?.start ?? _daysBefore(endKey, 6);
+    return diaries.recallLines(startKey, endKey);
+  }
+
+  /// endKey 往前推 [days] 天的日期键。
+  static String _daysBefore(String endKey, int days) {
+    final match = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(endKey);
+    if (match == null) return endKey;
+    final date = DateTime(
+      int.parse(match.group(1)!),
+      int.parse(match.group(2)!),
+      int.parse(match.group(3)!),
+    );
+    return dayKey(addDays(date, -days));
   }
 
   /// 写入 API 密钥到安全存储。

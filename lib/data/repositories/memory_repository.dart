@@ -59,6 +59,18 @@ class MemoryRepository {
     return MemoryRecord.fromMap(rows.first);
   }
 
+  /// 按类型列表（信件 type='letter'、读书笔记 'book_note' 等），按创建时间倒序。
+  Future<List<MemoryRecord>> listByType(String type, {int limit = 100}) async {
+    final rows = await _db.db.query(
+      'memories',
+      where: 'type = ? AND deleted_at IS NULL',
+      whereArgs: <Object?>[type],
+      orderBy: 'created_at DESC',
+      limit: limit.clamp(1, 500),
+    );
+    return rows.map(MemoryRecord.fromMap).toList();
+  }
+
   /// 新增记忆，并同步写入 FTS 索引。
   ///
   /// `dedupe_key` 唯一冲突（同 scope 下）视为重复，返回 null；

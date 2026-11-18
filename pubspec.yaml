@@ -23,6 +23,8 @@ dependencies:
   package_info_plus: ^8.0.2
   uuid: ^4.5.1
   crypto: ^3.0.3
+  # P1 语音输入：录音后走 /audio/transcriptions 转写
+  record: ^6.2.1
 
 dev_dependencies:
   flutter_test:

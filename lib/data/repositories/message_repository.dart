@@ -1,6 +1,9 @@
 /// 消息仓储。
 library;
 
+import 'dart:io';
+
+import 'package:crypto/crypto.dart';
 import 'package:sqflite/sqflite.dart';
 
 import '../../domain/models/message.dart';
@@ -47,6 +50,89 @@ class MessageRepository {
       }
       rethrow;
     }
+  }
+
+  // ── 图片附件（P1 图片理解入口的数据层）────────────────────────────────────
+
+  /// 把图片挂到消息上：复制进 `<db 目录>/attachments/`，
+  /// 写 attachments（sha256 幂等）+ message_attachments，并把消息标记为 image。
+  /// 返回附件的 rel_path（发送给模型时用）。
+  Future<String> attachImageToMessage(String messageId, String sourcePath) async {
+    final source = File(sourcePath);
+    if (!source.existsSync()) {
+      throw Exception('图片不存在：$sourcePath');
+    }
+    final bytes = await source.readAsBytes();
+    final hash = sha256.convert(bytes).toString();
+
+    final dbDir = File(_db.db.path).parent.path;
+    final dir = Directory('$dbDir/attachments');
+    if (!dir.existsSync()) dir.createSync(recursive: true);
+    final relPath = 'attachments/$hash${_extensionOf(sourcePath)}';
+    final target = File('$dbDir/$relPath');
+    if (!target.existsSync()) {
+      await source.copy(target.path);
+    }
+
+    // 同一哈希只登记一份附件
+    await _db.db.insert(
+      'attachments',
+      <String, Object?>{
+        'id': hash,
+        'sha256': hash,
+        'kind': 'image',
+        'rel_path': relPath,
+        'byte_size': bytes.length,
+        'mime': _mimeOf(sourcePath),
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+      },
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+    await _db.db.insert(
+      'message_attachments',
+      <String, Object?>{'message_id': messageId, 'attachment_id': hash, 'sort': 0},
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+    await _db.db.execute(
+      "UPDATE messages SET kind = 'image' WHERE id = ?",
+      <Object?>[messageId],
+    );
+    return relPath;
+  }
+
+  /// 消息的图片附件绝对路径列表（按 sort 排序）。
+  Future<List<String>> imagePathsForMessage(String messageId) async {
+    final rows = await _db.db.rawQuery(
+      '''
+      SELECT a.rel_path FROM message_attachments ma
+      JOIN attachments a ON a.id = ma.attachment_id
+      WHERE ma.message_id = ?
+      ORDER BY ma.sort ASC
+      ''',
+      <Object?>[messageId],
+    );
+    final dbDir = File(_db.db.path).parent.path;
+    return rows
+        .map((Map<String, Object?> row) => (row['rel_path'] as String?) ?? '')
+        .where((String rel) => rel.isNotEmpty)
+        .map((String rel) => '$dbDir/$rel')
+        .toList();
+  }
+
+  String _extensionOf(String path) {
+    final name = path.replaceAll('\\', '/').split('/').last;
+    final index = name.lastIndexOf('.');
+    return index <= 0 ? '.png' : name.substring(index).toLowerCase();
+  }
+
+  String _mimeOf(String path) {
+    final ext = _extensionOf(path);
+    return switch (ext) {
+      '.jpg' || '.jpeg' => 'image/jpeg',
+      '.webp' => 'image/webp',
+      '.gif' => 'image/gif',
+      _ => 'image/png',
+    };
   }
 
   /// 覆盖式写入（按 id 替换），用于状态机流转（sending → sent/failed/canceled）。

@@ -1,4 +1,4 @@
-/// 应用入口：底部导航（聊天 / 模型配置），依赖由 AppContainer 注入。
+/// 应用入口：底部导航（聊天 / 日记 / 设置），依赖由 AppContainer 注入。
 library;
 
 import 'package:flutter/material.dart';
@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import 'app_container.dart';
 import 'features/chat/chat_page.dart';
+import 'features/diary/diary_page.dart';
 import 'features/settings/model_config_page.dart';
 
 Future<void> main() async {
@@ -54,6 +55,7 @@ class _RootScaffoldState extends State<_RootScaffold> {
         index: _tab,
         children: const <Widget>[
           ChatPage(),
+          DiaryPage(),
           ModelConfigPage(),
         ],
       ),
@@ -62,6 +64,7 @@ class _RootScaffoldState extends State<_RootScaffold> {
         onDestinationSelected: (int index) => setState(() => _tab = index),
         destinations: const <Widget>[
           NavigationDestination(icon: Icon(Icons.chat_bubble_outline), label: '聊天'),
+          NavigationDestination(icon: Icon(Icons.menu_book_outlined), label: '日记'),
           NavigationDestination(icon: Icon(Icons.settings_outlined), label: '设置'),
         ],
       ),

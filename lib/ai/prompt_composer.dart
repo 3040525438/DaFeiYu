@@ -35,12 +35,12 @@ class ChatMessages {
 
   /// - [history]：已持久化的历史消息（role → user/assistant）
   /// - [current]：当前用户输入
-  static List<Map<String, String>> build({
+  static List<Map<String, Object?>> build({
     required String system,
-    required List<Map<String, String>> history,
+    required List<Map<String, Object?>> history,
     required String current,
   }) {
-    return <Map<String, String>>[
+    return <Map<String, Object?>>[
       <String, String>{'role': 'system', 'content': system},
       ...history,
       <String, String>{'role': 'user', 'content': current},
@@ -49,11 +49,13 @@ class ChatMessages {
 }
 
 /// 便捷入口：一次组装完整请求消息。
-List<Map<String, String>> composeChatMessages({
+///
+/// history 的 content 允许 OpenAI 视觉多模态数组形态（P1 图片理解入口）。
+List<Map<String, Object?>> composeChatMessages({
   required String timeContext,
   String? personaPrompt,
   String? memoryBlock,
-  required List<Map<String, String>> history,
+  required List<Map<String, Object?>> history,
   required String current,
 }) {
   return ChatMessages.build(
