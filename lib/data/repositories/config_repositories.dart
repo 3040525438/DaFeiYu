@@ -1,7 +1,10 @@
-/// 模型配置与人格读取。
+/// 模型配置与人格读写。
 library;
 
+import 'dart:convert';
+
 import 'package:sqflite/sqflite.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../domain/models/model_config.dart';
 import '../../domain/models/persona.dart';
@@ -86,5 +89,77 @@ class PersonaRepository {
     );
     if (rows.isEmpty) return null;
     return rows.first['value'] as String?;
+  }
+
+  /// 保存核心人格系统提示词（section='核心' key='system_prompt'）。
+  ///
+  /// - 无核心人格时创建占位（与 AstrBot 导入的「首启占位人格」识别口径一致）；
+  /// - 每次保存追加 persona_versions 全量快照，current_version 同步递增。
+  Future<void> saveCoreSystemPrompt(String prompt, {required int atMillis}) async {
+    final trimmed = prompt.trim();
+    if (trimmed.isEmpty) throw ArgumentError('系统提示词不能为空');
+    const uuid = Uuid();
+    await _db.db.transaction((txn) async {
+      final rows = await txn.query('personas', where: "kind = 'core'", limit: 1);
+      String personaId;
+      if (rows.isEmpty) {
+        personaId = uuid.v4();
+        await txn.insert('personas', <String, Object?>{
+          'id': personaId,
+          'kind': 'core',
+          'name': '大肥鱼',
+          'is_locked': 0,
+          'current_version': 1,
+          'created_at': atMillis,
+          'updated_at': atMillis,
+        });
+      } else {
+        personaId = rows.first['id']! as String;
+      }
+
+      final itemRows = await txn.query(
+        'persona_items',
+        where: "persona_id = ? AND section = '核心' AND key = 'system_prompt'",
+        whereArgs: <Object?>[personaId],
+        limit: 1,
+      );
+      if (itemRows.isEmpty) {
+        await txn.insert('persona_items', <String, Object?>{
+          'id': uuid.v4(),
+          'persona_id': personaId,
+          'section': '核心',
+          'key': 'system_prompt',
+          'value': trimmed,
+          'source': 'user',
+          'updated_at': atMillis,
+        });
+      } else {
+        await txn.update(
+          'persona_items',
+          <String, Object?>{'value': trimmed, 'updated_at': atMillis},
+          where: 'id = ?',
+          whereArgs: <Object?>[itemRows.first['id']],
+        );
+      }
+
+      final versionRows = await txn.rawQuery(
+        'SELECT COALESCE(MAX(version), 0) AS n FROM persona_versions WHERE persona_id = ?',
+        <Object?>[personaId],
+      );
+      final nextVersion = ((versionRows.first['n'] as int?) ?? 0) + 1;
+      await txn.insert('persona_versions', <String, Object?>{
+        'id': uuid.v4(),
+        'persona_id': personaId,
+        'version': nextVersion,
+        'snapshot_json': jsonEncode(<String, String?>{'system_prompt': trimmed}),
+        'change_reason': '用户编辑核心人格',
+        'changed_by': 'user',
+        'created_at': atMillis,
+      });
+      await txn.rawUpdate(
+        'UPDATE personas SET current_version = ?, updated_at = ? WHERE id = ?',
+        <Object?>[nextVersion, atMillis, personaId],
+      );
+    });
   }
 }

@@ -209,6 +209,10 @@ class BackupService {
 
   // ── 读取 / 验证 ───────────────────────────────────────────────────────────
 
+  /// 备份清单列表（最新在前）。
+  Future<List<BackupManifest>> manifestsList({int limit = 100}) =>
+      _repository.manifests(limit: limit);
+
   /// 备份文件在磁盘上的实际位置（导出/分享用，不做任何解密）
   File fileURL(BackupManifest manifest) =>
       File(_join(backupsDirectory, manifest.fileName));

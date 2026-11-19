@@ -7,7 +7,7 @@ import 'package:provider/provider.dart';
 import 'app_container.dart';
 import 'features/chat/chat_page.dart';
 import 'features/diary/diary_page.dart';
-import 'features/settings/model_config_page.dart';
+import 'features/settings/settings_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -32,6 +32,13 @@ class DaFeiYuApp extends StatelessWidget {
         useMaterial3: true,
         colorSchemeSeed: const Color(0xFF7A6FF0),
         fontFamily: 'sans-serif',
+        appBarTheme: const AppBarTheme(centerTitle: false),
+        cardTheme: const CardTheme(elevation: 0, clipBehavior: Clip.antiAlias),
+        inputDecorationTheme: const InputDecorationTheme(
+          border: OutlineInputBorder(),
+          isDense: true,
+        ),
+        snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
       ),
       home: const _RootScaffold(),
     );
@@ -56,7 +63,7 @@ class _RootScaffoldState extends State<_RootScaffold> {
         children: const <Widget>[
           ChatPage(),
           DiaryPage(),
-          ModelConfigPage(),
+          SettingsPage(),
         ],
       ),
       bottomNavigationBar: NavigationBar(

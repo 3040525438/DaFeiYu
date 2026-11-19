@@ -8,6 +8,9 @@ import 'package:path_provider/path_provider.dart';
 import 'ai/diary_auto_service.dart';
 import 'ai/memory_extraction_coordinator.dart';
 import 'ai/recall_context_builder.dart';
+import 'core/backup/backup_cipher.dart';
+import 'core/backup/backup_service.dart';
+import 'core/import/astrbot_importer.dart';
 import 'core/time/current_time_context.dart';
 import 'core/time/local_day.dart';
 import 'data/db/app_database.dart';
@@ -30,6 +33,8 @@ class AppContainer extends ChangeNotifier {
     required this.diaries,
     required this.diaryAuto,
     required this.chat,
+    required this.backup,
+    required this.astrbot,
     required this.secureStorage,
   });
 
@@ -42,6 +47,8 @@ class AppContainer extends ChangeNotifier {
   final DiaryRepository diaries;
   final DiaryAutoService diaryAuto;
   final ChatOrchestrator chat;
+  final BackupService backup;
+  final AstrBotImporter astrbot;
   final FlutterSecureStorage secureStorage;
 
   static Future<AppContainer> create() async {
@@ -69,6 +76,11 @@ class AppContainer extends ChangeNotifier {
       secureRead: (String keyRef) => secureStorage.read(key: keyRef),
     );
     final diaryAuto = DiaryAutoService(database, diaries);
+    final backup = BackupService(
+      database: database,
+      keyStore: SecureStorageKeyStore(storage: secureStorage),
+    );
+    final astrbot = AstrBotImporter(database);
     return AppContainer._(
       database: database,
       conversations: conversations,
@@ -79,6 +91,8 @@ class AppContainer extends ChangeNotifier {
       diaries: diaries,
       diaryAuto: diaryAuto,
       chat: chat,
+      backup: backup,
+      astrbot: astrbot,
       secureStorage: secureStorage,
     );
   }

@@ -165,6 +165,8 @@ class _DiaryViewState extends State<_DiaryView> {
                   itemCount: _entries.length,
                   itemBuilder: (BuildContext context, int index) {
                     final entry = _entries[index];
+                    final pendingConfirm =
+                        entry.relationshipChange.trim().isNotEmpty && !entry.relationshipChangeConfirmed;
                     return ListTile(
                       leading: Text(
                         _moodEmoji[entry.moodCode] ?? '📝',
@@ -180,9 +182,32 @@ class _DiaryViewState extends State<_DiaryView> {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      trailing: Text(
-                        entry.entryDate.substring(5),
-                        style: Theme.of(context).textTheme.labelSmall,
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          if (pendingConfirm)
+                            GestureDetector(
+                              onTap: () => _confirmRelationshipChange(entry),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: Theme.of(context).colorScheme.tertiary.withAlpha(28),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Text(
+                                  '待确认',
+                                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                        color: Theme.of(context).colorScheme.tertiary,
+                                      ),
+                                ),
+                              ),
+                            ),
+                          const SizedBox(width: 6),
+                          Text(
+                            entry.entryDate.substring(5),
+                            style: Theme.of(context).textTheme.labelSmall,
+                          ),
+                        ],
                       ),
                       onTap: () => _openEditor(entry),
                     );
@@ -191,6 +216,27 @@ class _DiaryViewState extends State<_DiaryView> {
         ),
       ],
     );
+  }
+
+  /// 一键确认这条日记记录的关系变化（写版本快照留痕）
+  Future<void> _confirmRelationshipChange(DiaryEntry entry) async {
+    final container = context.read<AppContainer>();
+    try {
+      await container.diaries.confirmRelationshipChange(
+        entry.id,
+        atMillis: DateTime.now().millisecondsSinceEpoch,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('已确认这次关系变化')));
+      await _reload();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text('确认失败：$error')));
+    }
   }
 }
 
@@ -208,6 +254,7 @@ class _DiaryEditorSheetState extends State<_DiaryEditorSheet> {
   late final TextEditingController _title;
   late final TextEditingController _content;
   String? _mood;
+  late final String? _relationshipChange;
   bool _relationshipConfirmed = false;
   String? _error;
 
@@ -217,6 +264,7 @@ class _DiaryEditorSheetState extends State<_DiaryEditorSheet> {
     _title = TextEditingController(text: widget.entry?.title ?? '');
     _content = TextEditingController(text: widget.entry?.content ?? '');
     _mood = widget.entry?.moodCode;
+    _relationshipChange = widget.entry?.relationshipChange;
     _relationshipConfirmed = widget.entry?.relationshipChangeConfirmed ?? false;
   }
 
@@ -301,6 +349,47 @@ class _DiaryEditorSheetState extends State<_DiaryEditorSheet> {
                 alignLabelWithHint: true,
               ),
             ),
+            if (_relationshipChange != null && _relationshipChange.trim().isNotEmpty) ...<Widget>[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.tertiary.withAlpha(24),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Row(
+                      children: <Widget>[
+                        Icon(Icons.favorite_border,
+                            size: 16, color: Theme.of(context).colorScheme.tertiary),
+                        const SizedBox(width: 6),
+                        Text(
+                          '日记里观察到的关系变化',
+                          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                                color: Theme.of(context).colorScheme.tertiary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    SelectableText(_relationshipChange),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      value: _relationshipConfirmed,
+                      onChanged: (bool value) =>
+                          setState(() => _relationshipConfirmed = value),
+                      title: const Text('确认这次关系变化'),
+                      subtitle: const Text('确认后大肥鱼会把它当作真实的相处进展'),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 8),
             if (_error != null)
               Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),

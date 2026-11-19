@@ -175,6 +175,52 @@ class DiaryRepository {
     );
   }
 
+  /// 确认某天日记中记录的关系变化（relationship_change_confirmed = 1）。
+  ///
+  /// 用户显式确认是关系变化生效的唯一入口（W6/D72 口径）；确认本身也写
+  /// diary_entry_versions 快照留痕（changed_by='user'）。
+  Future<DiaryEntry> confirmRelationshipChange(String id, {required int atMillis}) async {
+    final rows = await _db.db.query(
+      'diary_entries',
+      where: 'id = ? AND deleted_at IS NULL',
+      whereArgs: <Object?>[id],
+      limit: 1,
+    );
+    if (rows.isEmpty) throw DiaryError.notFound;
+    final entry = DiaryEntry.fromRow(rows.first);
+    if (entry.relationshipChange.trim().isEmpty) {
+      throw DiaryError('这条日记没有记录关系变化');
+    }
+    if (entry.relationshipChangeConfirmed) return entry;
+
+    await _db.db.execute(
+      'UPDATE diary_entries SET relationship_change_confirmed = 1, updated_at = ? '
+      'WHERE id = ?',
+      <Object?>[atMillis, id],
+    );
+    final versionRows = await _db.db.rawQuery(
+      'SELECT COALESCE(MAX(version), 0) AS n FROM diary_entry_versions WHERE diary_id = ?',
+      <Object?>[id],
+    );
+    final nextVersion = ((versionRows.first['n'] as int?) ?? 0) + 1;
+    await _db.db.execute(
+      '''
+      INSERT INTO diary_entry_versions
+          (id, diary_id, version, title, content, change_reason, changed_by, created_at,
+           shared_experience, observation, feeling, relationship_change,
+           relationship_change_confirmed)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ''',
+      <Object?>[
+        _uuid.v4(), id, nextVersion, entry.title, entry.content,
+        '用户确认关系变化', 'user', atMillis,
+        entry.sharedExperience, entry.observation, entry.feeling,
+        entry.relationshipChange, 1,
+      ],
+    );
+    return (await entryById(id)) ?? entry;
+  }
+
   /// 召回钩子行（对齐原版 RecallContextBuilder.diaryLines）：
   /// `【日记·yyyy-MM-dd】共同经历：…；观察：…；感受：…`，结构化字段为空时退正文摘要。
   /// 按日期升序返回（时间顺序回顾）。
