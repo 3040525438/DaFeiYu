@@ -4,14 +4,15 @@
 # macOS runner 完成。产物为**未签名 IPA**（--no-codesign），可用于：
 #   - TrollStore / AltStore / SideStore 等侧载工具自行签名安装；
 #   - 或补充证书后在本地 Xcode 里归档签名。
-# 触发：push 到 main 分支、手动 workflow_dispatch、版本 tag（v*）。
+# 触发：push 到 main / flutter-app 分支、手动 workflow_dispatch、版本 tag（v*）。
+# flutter-app 是 Flutter 版工程所在分支（原版 SwiftUI 内容保留在 main）。
 #
 # 产物下载位置：仓库 Actions 页 → 对应 run → Artifacts。
 name: Build Artifacts (Android APK + iOS IPA)
 
 on:
   push:
-    branches: [main]
+    branches: [main, flutter-app]
     tags: ['v*']
   workflow_dispatch:
 
